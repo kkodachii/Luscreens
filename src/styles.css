@@ -1,3 +1,13 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Apply Netflix-like dark theme */
+body {
+  @apply bg-netflix-black text-white;
+}
+
+/* Optional: Add a subtle gradient overlay for hero sections */
+.hero-overlay {
+  @apply bg-gradient-to-b from-transparent via-netflix-gray to-netflix-black;
+}

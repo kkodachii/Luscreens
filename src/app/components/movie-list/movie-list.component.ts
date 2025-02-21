@@ -7,6 +7,7 @@ import { TmdbService } from '../../services/tmdb.service';
   standalone: true,
   imports: [NgForOf], // Add NgForOf here
   templateUrl: './movie-list.component.html',
+  styleUrls: ['./movie-list.component.css'],
 })
 export class MovieListComponent implements OnInit {
   movies: any[] = [];

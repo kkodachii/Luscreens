@@ -1,4 +1,20 @@
-<section class="py-8 bg-gray-900 -mt-4">
+<!-- Top 10 Content Today Title -->
+<div class="container mx-auto px-4 py-6">
+  <h2 class="flex items-center text-white">
+    <!-- Hollow "TOP 10" -->
+    <span class="hollow-text text-[8rem] font-bold mr-4 leading-none">TOP 10</span>
+    <!-- Stacked "Content Today" -->
+    <div class="inline-block text-left">
+      <span class="block text-2xl font-bold">C O N T E N T</span>
+      <span class="block text-2xl font-bold">T O D A Y</span>
+    </div>
+  </h2>
+</div>
+
+
+
+<!-- Movie Grid Section -->
+<section class="py-8 -mt-4">
   <div class="container mx-auto grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6 px-4">
     <div *ngFor="let movie of movies" class="group relative overflow-hidden rounded-lg shadow-md">
       <img [src]="'https://image.tmdb.org/t/p/w500' + movie.poster_path" alt="{{ movie.title }}" class="w-full h-64 object-cover group-hover:scale-110 transition-transform duration-300">
