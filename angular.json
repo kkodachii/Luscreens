@@ -29,7 +29,9 @@
             "styles": [
               "src/styles.css"
             ],
-            "scripts": []
+            "scripts": [
+              "node_modules/flowbite/dist/flowbite.min.js"
+            ]
           },
           "configurations": {
             "production": {
@@ -82,7 +84,8 @@
               {
                 "glob": "**/*",
                 "input": "public"
-              }
+              },
+              "src/assets"
             ],
             "styles": [
               "src/styles.css"

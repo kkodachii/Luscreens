@@ -1,11 +1,89 @@
-<section class="py-8">
-    <div class="container mx-auto grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6 px-4">
-      <div *ngFor="let movie of movies" class="bg-gray-800 rounded-lg overflow-hidden shadow-md">
-        <img [src]="'https://image.tmdb.org/t/p/w500' + movie.poster_path" alt="{{ movie.title }}" class="w-full h-64 object-cover">
-        <div class="p-4">
-          <h2 class="text-xl font-bold text-white">{{ movie.title }}</h2>
-          <p class="text-gray-400">{{ movie.release_date }}</p>
+<!-- Top 10 Content Today Title -->
+<div class="container mx-auto px-4 py-6">
+  <h2 class="flex items-center text-white">
+    <!-- Hollow "TOP 10" -->
+    <span class="hollow-text text-[8rem] font-bold mr-4 leading-none">TOP 10</span>
+    <!-- Stacked "Content Today" -->
+    <div class="inline-block text-left">
+      <span class="block text-2xl font-bold">C O N T E N T</span>
+      <span class="block text-2xl font-bold">T O D A Y</span>
+    </div>
+  </h2>
+</div>
+
+<!-- Movie Grid Section -->
+<section class="py-8 -mt-4">
+  <div class="container mx-auto px-4">
+    <!-- Carousel Container -->
+    <div class="relative overflow-hidden">
+      <!-- Previous Button -->
+      <button
+        class="absolute top-1/2 left-0 transform -translate-y-1/2 bg-transparent text-white rounded px-2 h-64 flex items-center justify-center hover:bg-black hover:bg-opacity-50 transition duration-300 z-10"
+        (click)="scrollLeft()"
+      >
+        <!-- Chevron Left Icon -->
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="24"
+          height="24"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          class="w-6 h-6"
+        >
+          <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+          <path d="M13 20l-3 -8l3 -8" />
+        </svg>
+      </button>
+
+      <!-- Scrollable Movies -->
+      <div
+        #carousel
+        class="flex space-x-4 overflow-x-auto scrollbar-hide"
+      >
+        <div
+          *ngFor="let movie of movies"
+          class="min-w-[150px] group relative overflow-hidden rounded-lg shadow-md"
+        >
+          <img
+            [src]="'https://image.tmdb.org/t/p/w500' + movie.poster_path"
+            alt="{{ movie.title }}"
+            class="w-full h-64 object-cover group-hover:scale-110 transition-transform duration-300"
+          />
+          <div
+            class="absolute bottom-0 left-0 right-0 bg-black bg-opacity-70 p-4 opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+          >
+            <h2 class="text-lg font-bold text-white">{{ movie.title }}</h2>
+            <p class="text-gray-300">{{ movie.release_date }}</p>
+          </div>
         </div>
       </div>
+
+      <!-- Next Button -->
+      <button
+        class="absolute top-1/2 right-0 transform -translate-y-1/2 bg-transparent text-white rounded px-2 h-64 flex items-center justify-center hover:bg-black hover:bg-opacity-50 transition duration-300 z-10"
+        (click)="scrollRight()"
+      >
+        <!-- Chevron Right Icon -->
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="24"
+          height="24"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          class="w-6 h-6"
+        >
+          <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+          <path d="M11 4l3 8l-3 8" />
+        </svg>
+      </button>
     </div>
-  </section>
+  </div>
+</section>

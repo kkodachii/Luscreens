@@ -1,0 +1,112 @@
+<section class="relative h-[500px]">
+
+    <!-- Carousel -->
+    <div id="default-carousel" class="relative w-full" data-carousel="slide" data-carousel-interval="7000">
+      <!-- Carousel Wrapper -->
+      <div class="relative h-[500px] overflow-hidden rounded-none">
+        <!-- Slides -->
+        <div *ngFor="let movie of popularMovies; let i = index" class="hidden duration-1000 ease-in-out" data-carousel-item>
+          <!-- Background Image -->
+          <div class="absolute inset-0">
+            <img
+              [src]="'https://image.tmdb.org/t/p/original' + movie.backdrop_path || 'assets/fallback.jpg'"
+              alt="{{ movie.title }}"
+              class="w-full h-full object-cover object-top"
+            />
+          </div>
+  
+          <!-- Overlay -->
+          <div class="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-start px-10 sm:px-20 lg:px-40 py-8">
+            <div class="text-white max-w-md">
+              <!-- Title Logo -->
+              <div class="mb-4">
+                <img
+                  *ngIf="movie.logo_path"
+                  [src]="movie.logo_path"
+                  alt="{{ movie.title }}"
+                  class="h-24 w-auto"
+                />
+                <h1 *ngIf="!movie.logo_path" class="text-4xl font-bold">{{ movie.title }}</h1>
+              </div>
+  
+              <!-- Details -->
+              <div class="flex items-center text-gray-300 text-sm mb-4">
+                <span class="mr-2">⭐{{ movie.vote_average }}/10</span>
+                <span class="mr-2">{{ movie.release_date | slice:0:4 }}</span>
+                <span *ngIf="movie.genre_ids && movie.genre_ids.length > 0">
+                  {{ getGenres(movie.genre_ids) }}
+                </span>
+              </div>
+  
+              <!-- Overview -->
+              <p class="text-lg mb-6">{{ movie.overview | slice:0:200 }}...</p>
+  
+              <!-- Buttons -->
+              <div class="flex items-center space-x-4">
+                <!-- Play Button Icon -->
+                <button class="bg-white text-blue-600 p-2 rounded-full hover:bg-gray-300 transition duration-300">
+                  <!-- Play Icon -->
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" class="w-6 h-6" style="fill: rgba(0, 0, 0, 1);">
+                    <path d="M7 6v12l10-6z"></path>
+                  </svg>
+                </button>
+  
+                <!-- See More Button -->
+                <a href="#" class="inline-flex items-center border border-white text-white px-4 py-2 rounded-lg transition duration-300">
+                  See More
+                  <!-- Details Icon -->
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" class="w-5 h-5 ml-2" style="fill: rgba(255, 255, 255, 1);">
+                    <path d="M12 2C6.486 2 2 6.486 2 12s4.486 10 10 10 10-4.486 10-10S17.514 2 12 2zm0 18c-4.411 0-8-3.589-8-8s3.589-8 8-8 8 3.589 8 8-3.589 8-8 8z"></path>
+                    <path d="M11 11h2v6h-2zm0-4h2v2h-2z"></path>
+                  </svg>
+                </a>
+              </div>
+            </div>
+          </div>
+  
+          <!-- Gradient Overlay -->
+          <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-b from-transparent to-netflix-black" style="height: 80px;"></div>
+        </div>
+      </div>
+  
+      <!-- Slider Indicators -->
+      <div class="absolute z-30 flex space-x-3 -translate-x-1/2 bottom-5 left-1/2">
+        <button
+          *ngFor="let movie of popularMovies; let i = index"
+          type="button"
+          class="w-3 h-3 rounded-full"
+          aria-current="true"
+          [attr.aria-label]="'Slide ' + (i + 1)"
+          [attr.data-carousel-slide-to]="i"
+        ></button>
+      </div>
+  
+      <!-- Slider Controls -->
+      <button
+        type="button"
+        class="absolute top-0 start-0 z-30 flex items-center justify-center h-full px-4 cursor-pointer group focus:outline-none"
+        data-carousel-prev
+        aria-label="Previous slide"
+      >
+        <span class="inline-flex items-center justify-center w-10 h-10 rounded-full bg-white/30 group-hover:bg-white/50 group-focus:ring-4 group-focus:ring-white dark:group-focus:ring-gray-800/70 group-focus:outline-none">
+          <svg class="w-4 h-4 text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 6 10">
+            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 1 1 5l4 4"/>
+          </svg>
+          <span class="sr-only">Previous</span>
+        </span>
+      </button>
+      <button
+        type="button"
+        class="absolute top-0 end-0 z-30 flex items-center justify-center h-full px-4 cursor-pointer group focus:outline-none"
+        data-carousel-next
+        aria-label="Next slide"
+      >
+        <span class="inline-flex items-center justify-center w-10 h-10 rounded-full bg-white/30 group-hover:bg-white/50 group-focus:ring-4 group-focus:ring-white dark:group-focus:ring-gray-800/70 group-focus:outline-none">
+          <svg class="w-4 h-4 text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 6 10">
+            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m1 9 4-4-4-4"/>
+          </svg>
+          <span class="sr-only">Next</span>
+        </span>
+      </button>
+    </div>
+  </section>
