@@ -1,6 +1,7 @@
 import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
+import { map } from 'rxjs/operators';
 
 @Injectable({ providedIn: 'root' })
 export class TmdbService {
@@ -33,11 +34,18 @@ export class TmdbService {
   constructor(private http: HttpClient) {}
 
   getPopularMovies(): Observable<any> {
-    return this.http.get(`${this.baseUrl}/movie/popular`, {
-      params: { api_key: this.apiKey },
-    });
+    return this.http
+      .get(`${this.baseUrl}/movie/popular`, {
+        params: { api_key: this.apiKey },
+      })
+      .pipe(
+        map((response: any) => {
+          // Limit the results to 10 movies
+          response.results = response.results.slice(0, 10);
+          return response;
+        })
+      );
   }
-
   getMovieDetails(movieId: number): Observable<any> {
     return this.http.get(`${this.baseUrl}/movie/${movieId}`, {
       params: { api_key: this.apiKey },

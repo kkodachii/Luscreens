@@ -11,3 +11,4 @@ body {
 .hero-overlay {
   @apply bg-gradient-to-b from-transparent via-netflix-gray to-netflix-black;
 }
+
