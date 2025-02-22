@@ -8,6 +8,7 @@ import { TmdbService } from '../../services/tmdb.service';
   standalone: true,
   imports: [CommonModule, SlicePipe],
   templateUrl: './hero.component.html',
+  styleUrls: ['./hero.component.css'],
 })
 export class HeroComponent implements OnInit {
   popularMovies: any[] = [];
