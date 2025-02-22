@@ -2,7 +2,6 @@
   -webkit-text-stroke: 2px #E50914; /* Red stroke */
   color: #0d0d0d; /* Dark background */
   font-weight: bold;
-  letter-spacing: -3px; /* Adjusted for mobile */
   text-shadow: -10px 0 10px rgba(6, 5, 5, 0.818); /* Subtle shadow */
 }
 
