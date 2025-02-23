@@ -59,6 +59,60 @@ export class TmdbService {
     });
   }
 
+  getPopularTvSeries(): Observable<any> {
+    return this.http
+      .get(`${this.baseUrl}/tv/popular`, {
+        params: { api_key: this.apiKey },
+      })
+      .pipe(
+        map((response: any) => {
+          response.results = response.results.slice(0, 30); // Limit to 10 TV series
+          return response;
+        })
+      );
+  }
+
+  getPopularSeriesByNetwork(networkId: number): Observable<any> {
+    return this.http
+      .get(`${this.baseUrl}/discover/tv`, {
+        params: {
+          api_key: this.apiKey,
+          with_networks: networkId.toString(), // Filter for Netflix
+          sort_by: 'popularity.desc', // Sort by popularity
+          page: '1',
+        },
+      })
+      .pipe(
+        map((response: any) => {
+          console.log('Netflix Series Response:', response); // Log response
+          response.results = response.results.slice(0, 30); // Limit to 10 series
+          return response;
+        })
+      );
+  }
+  getMoviesByGenre(genreId: number): Observable<any> {
+    return this.http.get(`${this.baseUrl}/discover/movie`, {
+      params: {
+        api_key: this.apiKey,
+        with_genres: genreId.toString(),
+        sort_by: 'popularity.desc',
+        page: '1',
+      },
+    });
+  }
+  getTopRatedMovies(): Observable<any> {
+    return this.http.get(`${this.baseUrl}/movie/top_rated`, {
+      params: { api_key: this.apiKey },
+    });
+  }
+
+  // Fetch Top-Rated TV Series
+  getTopRatedSeries(): Observable<any> {
+    return this.http.get(`${this.baseUrl}/tv/top_rated`, {
+      params: { api_key: this.apiKey },
+    });
+  }
+
   // Method to map genre IDs to names
   getGenreNames(genreIds: number[]): string {
     const genreNames = genreIds

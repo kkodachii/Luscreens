@@ -1,0 +1,122 @@
+<section class="py-8 -mt-4">
+    <div class="container mx-auto px-4">
+      <!-- Title -->
+      <h2 class="flex items-center text-white text-2xl sm:text-3xl font-bold mb-6">
+        <span class="w-2 h-8 bg-red-600 rounded-full mr-3"></span>
+        Discover Movies by Genre
+      </h2>
+  
+      <!-- Navigation Bar -->
+      <div class="flex overflow-x-auto space-x-4 mb-6 scrollbar-hide">
+        <button
+          *ngFor="let genre of genres"
+          (click)="selectGenre(genre.id)"
+          class="w-24 h-10 px-4 py-2 rounded-lg text-sm sm:text-base text-white bg-opacity-50 hover:bg-opacity-100 transition duration-300 flex items-center justify-center"
+          [class.bg-red-600]="selectedGenreId === genre.id"
+          [class.bg-gray-600]="selectedGenreId !== genre.id"
+        >
+          {{ genre.name }}
+        </button>
+      </div>
+  
+      <!-- Carousel Container -->
+      <div class="relative overflow-hidden">
+        <!-- Previous Button -->
+        <button
+          class="absolute top-1/2 left-0 transform -translate-y-1/2 bg-transparent text-white rounded px-2 h-64 flex items-center justify-center hover:bg-black hover:bg-opacity-50 transition duration-300 z-10"
+          (click)="scrollLeft()"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            class="w-6 h-6"
+          >
+            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+            <path d="M13 20l-3 -8l3 -8" />
+          </svg>
+        </button>
+  
+        <!-- Scrollable Movies -->
+        <div
+          #carousel
+          class="flex space-x-4 overflow-x-auto scrollbar-hide"
+        >
+          <div
+            *ngFor="let movie of movies"
+            class="min-w-[150px] group relative overflow-hidden rounded-lg shadow-md"
+          >
+            <img
+              [src]="movie.poster_path ? 'https://image.tmdb.org/t/p/w500' + movie.poster_path : 'assets/fallback.jpg'"
+              alt="{{ movie.title }}"
+              class="w-full h-64 object-cover group-hover:scale-110 transition-transform duration-300"
+              loading="lazy"
+            />
+            <div
+              class="absolute bottom-0 left-0 right-0 bg-black bg-opacity-70 p-4 opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+            >
+              <h2 class="text-lg font-bold text-white">{{ movie.title }}</h2>
+              <p class="text-gray-300">{{ movie.release_date }}</p>
+            </div>
+          </div>
+        </div>
+  
+        <!-- Next Button -->
+        <button
+          class="absolute top-1/2 right-0 transform -translate-y-1/2 bg-transparent text-white rounded px-2 h-64 flex items-center justify-center hover:bg-black hover:bg-opacity-50 transition duration-300 z-10"
+          (click)="scrollRight()"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            class="w-6 h-6"
+          >
+            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+            <path d="M11 4l3 8l-3 8" />
+          </svg>
+        </button>
+      </div>
+  
+      <!-- Loading Spinner -->
+      <div *ngIf="isLoading" class="flex justify-center items-center h-64">
+        <svg
+          class="animate-spin h-8 w-8 text-white"
+          xmlns="http://www.w3.org/2000/svg"
+          fill="none"
+          viewBox="0 0 24 24"
+        >
+          <circle
+            class="opacity-25"
+            cx="12"
+            cy="12"
+            r="10"
+            stroke="currentColor"
+            stroke-width="4"
+          ></circle>
+          <path
+            class="opacity-75"
+            fill="currentColor"
+            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+          ></path>
+        </svg>
+      </div>
+  
+      <!-- Error Message -->
+      <div *ngIf="showError" class="text-red-500 text-center">
+        Failed to load movies. Please try again later.
+      </div>
+    </div>
+  </section>
