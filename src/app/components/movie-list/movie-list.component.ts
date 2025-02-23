@@ -1,11 +1,11 @@
-import { Component, OnInit, ViewChild, ElementRef  } from '@angular/core';
-import { NgForOf } from '@angular/common'; // Import NgForOf
+import { Component, OnInit, ViewChild, ElementRef,  } from '@angular/core';
+import { NgForOf,CommonModule } from '@angular/common'; // Import NgForOf
 import { TmdbService } from '../../services/tmdb.service';
 
 @Component({
   selector: 'app-movie-list',
   standalone: true,
-  imports: [NgForOf], // Add NgForOf here
+  imports: [NgForOf, CommonModule], // Add NgForOf here
   templateUrl: './movie-list.component.html',
   styleUrls: ['./movie-list.component.css'],
 })
@@ -13,6 +13,28 @@ import { TmdbService } from '../../services/tmdb.service';
 
 export class MovieListComponent implements OnInit {
   movies: any[] = [];
+
+  genresList = [
+    { id: 28, name: 'Action' },
+    { id: 12, name: 'Adventure' },
+    { id: 16, name: 'Animation' },
+    { id: 35, name: 'Comedy' },
+    { id: 80, name: 'Crime' },
+    { id: 99, name: 'Documentary' },
+    { id: 18, name: 'Drama' },
+    { id: 10751, name: 'Family' },
+    { id: 14, name: 'Fantasy' },
+    { id: 36, name: 'History' },
+    { id: 27, name: 'Horror' },
+    { id: 10402, name: 'Music' },
+    { id: 9648, name: 'Mystery' },
+    { id: 10749, name: 'Romance' },
+    { id: 878, name: 'Science Fiction' },
+    { id: 10770, name: 'TV Movie' },
+    { id: 53, name: 'Thriller' },
+    { id: 10752, name: 'War' },
+    { id: 37, name: 'Western' },
+  ];
   @ViewChild('carousel') carousel!: ElementRef;
 
   constructor(private tmdbService: TmdbService) {}
@@ -30,5 +52,10 @@ export class MovieListComponent implements OnInit {
   scrollRight() {
     this.carousel.nativeElement.scrollBy({ left: 200, behavior: 'smooth' });
   }
-  
+  getGenres(genreIds: number[]): string {
+    return genreIds
+      .map((id) => this.genresList.find((genre) => genre.id === id)?.name)
+      .filter((name) => !!name) // Remove undefined values
+      .join(', ');
+  }
 }
