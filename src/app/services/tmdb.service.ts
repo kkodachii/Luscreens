@@ -52,7 +52,6 @@ export class TmdbService {
     });
   }
 
-  // New Method: Fetch movie images (including logos)
   getMovieImages(movieId: number): Observable<any> {
     return this.http.get(`${this.baseUrl}/movie/${movieId}/images`, {
       params: { api_key: this.apiKey },
@@ -66,7 +65,7 @@ export class TmdbService {
       })
       .pipe(
         map((response: any) => {
-          response.results = response.results.slice(0, 30); // Limit to 10 TV series
+          response.results = response.results.slice(0, 30); 
           return response;
         })
       );

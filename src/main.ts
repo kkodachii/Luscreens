@@ -1,9 +1,9 @@
 import { bootstrapApplication } from '@angular/platform-browser';
-import { provideHttpClient } from '@angular/common/http';
+import { appConfig } from './app/app.config';
 import { AppComponent } from './app/app.component';
-import 'core-js/stable'; // Polyfills for modern JavaScript features
-import 'regenerator-runtime/runtime'; // Polyfill for async/await
+import 'core-js/stable'; 
+import 'regenerator-runtime/runtime'; 
 
-bootstrapApplication(AppComponent, {
-  providers: [provideHttpClient()],
-}).catch((err) => console.error(err));
+bootstrapApplication(AppComponent, appConfig).catch((err) =>
+  console.error(err)
+);

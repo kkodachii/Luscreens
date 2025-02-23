@@ -1,6 +1,6 @@
+<div class="custom-scrollbar overflow-y-auto h-screen">
 <app-header></app-header>
-<app-hero></app-hero>
-<app-movie-list></app-movie-list>
-<app-top-rated></app-top-rated>
-<app-movie-series></app-movie-series>
-<app-discover-movie></app-discover-movie>
+<main [class.mt-20]="!isDefaultRoute ">
+  <router-outlet ></router-outlet> 
+</main>
+</div>
