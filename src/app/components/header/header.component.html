@@ -25,8 +25,10 @@
 
       <!-- Home Button (Hidden on Mobile) -->
       <button
-        class="hidden sm:flex items-center space-x-2 text-white bg-gradient-to-r from-red-500 to-red-700 border border-red-600 hover:from-red-600 hover:to-red-800 transition duration-300 px-3 py-1 rounded-full"
-      >
+      routerLink="/"
+      routerLinkActive="active-link"
+      [routerLinkActiveOptions]="{ exact: true }"
+      [class]="isHomeRouteActive ? 'flex items-center space-x-2 text-white transition duration-300' : 'flex items-center space-x-2 text-white hover:text-red-500 transition duration-300'" >
         <svg
           xmlns="http://www.w3.org/2000/svg"
           width="24"
@@ -50,7 +52,8 @@
       <!-- Browse Dropdown -->
       <div class="relative">
         <button
-          class="flex items-center space-x-2 text-white hover:text-red-500 transition duration-300"
+        [class.active-link]="isBrowseRouteActive"
+        [class]="isBrowseRouteActive ? 'flex items-center space-x-2 text-white transition duration-300' : 'flex items-center space-x-2 text-white hover:text-red-500 transition duration-300'"
           (click)="toggleBrowseDropdown()"
         >
           <svg
@@ -93,7 +96,7 @@
 >
   <!-- Movies -->
   <a
-    href="#"
+  [routerLink]="['/browse', 'movie']"
     aria-label="View Movies"
     class="block px-4 py-3 text-white hover:bg-red-600 transition duration-300 border-b border-gray-700"
   >
@@ -118,7 +121,7 @@
 
   <!-- TV Shows -->
   <a
-    href="#"
+  [routerLink]="['/browse', 'series']"
     aria-label="View TV Shows"
     class="block px-4 py-3 text-white hover:bg-red-600 transition duration-300"
   >

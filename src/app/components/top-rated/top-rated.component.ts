@@ -1,11 +1,11 @@
 import { Component, OnInit, ViewChild, ElementRef  } from '@angular/core';
-import { NgForOf } from '@angular/common'; // Import NgForOf
+import { NgForOf, CommonModule,NgIf } from '@angular/common'; // Import NgForOf
 import { TmdbService } from '../../services/tmdb.service';
 
 @Component({
   selector: 'app-top-rated',
   standalone: true,
-  imports: [NgForOf], // Add NgForOf here
+  imports: [NgForOf, CommonModule,NgIf], // Add NgForOf here
   templateUrl: './top-rated.component.html',
   styleUrls: ['./top-rated.component.css'],
 })
