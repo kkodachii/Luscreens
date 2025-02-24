@@ -22,7 +22,6 @@ body {
 }
 
 
-
 /* Custom Scrollbar Styles */
 .custom-scrollbar::-webkit-scrollbar {
   width: 12px; /* Fixed width for vertical scrollbar */
@@ -47,6 +46,7 @@ body {
 .custom-scrollbar {
   scrollbar-color: #950c0c transparent; /* Firefox thumb and track colors */
   scrollbar-width: thin; /* Thin scrollbar for Firefox */
+  border-radius: 10px;
 }
 
 /* Hide scrollbar on mobile devices */
@@ -58,6 +58,7 @@ body {
     scrollbar-width: none; /* Hide scrollbar on Firefox */
   }
 }
+
 
 .active-link {
   @apply hidden sm:flex items-center space-x-2 text-white bg-gradient-to-r from-red-500 to-red-700 border border-red-600 hover:from-red-600 hover:to-red-800 transition duration-300 px-3 py-1 rounded-full;
