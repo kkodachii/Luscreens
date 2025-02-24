@@ -1,4 +1,4 @@
-import { Component, OnInit, HostListener } from '@angular/core';
+import { Component, OnInit, HostListener,ChangeDetectorRef } from '@angular/core';
 import { ActivatedRoute } from '@angular/router';
 import { NgForOf,CommonModule } from '@angular/common';
 import { TmdbService } from '../../services/tmdb.service';
@@ -65,7 +65,8 @@ export class BrowseComponent implements OnInit {
 
   constructor(
     private route: ActivatedRoute,
-    private tmdbService: TmdbService
+    private tmdbService: TmdbService,
+    private cdr: ChangeDetectorRef
   ) {}
 
   ngOnInit(): void {
@@ -95,17 +96,16 @@ export class BrowseComponent implements OnInit {
   }
 
   fetchData(): void {
-    const genreId = this.selectedGenreId ?? undefined; // Convert null to undefined
-    this.tmdbService
-      .getFilteredItems(this.type, this.selectedFilter, genreId)
-      .subscribe(
-        (data: any) => {
-          this.items = data.results;
-        },
-        (error) => {
-          console.error('Error fetching data:', error);
-        }
-      );
+    const genreId = this.selectedGenreId ?? undefined;
+    this.tmdbService.getFilteredItems(this.type, this.selectedFilter, genreId).subscribe(
+      (data: any) => {
+        this.items = data.results;
+        this.cdr.detectChanges(); // Trigger change detection
+      },
+      (error) => {
+        console.error('Error fetching data:', error);
+      }
+    );
   }
 
   selectGenre(genreId: number): void {
