@@ -1,13 +1,12 @@
 import { Component } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { RouterModule } from '@angular/router'; 
-import { Router, NavigationEnd } from '@angular/router';
+import { RouterModule, Router, NavigationEnd } from '@angular/router';
 
 @Component({
   selector: 'app-header',
   templateUrl: './header.component.html',
   standalone: true,
-  imports: [CommonModule,RouterModule],
+  imports: [CommonModule, RouterModule],
 })
 export class HeaderComponent {
   isMenuOpen: boolean = false;
@@ -22,6 +21,9 @@ export class HeaderComponent {
         // Check if the current route starts with '/browse'
         this.isBrowseRouteActive = event.url.startsWith('/browse');
         this.isHomeRouteActive = event.url === '/';
+
+        // Close all dropdowns when navigation occurs
+        this.closeAllDropdowns();
       }
     });
   }
@@ -38,5 +40,11 @@ export class HeaderComponent {
     this.isMenuOpen = false;
     // Toggle the Browse dropdown
     this.isBrowseDropdownOpen = !this.isBrowseDropdownOpen;
+  }
+
+  closeAllDropdowns(): void {
+    // Close both the burger menu and the Browse dropdown
+    this.isMenuOpen = false;
+    this.isBrowseDropdownOpen = false;
   }
 }
