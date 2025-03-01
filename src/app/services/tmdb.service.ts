@@ -45,6 +45,12 @@ export class TmdbService {
         })
       );
   }
+  getnolimitPopularMovies(): Observable<any> {
+    return this.http
+      .get(`${this.baseUrl}/movie/popular`, {
+        params: { api_key: this.apiKey },
+      });
+  }
   getMovieDetails(movieId: number): Observable<any> {
     return this.http.get(`${this.baseUrl}/movie/${movieId}`, {
       params: { api_key: this.apiKey },
@@ -232,5 +238,15 @@ export class TmdbService {
       .map((id) => genres.find((genre) => genre.id === id)?.name)
       .filter((name) => !!name);
     return genreNames.join(', ');
+  }
+
+  searchMulti(query: string, page: number = 1): Observable<any> {
+    return this.http.get(`${this.baseUrl}/search/multi`, {
+      params: {
+        api_key: this.apiKey,
+        query: query,
+        page: page.toString(),
+      },
+    });
   }
 }
