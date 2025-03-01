@@ -1,11 +1,12 @@
 import { Component, OnInit, ViewChild, ElementRef,  } from '@angular/core';
 import { NgForOf,CommonModule } from '@angular/common'; 
 import { TmdbService } from '../../services/tmdb.service';
+import { RouterModule, Router, NavigationEnd } from '@angular/router';
 
 @Component({
   selector: 'app-movie-list',
   standalone: true,
-  imports: [NgForOf, CommonModule], 
+  imports: [NgForOf, CommonModule, RouterModule], 
   templateUrl: './movie-list.component.html',
   styleUrls: ['./movie-list.component.css'],
 })

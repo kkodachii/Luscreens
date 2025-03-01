@@ -7,3 +7,4 @@ import 'regenerator-runtime/runtime';
 bootstrapApplication(AppComponent, appConfig).catch((err) =>
   console.error(err)
 );
+

@@ -51,7 +51,7 @@
       *ngFor="let series of series"
       class="min-w-[150px] group relative overflow-hidden rounded-lg shadow-md"
     >
-      
+    <a [routerLink]="['/details', series.media_type || (series.title ? 'movie' : 'tv'), series.id]" class="block">
       <img
         [src]="series.poster_path ? 'https://image.tmdb.org/t/p/w500' + series.poster_path : 'assets/fallback.jpg'"
         alt="{{ series.title || series.name }}"
@@ -92,7 +92,8 @@
             <span>{{ series.vote_average.toFixed(1) }}/10</span>
           </div>
         </div>
-      </div> 
+      </div>
+    </a> 
         </div>
       </div>
 

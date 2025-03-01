@@ -15,6 +15,7 @@ export class AppComponent implements AfterViewInit {
   isBrowseRouteActive: boolean = false;
   isDefaultRoute: boolean = true;
   isHomeRouteActive: boolean = false;
+  isDetailsRoute: boolean = false;
   constructor(private router: Router) {
     // Listen for route changes
     this.router.events.subscribe((event) => {
@@ -23,6 +24,7 @@ export class AppComponent implements AfterViewInit {
         this.isDefaultRoute = event.url === '/';
         this.isHomeRouteActive = event.url === '/';
         this.isBrowseRouteActive = event.url.startsWith('/browse');
+        this.isDetailsRoute = event.url.startsWith('/details');
       }
     });
   }

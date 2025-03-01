@@ -2,11 +2,12 @@ import { Component, OnInit, HostListener, ChangeDetectorRef } from '@angular/cor
 import { ActivatedRoute } from '@angular/router';
 import { NgForOf, CommonModule } from '@angular/common';
 import { TmdbService } from '../../services/tmdb.service';
+import { RouterModule, Router, NavigationEnd } from '@angular/router';
 
 @Component({
   selector: 'app-browse',
   standalone: true,
-  imports: [NgForOf, CommonModule], 
+  imports: [NgForOf, CommonModule, RouterModule], 
   templateUrl: './browse.component.html',
   styleUrls: ['./browse.component.css'],
 })
