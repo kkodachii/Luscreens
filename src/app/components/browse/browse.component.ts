@@ -6,22 +6,22 @@ import { TmdbService } from '../../services/tmdb.service';
 @Component({
   selector: 'app-browse',
   standalone: true,
-  imports: [NgForOf, CommonModule], // Add NgForOf here
+  imports: [NgForOf, CommonModule], 
   templateUrl: './browse.component.html',
   styleUrls: ['./browse.component.css'],
 })
 export class BrowseComponent implements OnInit {
-  type: string = ''; // 'movie' or 'series'
+  type: string = ''; 
   items: any[] = [];
-  selectedGenreId: number | null = null; // Selected genre ID
-  selectedFilter: string = 'popular'; // 'popular', 'rated', 'recent'
-  isDropdownOpen: boolean = false; // Track dropdown visibility
+  selectedGenreId: number | null = null; 
+  selectedFilter: string = 'popular'; 
+  isDropdownOpen: boolean = false; 
 
-  currentPage: number = 1; // Track the current page
-  isLoading: boolean = false; // Prevent multiple simultaneous requests
-  hasMoreData: boolean = true; // Track if there are more pages to load
+  currentPage: number = 1; 
+  isLoading: boolean = false; 
+  hasMoreData: boolean = true; 
 
-  // Movie Genres
+  
   movieGenres = [
     { id: 28, name: 'Action' },
     { id: 12, name: 'Adventure' },
@@ -44,7 +44,7 @@ export class BrowseComponent implements OnInit {
     { id: 37, name: 'Western' },
   ];
 
-  // TV Series Genres
+  
   tvGenres = [
     { id: 10759, name: 'Action & Adventure' },
     { id: 16, name: 'Animation' },
@@ -64,8 +64,8 @@ export class BrowseComponent implements OnInit {
     { id: 37, name: 'Western' },
   ];
 
-  visibleGenres: any[] = []; // Genres displayed as buttons
-  hiddenGenres: any[] = []; // Genres moved to the dropdown
+  visibleGenres: any[] = []; 
+  hiddenGenres: any[] = []; 
 
   constructor(
     private route: ActivatedRoute,
@@ -74,10 +74,10 @@ export class BrowseComponent implements OnInit {
   ) {}
 
   ngOnInit(): void {
-    // Get the 'type' parameter from the route
+    
     this.route.params.subscribe((params) => {
-      this.type = params['type']; // 'movie' or 'series'
-      this.fetchData(); // Fetch initial data
+      this.type = params['type']; 
+      this.fetchData(); 
       this.calculateVisibleGenres();
       
     });
@@ -101,21 +101,21 @@ export class BrowseComponent implements OnInit {
 
   @HostListener('window:resize')
   onResize(): void {
-    this.calculateVisibleGenres(); // Recalculate visible genres on window resize
+    this.calculateVisibleGenres(); 
   }
 
   calculateVisibleGenres(): void {
     const genres = this.type === 'movie' ? this.movieGenres : this.tvGenres;
     const screenWidth = window.innerWidth;
 
-    // If screen width is less than 640px (small screen), move all genres to the dropdown
+    
     if (screenWidth < 640) {
       this.visibleGenres = [];
       this.hiddenGenres = genres;
     } else {
-      // Estimate the maximum number of genres that can fit based on screen width
-      let maxVisibleGenres = Math.floor(screenWidth / 120); // Adjust 120 based on button width
-      maxVisibleGenres = Math.max(1, Math.min(maxVisibleGenres, genres.length)); // Ensure at least 1 genre
+      
+      let maxVisibleGenres = Math.floor(screenWidth / 120); 
+      maxVisibleGenres = Math.max(1, Math.min(maxVisibleGenres, genres.length)); 
 
       this.visibleGenres = genres.slice(0, maxVisibleGenres);
       this.hiddenGenres = genres.slice(maxVisibleGenres);
@@ -129,13 +129,13 @@ export class BrowseComponent implements OnInit {
     this.tmdbService.getFilteredItems(this.type, this.selectedFilter, genreId, this.currentPage).subscribe(
       (data: any) => {
         if (this.currentPage === 1) {
-          this.items = data.results; // Replace existing items on the first page
+          this.items = data.results; 
         } else {
-          this.items = [...this.items, ...data.results]; // Append new results for subsequent pages
+          this.items = [...this.items, ...data.results]; 
         }
-        this.hasMoreData = data.total_pages > this.currentPage; // Check if more pages exist
+        this.hasMoreData = data.total_pages > this.currentPage; 
         this.isLoading = false;
-        this.cdr.detectChanges(); // Trigger change detection
+        this.cdr.detectChanges(); 
       },
       (error) => {
         console.error('Error fetching data:', error);
@@ -145,31 +145,31 @@ export class BrowseComponent implements OnInit {
   }
   loadMore(): void {
     if (this.hasMoreData && !this.isLoading) {
-      this.currentPage++; // Increment the page number
-      this.fetchData();   // Fetch the next page of results
+      this.currentPage++; 
+      this.fetchData();   
     }
   }
   selectGenre(genreId: number): void {
-    this.selectedGenreId = genreId; // Set the selected genre ID
-    this.resetPagination();         // Reset pagination
-    this.fetchData();               // Fetch data for the selected genre
-    this.isDropdownOpen = false;    // Close the dropdown after selecting a genre
+    this.selectedGenreId = genreId; 
+    this.resetPagination();         
+    this.fetchData();               
+    this.isDropdownOpen = false;    
   }
 
   applyFilter(filter: string): void {
-    this.selectedFilter = filter; // Set the selected filter
-    this.resetPagination();       // Reset pagination
-    this.fetchData();             // Fetch data for the selected filter
+    this.selectedFilter = filter; 
+    this.resetPagination();       
+    this.fetchData();             
   }
 
   resetPagination(): void {
-    this.currentPage = 1; // Reset to the first page
-    this.items = [];      // Clear existing items
-    this.hasMoreData = true; // Reset the "has more data" flag
+    this.currentPage = 1; 
+    this.items = [];      
+    this.hasMoreData = true; 
   }
 
   toggleDropdown(): void {
-    this.isDropdownOpen = !this.isDropdownOpen; // Toggle dropdown visibility
+    this.isDropdownOpen = !this.isDropdownOpen; 
   }
 
   @HostListener('document:click', ['$event'])
@@ -180,7 +180,7 @@ export class BrowseComponent implements OnInit {
       !dropdownButton.contains(event.target as Node) &&
       this.isDropdownOpen
     ) {
-      this.isDropdownOpen = false; // Close the dropdown if clicked outside
+      this.isDropdownOpen = false; 
     }
   }
 }

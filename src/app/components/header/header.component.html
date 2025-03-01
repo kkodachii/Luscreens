@@ -1,8 +1,8 @@
 <header class="absolute top-0 left-0 right-0 z-40">
   <div class="max-w-screen-xl flex items-center justify-between mx-auto p-4">
-    <!-- Left Side: Home Button + Browse Dropdown -->
+    
     <div class="flex items-center space-x-4 sm:space-x-4">
-      <!-- Burger Menu for Mobile -->
+      
       <button
         class="sm:hidden flex items-center space-x-2 text-white hover:text-red-500 transition duration-300"
         (click)="toggleMenu()"
@@ -23,7 +23,7 @@
         </svg>
       </button>
 
-      <!-- Home Button (Hidden on Mobile) -->
+      
       <button
       routerLink="/"
       routerLinkActive="active-link"
@@ -49,7 +49,7 @@
         <span class="text-sm font-medium">Home</span>
       </button>
 
-      <!-- Browse Dropdown -->
+      
       <div class="relative">
         <button
         [class.active-link]="isBrowseRouteActive"
@@ -89,19 +89,19 @@
           </svg>
         </button>
 
-<!-- Browse Dropdown Menu -->
+
 <div
   *ngIf="isBrowseDropdownOpen"
   class="absolute top-full left-0 mt-2 w-64 bg-black bg-opacity-95 shadow-lg rounded-md overflow-hidden"
 >
-  <!-- Movies -->
+  
   <a
   [routerLink]="['/browse', 'movie']"
     aria-label="View Movies"
     class="block px-4 py-3 text-white hover:bg-red-600 transition duration-300 border-b border-gray-700"
   >
     <div class="flex items-center">
-      <!-- Icon -->
+      
       <svg
         xmlns="http://www.w3.org/2000/svg"
         width="20"
@@ -111,7 +111,7 @@
       >
         <path d="M20 3H4c-1.103 0-2 .897-2 2v14c0 1.103.897 2 2 2h16c1.103 0 2-.897 2-2V5c0-1.103-.897-2-2-2zm.001 6c-.001 0-.001 0 0 0h-.466l-2.667-4H20l.001 4zM9.535 9 6.868 5h2.597l2.667 4H9.535zm5 0-2.667-4h2.597l2.667 4h-2.597zM4 5h.465l2.667 4H4V5zm0 14v-8h16l.002 8H4z"></path>
       </svg>
-      <!-- Text -->
+      
       <div class="flex flex-col">
         <span class="text-sm font-medium">Movies</span>
         <span class="text-xs text-gray-400 whitespace-nowrap">Discover the latest and greatest films</span>
@@ -119,14 +119,14 @@
     </div>
   </a>
 
-  <!-- TV Shows -->
+  
   <a
   [routerLink]="['/browse', 'series']"
     aria-label="View TV Shows"
     class="block px-4 py-3 text-white hover:bg-red-600 transition duration-300"
   >
     <div class="flex items-center">
-      <!-- Icon -->
+      
       <svg
         xmlns="http://www.w3.org/2000/svg"
         width="24"
@@ -136,7 +136,7 @@
       >
         <path d="M20 6h-5.586l2.293-2.293-1.414-1.414L12 5.586 8.707 2.293 7.293 3.707 9.586 6H4c-1.103 0-2 .897-2 2v11c0 1.103.897 2 2 2h16c1.103 0 2-.897 2-2V8c0-1.103-.897-2-2-2zM4 19V8h16l.002 11H4z"></path>
       </svg>
-      <!-- Text -->
+      
       <div class="flex flex-col">
         <span class="text-sm font-medium">TV Shows</span>
         <span class="text-xs text-gray-400 whitespace-nowrap">Binge-worthy series and episodes</span>
@@ -147,14 +147,14 @@
       </div>
     </div>
 
-    <!-- Center: Logo (Hidden on Mobile) -->
+    
     <a href="#" class="hidden sm:flex items-center justify-center">
       <img src="https://i.ibb.co/93WcKPpr/logo.png" alt="Luscreen Logo" class="h-12 w-auto" />
     </a>
 
-    <!-- Right Side: History, Watchlist, Search -->
+    
     <div class="flex items-center space-x-4 sm:space-x-4">
-      <!-- History Icon + Text (Hidden on Mobile) -->
+      
       <a
         href="#"
         class="hidden sm:flex items-center space-x-2 text-white hover:text-red-500 transition duration-300"
@@ -178,7 +178,7 @@
         <span class="text-sm font-medium">History</span>
       </a>
 
-      <!-- Watchlist Icon + Text (Hidden on Mobile) -->
+      
       <a
         href="#"
         class="hidden sm:flex items-center space-x-2 text-white hover:text-red-500 transition duration-300"
@@ -201,7 +201,7 @@
         <span class="text-sm font-medium">Watchlist</span>
       </a>
 
-      <!-- Search Icon + Text -->
+      
       <a
         href="#"
         class="flex items-center space-x-2 text-white hover:text-red-500 transition duration-300"
@@ -211,7 +211,7 @@
     </div>
   </div>
 
-  <!-- Mobile Menu Dropdown -->
+  
   <div *ngIf="isMenuOpen"  class="absolute top-full left-0 mt-2 w-48 bg-black bg-opacity-95 shadow-lg rounded-md overflow-hidden">
     <a href="#" class="block px-4 py-3 text-white hover:bg-red-600 transition duration-300 border-b border-gray-700">
       <svg

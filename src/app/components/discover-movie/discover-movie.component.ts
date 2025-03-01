@@ -1,11 +1,11 @@
 import { Component, OnInit, ViewChild, ElementRef  } from '@angular/core';
-import { NgForOf, CommonModule,NgIf } from '@angular/common'; // Import NgForOf
+import { NgForOf, CommonModule,NgIf } from '@angular/common'; 
 import { TmdbService } from '../../services/tmdb.service';
 
 @Component({
   selector: 'app-discover-movie',
   standalone: true,
-  imports: [NgForOf, CommonModule,NgIf], // Add NgForOf here
+  imports: [NgForOf, CommonModule,NgIf], 
   templateUrl: './discover-movie.component.html',
   styleUrls: ['./discover-movie.component.css'],
 })
@@ -41,7 +41,7 @@ export class DiscoverMovieComponent implements OnInit {
 
     this.tmdbService.getMoviesByGenre(genreId).subscribe(
       (data: any) => {
-        this.movies = data.results.slice(0, 30); // Limit to 10 movies
+        this.movies = data.results.slice(0, 30); 
         this.isLoading = false;
       },
       (error) => {
@@ -61,7 +61,7 @@ export class DiscoverMovieComponent implements OnInit {
     this.carousel.nativeElement.scrollBy({ left: -200, behavior: 'smooth' });
   }
 
-  // Scroll Right
+  
   scrollRight() {
     this.carousel.nativeElement.scrollBy({ left: 200, behavior: 'smooth' });
   }

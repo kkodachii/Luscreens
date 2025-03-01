@@ -7,8 +7,7 @@ import { map } from 'rxjs/operators';
 export class TmdbService {
   private apiKey = 'c646ab9e5209d5c5c8d42ab3f653b61a';
   private baseUrl = 'https://api.themoviedb.org/3';
-
-  // Genre mapping
+  
   private genres = [
     { id: 28, name: 'Action' },
     { id: 12, name: 'Adventure' },
@@ -40,7 +39,7 @@ export class TmdbService {
       })
       .pipe(
         map((response: any) => {
-          // Limit the results to 10 movies
+          
           response.results = response.results.slice(0, 10);
           return response;
         })
@@ -76,15 +75,15 @@ export class TmdbService {
       .get(`${this.baseUrl}/discover/tv`, {
         params: {
           api_key: this.apiKey,
-          with_networks: networkId.toString(), // Filter for Netflix
-          sort_by: 'popularity.desc', // Sort by popularity
+          with_networks: networkId.toString(), 
+          sort_by: 'popularity.desc', 
           page: '1',
         },
       })
       .pipe(
         map((response: any) => {
-          console.log('Netflix Series Response:', response); // Log response
-          response.results = response.results.slice(0, 30); // Limit to 10 series
+          console.log('Netflix Series Response:', response); 
+          response.results = response.results.slice(0, 30); 
           return response;
         })
       );
@@ -99,7 +98,7 @@ export class TmdbService {
       },
     });
   }
-   // Fetch TV series by genre
+   
    getSeriesByGenre(genreId: number): Observable<any> {
     return this.http.get(`${this.baseUrl}/discover/tv`, {
       params: {
@@ -110,7 +109,7 @@ export class TmdbService {
       },
     });
   }
-    // Fetch browse movies (filtered by genre)
+    
     getBrowseMovies(genreId: number): Observable<any> {
       return this.http.get(`${this.baseUrl}/discover/movie`, {
         params: {
@@ -138,7 +137,7 @@ export class TmdbService {
     });
   }
 
-  // Fetch Top-Rated TV Series
+  
   getTopRatedSeries(): Observable<any> {
     return this.http.get(`${this.baseUrl}/tv/top_rated`, {
       params: { api_key: this.apiKey },
@@ -148,11 +147,11 @@ export class TmdbService {
     return this.genres;
   }
 
-  // Method to map genre IDs to names
+  
   getGenreNames(genreIds: number[]): string {
     const genreNames = genreIds
       .map((id) => this.genres.find((genre) => genre.id === id)?.name)
-      .filter((name) => !!name); // Remove undefined values
+      .filter((name) => !!name); 
     return genreNames.join(', ');
   }
 
@@ -178,7 +177,7 @@ export class TmdbService {
     { id: 37, name: 'Western' },
   ];
 
-  // TV Series Genres
+  
   private tvGenres = [
     { id: 10759, name: 'Action & Adventure' },
     { id: 16, name: 'Animation' },
@@ -215,7 +214,7 @@ export class TmdbService {
         break;
       case 'rated':
         params.sort_by = 'vote_average.desc';
-        params['vote_count.gte'] = '100'; // Ensure only well-rated items are shown
+        params['vote_count.gte'] = '100'; 
         break;
       case 'recent':
         params.sort_by = 'release_date.desc';
@@ -226,7 +225,7 @@ export class TmdbService {
   
     return this.http.get(`${this.baseUrl}/discover/${endpoint}`, { params });
   }
-  // Get genre names
+  
   getGenreNamess(genreIds: number[], type: string): string {
     const genres = type === 'movie' ? this.movieGenres : this.tvGenres;
     const genreNames = genreIds

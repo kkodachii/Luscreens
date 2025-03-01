@@ -1,11 +1,11 @@
 import { Component, OnInit, ViewChild, ElementRef,  } from '@angular/core';
-import { NgForOf,CommonModule } from '@angular/common'; // Import NgForOf
+import { NgForOf,CommonModule } from '@angular/common'; 
 import { TmdbService } from '../../services/tmdb.service';
 
 @Component({
   selector: 'app-movie-list',
   standalone: true,
-  imports: [NgForOf, CommonModule], // Add NgForOf here
+  imports: [NgForOf, CommonModule], 
   templateUrl: './movie-list.component.html',
   styleUrls: ['./movie-list.component.css'],
 })
@@ -48,14 +48,14 @@ export class MovieListComponent implements OnInit {
     this.carousel.nativeElement.scrollBy({ left: -200, behavior: 'smooth' });
   }
 
-  // Scroll Right
+  
   scrollRight() {
     this.carousel.nativeElement.scrollBy({ left: 200, behavior: 'smooth' });
   }
   getGenres(genreIds: number[]): string {
     return genreIds
       .map((id) => this.genresList.find((genre) => genre.id === id)?.name)
-      .filter((name) => !!name) // Remove undefined values
+      .filter((name) => !!name) 
       .join(', ');
   }
 }

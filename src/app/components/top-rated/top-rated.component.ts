@@ -1,11 +1,11 @@
 import { Component, OnInit, ViewChild, ElementRef  } from '@angular/core';
-import { NgForOf, CommonModule,NgIf } from '@angular/common'; // Import NgForOf
+import { NgForOf, CommonModule,NgIf } from '@angular/common'; 
 import { TmdbService } from '../../services/tmdb.service';
 
 @Component({
   selector: 'app-top-rated',
   standalone: true,
-  imports: [NgForOf, CommonModule,NgIf], // Add NgForOf here
+  imports: [NgForOf, CommonModule,NgIf], 
   templateUrl: './top-rated.component.html',
   styleUrls: ['./top-rated.component.css'],
 })
@@ -34,7 +34,7 @@ export class TopRatedMovieSeriesComponent implements OnInit {
     if (option === 'Movies') {
   this.tmdbService.getTopRatedMovies().subscribe(
     (data: any) => {
-      this.items = data.results.slice(0, 30); // Limit to 10 items
+      this.items = data.results.slice(0, 30); 
       this.isLoading = false;
     },
     (error) => {
@@ -46,7 +46,7 @@ export class TopRatedMovieSeriesComponent implements OnInit {
 } else if (option === 'Series') {
   this.tmdbService.getTopRatedSeries().subscribe(
     (data: any) => {
-      this.items = data.results.slice(0, 30); // Limit to 10 items
+      this.items = data.results.slice(0, 30); 
       this.isLoading = false;
     },
     (error) => {
@@ -67,7 +67,7 @@ selectOption(option: string): void {
     this.carousel.nativeElement.scrollBy({ left: -200, behavior: 'smooth' });
   }
 
-  // Scroll Right
+  
   scrollRight() {
     this.carousel.nativeElement.scrollBy({ left: 200, behavior: 'smooth' });
   }
