@@ -2,11 +2,12 @@ import { Component, OnInit } from '@angular/core'; // Import OnInit
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { TmdbService } from '../../services/tmdb.service';
+import { RouterModule, Router, NavigationEnd } from '@angular/router';
 
 @Component({
   selector: 'app-search',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, RouterModule],
   templateUrl: './search.component.html',
   styleUrls: ['./search.component.css'],
 })

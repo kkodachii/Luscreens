@@ -1,6 +1,6 @@
 <div class="custom-scrollbar overflow-y-auto h-screen">
 <app-header></app-header>
-<main [class.mt-20]="!isDefaultRoute ">
+<main [class.mt-20]="!isDefaultRoute && !isDetailsRoute ">
   <router-outlet ></router-outlet> 
 </main>
 </div>

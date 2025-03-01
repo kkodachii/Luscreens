@@ -52,7 +52,7 @@
         *ngFor="let movie of movies"
         class="min-w-[150px] group relative overflow-hidden rounded-lg shadow-md"
       >
-        
+      <a [routerLink]="['/details', movie.media_type || (movie.title ? 'movie' : 'tv'), movie.id]" class="block">
         <img
           [src]="movie.poster_path ? 'https://image.tmdb.org/t/p/w500' + movie.poster_path : 'assets/fallback.jpg'"
           alt="{{ movie.title || movie.name }}"
@@ -94,6 +94,7 @@
             </div>
           </div>
         </div> 
+      </a>
           </div>
         </div>
   

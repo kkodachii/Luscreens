@@ -56,6 +56,17 @@ export class TmdbService {
       params: { api_key: this.apiKey },
     });
   }
+  
+  getTvDetails(tvId: number): Observable<any> {
+    return this.http.get(`${this.baseUrl}/tv/${tvId}`, {
+      params: { api_key: this.apiKey },
+    });
+  }
+  getCast(mediaType: string, id: number): Observable<any> {
+    return this.http.get(`${this.baseUrl}/${mediaType}/${id}/credits`, {
+      params: { api_key: this.apiKey },
+    });
+  }
 
   getMovieImages(movieId: number): Observable<any> {
     return this.http.get(`${this.baseUrl}/movie/${movieId}/images`, {
