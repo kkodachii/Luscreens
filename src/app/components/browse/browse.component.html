@@ -1,7 +1,7 @@
 <div class="p-4">
-  <!-- Filters -->
+  
   <div class="flex flex-wrap gap-2 mb-4">
-    <!-- Filters -->
+    
     <button
       (click)="applyFilter('popular')"
       class="px-3 py-1 text-sm font-medium rounded transition duration-300 relative"
@@ -9,7 +9,7 @@
       [class.text-gray-300]="selectedFilter !== 'popular'"
     >
       Most Popular
-      <!-- Red underline for selected filter -->
+      
       <span
         *ngIf="selectedFilter === 'popular'"
         class="absolute bottom-0 left-0 right-0 h-0.5 bg-red-600"
@@ -22,14 +22,14 @@
       [class.text-gray-300]="selectedFilter !== 'rated'"
     >
       Most Rated
-      <!-- Red underline for selected filter -->
+      
       <span
         *ngIf="selectedFilter === 'rated'"
         class="absolute bottom-0 left-0 right-0 h-0.5 bg-red-600"
       ></span>
     </button>
   
-    <!-- Visible Genres -->
+    
     <div class="flex flex-nowrap gap-2 overflow-hidden">
       <button
         *ngFor="let genre of visibleGenres"
@@ -39,7 +39,7 @@
         [class.text-gray-300]="selectedGenreId !== genre.id"
       >
         {{ genre.name }}
-        <!-- Red underline for selected genre -->
+        
         <span
           *ngIf="selectedGenreId === genre.id"
           class="absolute bottom-0 left-0 right-0 h-0.5 bg-red-600"
@@ -47,16 +47,16 @@
       </button>
     </div>
   
-    <!-- Dropdown Button for Hidden Genres -->
+    
     <div *ngIf="hiddenGenres.length > 0" class="relative">
-      <!-- Dropdown Trigger -->
+      
       <button
         (click)="toggleDropdown()"
         class="px-3 py-1 text-sm font-medium rounded transition duration-300 relative dropdown-button"
         [class.text-red-600]="false"
         [class.text-gray-300]="true"
       >
-        <!-- Three Dots Icon -->
+        
         <svg
           xmlns="http://www.w3.org/2000/svg"
           width="24"
@@ -75,7 +75,7 @@
           <path d="M19 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
         </svg>
       </button>
-      <!-- Dropdown Menu -->
+      
       <div
         *ngIf="isDropdownOpen"
         class="absolute top-full left-0 mt-2 w-36 bg-black bg-opacity-95 shadow-lg rounded-md overflow-hidden z-10"
@@ -91,34 +91,34 @@
     </div>
   </div>
 
-  <!-- Cards Grid -->
+  
   <div class="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-8 gap-4">
     <div *ngFor="let item of items" class="group relative rounded-lg overflow-hidden bg-gray-800">
-      <!-- Poster Image -->
+      
       <img
         [src]="item.poster_path ? 'https://image.tmdb.org/t/p/w500' + item.poster_path : 'assets/fallback.jpg'"
         alt="{{ item.title || item.name }}"
         class="w-full h-64 object-cover group-hover:scale-110 transition-transform duration-300"
         loading="lazy"
       />
-      <!-- Overlay Content -->
+      
       <div
         class="absolute bottom-0 left-0 right-0 bg-black bg-opacity-70 p-4 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-between"
         style="min-height: 5rem; max-height: 8rem;"
       >
-        <!-- Title -->
+        
         <h2 class="text-sm font-bold text-white break-words line-clamp-3">
           {{ item.title || item.name }}
         </h2>
-        <!-- Type and Rating -->
+        
         <div class="flex items-center justify-between mt-2">
-          <!-- Type (Movie or Series) -->
+          
           <span class="text-xs text-gray-300">
             {{ item.media_type === 'tv' ? 'Series' : 'Movie' }}
           </span>
-          <!-- Rating with Red Star -->
+          
           <div class="flex items-center text-xs text-gray-300">
-            <!-- Red Star Icon -->
+            
             <svg
               xmlns="http://www.w3.org/2000/svg"
               width="12"
@@ -131,14 +131,14 @@
                 d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"
               ></path>
             </svg>
-            <!-- Rating Text -->
+            
             <span>{{ item.vote_average.toFixed(1) }}/10</span>
           </div>
         </div>
       </div>
     </div>
   
-    <!-- Sentinel Element for Infinite Scroll -->
+    
     <div class="sentinel h-1 w-full"></div>
   </div>
 </div>

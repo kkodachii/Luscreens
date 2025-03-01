@@ -1,11 +1,11 @@
 import { Component, Input } from '@angular/core';
-import { NgIf , CommonModule } from '@angular/common'; // Import NgIf
+import { NgIf , CommonModule } from '@angular/common'; 
 import { TmdbService } from '../../services/tmdb.service';
 
 @Component({
   selector: 'app-movie-details',
   standalone: true,
-  imports: [NgIf , CommonModule], // Add NgIf here
+  imports: [NgIf , CommonModule], 
   templateUrl: './movie-details.component.html',
 })
 export class MovieDetailsComponent {

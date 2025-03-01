@@ -1,11 +1,11 @@
 import { Component, OnInit, ViewChild, ElementRef  } from '@angular/core';
-import { NgForOf, CommonModule,NgIf} from '@angular/common'; // Import NgForOf
+import { NgForOf, CommonModule,NgIf} from '@angular/common'; 
 import { TmdbService } from '../../services/tmdb.service';
 
 @Component({
   selector: 'app-movie-series',
   standalone: true,
-  imports: [NgForOf, CommonModule,NgIf], // Add NgForOf here
+  imports: [NgForOf, CommonModule,NgIf], 
   templateUrl: './movie-series.component.html',
   styleUrls: ['./movie-series.component.css'],
 })
@@ -16,7 +16,7 @@ export class MovieSeriesComponent implements OnInit {
   isLoading: boolean = true;
   showError: boolean = false;
 
-  // Network mapping
+  
   networks = [
     { id: 213, name: 'Netflix' },
     { id: 1024, name: 'Prime' },
@@ -28,8 +28,8 @@ export class MovieSeriesComponent implements OnInit {
 
   constructor(private tmdbService: TmdbService) {}
 
-  selectedNetworkId: number = 213; // Default to Netflix
-  selectedNetworkName: string = 'Netflix'; // Default network name
+  selectedNetworkId: number = 213; 
+  selectedNetworkName: string = 'Netflix'; 
 
   ngOnInit(): void {
     this.loadSeries(this.selectedNetworkId);
@@ -44,7 +44,7 @@ export class MovieSeriesComponent implements OnInit {
         this.series = data.results;
         this.isLoading = false;
 
-        // Update the selected network name
+        
         const selectedNetwork = this.networks.find((n) => n.id === networkId);
         if (selectedNetwork) {
           this.selectedNetworkName = selectedNetwork.name;
@@ -67,7 +67,7 @@ export class MovieSeriesComponent implements OnInit {
     this.carousel.nativeElement.scrollBy({ left: -200, behavior: 'smooth' });
   }
 
-  // Scroll Right
+  
   scrollRight() {
     this.carousel.nativeElement.scrollBy({ left: 200, behavior: 'smooth' });
   }

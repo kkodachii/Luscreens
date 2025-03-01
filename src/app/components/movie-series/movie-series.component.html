@@ -1,11 +1,11 @@
 <section class="py-8 -mt-4">
   <div class="container mx-auto px-4">
-    <!-- Title -->
+    
 <h2 class="text-white text-2xl font-bold mb-6">
   Series in <span class="text-red-600 hover:text-red-700">{{ selectedNetworkName }}</span>
 </h2>
 
-    <!-- Navigation Bar -->
+    
     <div class="flex overflow-x-auto space-x-4 mb-6 scrollbar-hide">
       <button
         *ngFor="let network of networks"
@@ -18,9 +18,9 @@
       </button>
     </div>
 
-    <!-- Carousel Container -->
+    
     <div class="relative overflow-hidden">
-      <!-- Previous Button -->
+      
       <button
         class="absolute top-1/2 left-0 transform -translate-y-1/2 bg-transparent text-white rounded px-2 h-64 flex items-center justify-center hover:bg-black hover:bg-opacity-50 transition duration-300 z-10"
         (click)="scrollLeft()"
@@ -42,7 +42,7 @@
         </svg>
       </button>
 
-      <!-- Scrollable seriess -->
+      
       <div
         #carousel
         class="flex space-x-4 overflow-x-auto scrollbar-hide"
@@ -51,31 +51,31 @@
       *ngFor="let series of series"
       class="min-w-[150px] group relative overflow-hidden rounded-lg shadow-md"
     >
-      <!-- Poster Image -->
+      
       <img
         [src]="series.poster_path ? 'https://image.tmdb.org/t/p/w500' + series.poster_path : 'assets/fallback.jpg'"
         alt="{{ series.title || series.name }}"
         class="w-full h-64 object-cover group-hover:scale-110 transition-transform duration-300"
         loading="lazy"
       />
-      <!-- Overlay Content -->
+      
       <div
         class="absolute bottom-0 left-0 right-0 bg-black bg-opacity-70 p-4 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-between"
         style="min-height: 5rem; max-height: 8rem;"
       >
-        <!-- Title -->
+        
         <h2 class="text-sm font-bold text-white break-words line-clamp-3">
           {{ series.title || series.name }}
         </h2>
-        <!-- Type and Rating -->
+        
         <div class="flex items-center justify-between mt-2">
-          <!-- Type (series or Series) -->
+          
           <span class="text-xs text-gray-300">
             {{ series.media_type === 'tv' ? 'Series' : 'Series' }}
           </span>
-          <!-- Rating with Red Star -->
+          
           <div class="flex items-center text-xs text-gray-300">
-            <!-- Red Star Icon -->
+            
             <svg
               xmlns="http://www.w3.org/2000/svg"
               width="12"
@@ -88,7 +88,7 @@
                 d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"
               ></path>
             </svg>
-            <!-- Rating Text -->
+            
             <span>{{ series.vote_average.toFixed(1) }}/10</span>
           </div>
         </div>
@@ -96,7 +96,7 @@
         </div>
       </div>
 
-      <!-- Next Button -->
+      
       <button
         class="absolute top-1/2 right-0 transform -translate-y-1/2 bg-transparent text-white rounded px-2 h-64 flex items-center justify-center hover:bg-black hover:bg-opacity-50 transition duration-300 z-10"
         (click)="scrollRight()"
@@ -119,7 +119,7 @@
       </button>
     </div>
 
-    <!-- Loading Spinner -->
+    
     <div *ngIf="isLoading" class="flex justify-center items-center h-64">
       <svg
         class="animate-spin h-8 w-8 text-white"
@@ -143,7 +143,7 @@
       </svg>
     </div>
 
-    <!-- Error Message -->
+    
     <div *ngIf="showError" class="text-red-500 text-center">
       Failed to load series. Please try again later.
     </div>
