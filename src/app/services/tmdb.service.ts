@@ -119,12 +119,7 @@ export class TmdbService {
           sort_by: 'popularity.desc',
           page: '1',
         },
-      }).pipe(
-        map((response: any) => {
-          response.results = response.results.slice(0, 10); // Limit results to 10
-          return response;
-        })
-      );
+      });
     }
 
     getBrowseSeries(genreId: number): Observable<any> {
@@ -135,12 +130,7 @@ export class TmdbService {
           sort_by: 'popularity.desc',
           page: '1',
         },
-      }).pipe(
-        map((response: any) => {
-          response.results = response.results.slice(0, 10); // Limit results to 10
-          return response;
-        })
-      );
+      });
     }
   getTopRatedMovies(): Observable<any> {
     return this.http.get(`${this.baseUrl}/movie/top_rated`, {
@@ -207,19 +197,18 @@ export class TmdbService {
     { id: 10768, name: 'War & Politics' },
     { id: 37, name: 'Western' },
   ];
-  getFilteredItems(type: string, filter: string, genreId?: number): Observable<any> {
+  getFilteredItems(type: string, filter: string, genreId?: number, page: number = 1): Observable<any> {
     const endpoint = type === 'movie' ? 'movie' : 'tv';
-    const genres = type === 'movie' ? this.movieGenres : this.tvGenres;
-
+  
     let params: any = {
       api_key: this.apiKey,
-      page: '1',
+      page: page.toString(),
     };
-
+  
     if (genreId) {
       params.with_genres = genreId.toString();
     }
-
+  
     switch (filter) {
       case 'popular':
         params.sort_by = 'popularity.desc';
@@ -234,13 +223,8 @@ export class TmdbService {
       default:
         params.sort_by = 'popularity.desc';
     }
-
-    return this.http.get(`${this.baseUrl}/discover/${endpoint}`, { params }).pipe(
-      map((response: any) => {
-        response.results = response.results.slice(0, 10); // Limit results to 10
-        return response;
-      })
-    );
+  
+    return this.http.get(`${this.baseUrl}/discover/${endpoint}`, { params });
   }
   // Get genre names
   getGenreNamess(genreIds: number[], type: string): string {
