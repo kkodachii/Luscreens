@@ -18,101 +18,158 @@
       <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-red-600"></div>
     </div>
 
-    <div *ngIf="!isLoading && item" class="max-w-4xl mx-auto">
+    <div *ngIf="!isLoading && item" class="max-w-4xl mx-auto text-center">
       <div class="flex flex-col md:flex-row gap-6">
         <!-- Poster Image -->
-        <div class="relative">
-          <img
-            [src]="item.poster_path ? 'https://image.tmdb.org/t/p/w500' + item.poster_path : 'assets/fallback.jpg'"
-            alt="{{ item.title || item.name }}"
-            class="w-full md:w-1/3 rounded-lg shadow-md"
-          />
-          <!-- Play Button -->
-          <button
-            (click)="embedMedia()"
-            class="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-red-600 text-white px-4 py-2 rounded-full flex items-center space-x-2 hover:bg-red-700 transition duration-300"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              class="w-5 h-5"
-            >
-              <polygon points="5 3 19 12 5 21 5 3"></polygon>
-            </svg>
-            <span>Play</span>
-          </button>
-        </div>
+        <img
+          [src]="item.poster_path ? 'https://image.tmdb.org/t/p/w500' + item.poster_path : 'assets/fallback.jpg'"
+          alt="{{ item.title || item.name }}"
+          class="w-full md:w-1/3 rounded-lg shadow-md object-cover mx-auto hidden sm:block"
+        />
 
         <!-- Details -->
         <div class="flex-1">
-          <h1 class="text-3xl font-bold mb-4">{{ item.title || item.name }}</h1>
-          <p class="text-gray-400 mb-4">{{ item.overview }}</p>
-          <div class="flex items-center text-gray-300 mb-4">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              class="text-red-600 mr-2"
+          <!-- Logo Title -->
+          <div class="mb-6 mx-auto">
+            <img
+              *ngIf="item.logo_path"
+              [src]="item.logo_path"
+              alt="{{ item.title || item.name }}"
+              class="h-16 sm:h-24 w-auto mx-auto"
+            />
+            <h1
+              *ngIf="!item.logo_path"
+              class="text-4xl font-bold mb-2 mx-auto"
             >
-              <path
-                d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"
-              ></path>
-            </svg>
-            <span>{{ item.vote_average.toFixed(1) }}/10</span>
+              {{ item.title || item.name }}
+            </h1>
           </div>
-          <div class="text-gray-400">
-            <p><strong>Release Date:</strong> {{ item.release_date || item.first_air_date }}</p>
-            <p><strong>Type:</strong> {{ item.media_type === 'tv' ? 'TV Show' : 'Movie' }}</p>
+
+          <!-- Runtime, Rating, & Release Date -->
+          <div class="flex items-center justify-center space-x-4 mb-4">
+            <!-- Runtime -->
+            <p class="text-gray-400 text-sm">{{ formatRuntime(item.runtime || item.episode_run_time) }}</p>
+
+            <!-- Rating -->
+            <div class="flex items-center text-gray-300">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                class="text-red-600 mr-2"
+              >
+                <path
+                  d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"
+                ></path>
+              </svg>
+              <span class="text-sm">{{ item.vote_average.toFixed(1) }}/10</span>
+            </div>
+
+            <!-- Release Date -->
+            <p class="text-gray-400 text-sm">{{ formatDate(item.release_date || item.first_air_date) }}</p>
+          </div>
+
+          <!-- Genres Banner -->
+          <div class="flex flex-wrap justify-center gap-2 mb-6">
+            <span
+              *ngFor="let genre of item.genres"
+              class="px-3 py-1 bg-red-600 text-white text-sm rounded-md"
+            >
+              {{ genre.name }}
+            </span>
+          </div>
+
+          <!-- Description -->
+          <p class="text-gray-400 text-sm leading-relaxed mb-6">{{ item.overview }}</p>
+
+          <!-- Action Buttons -->
+          <div class="flex justify-center space-x-4">
+            <!-- Play Button -->
+            <button
+              class="w-12 h-12 rounded-full bg-white flex items-center justify-center transition-transform hover:scale-110"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                class="text-netflix-black"
+              >
+                <path
+                  d="M6 4v16a1 1 0 0 0 1.524 .852l13 -8a1 1 0 0 0 0 -1.704l-13 -8a1 1 0 0 0 -1.524 .852z"
+                ></path>
+              </svg>
+            </button>
+
+            <!-- Add to Watchlist -->
+            <button
+              class="px-4 py-2 rounded-full border-2 border-white text-white flex items-center justify-center space-x-2 transition-transform hover:scale-105"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="mr-1"
+              >
+                <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path>
+              </svg>
+              <span class="text-sm">Add to Watchlist</span>
+            </button>
+
+            <!-- Download Button -->
+            <button
+              class="w-12 h-12 rounded-full bg-white flex items-center justify-center transition-transform hover:scale-110"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="text-netflix-black"
+              >
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+              </svg>
+            </button>
           </div>
         </div>
       </div>
     </div>
+  </div>
+</section>
 
-    <!-- Embedded Video -->
-    <div
-      #videoContainer
-      *ngIf="isEmbedVisible"
-      class="mt-8 max-w-4xl mx-auto p-4 bg-black/80 rounded-lg shadow-2xl transition-opacity duration-300"
-    >
-      <!-- Close Button -->
-      <button
-        (click)="closeVideo()"
-        class="absolute top-2 right-2 bg-red-600 text-white p-2 rounded-full hover:bg-red-700 transition duration-300"
-      >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          class="w-4 h-4"
-        >
-          <line x1="18" y1="6" x2="6" y2="18"></line>
-          <line x1="6" y1="6" x2="18" y2="18"></line>
-        </svg>
-      </button>
-
-      <!-- Video Player -->
-      <iframe
-        #videoPlayer
-        [src]="embedUrl"
-        frameborder="0"
-        allowfullscreen
-        class="w-full h-96 rounded-lg shadow-md"
-      ></iframe>
+<!-- Trailer Section -->
+<section class="mt-8 p-6 rounded-lg">
+  <h2 class="flex items-center text-white text-2xl sm:text-3xl font-bold mb-6">
+    <span class="w-2 h-8 bg-red-600 rounded-full mr-3"></span>
+    Trailer
+  </h2>
+  <div class="flex justify-center">
+    <iframe
+      *ngIf="embedUrl"
+      [src]="embedUrl"
+      frameborder="0"
+      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+      allowfullscreen
+      class="w-full max-w-4xl aspect-video rounded-lg shadow-md"
+    ></iframe>
+    <div *ngIf="!embedUrl" class="text-gray-400 text-center">
+      No trailer available.
     </div>
   </div>
 </section>
