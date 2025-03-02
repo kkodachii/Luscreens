@@ -264,4 +264,14 @@ export class TmdbService {
     const url = `${this.baseUrl}/${mediaType}/${id}/videos?api_key=${this.apiKey}`;
     return this.http.get(url);
   }
+  getTvDetailss(id: number): Observable<any> {
+    return this.http.get(`${this.baseUrl}/tv/${id}?api_key=${this.apiKey}`);
+  }
+
+  // Fetch episodes for a specific season
+  getSeasonDetails(tvId: number, seasonNumber: number): Observable<any> {
+    return this.http.get(
+      `${this.baseUrl}/tv/${tvId}/season/${seasonNumber}?api_key=${this.apiKey}`
+    );
+  }
 }

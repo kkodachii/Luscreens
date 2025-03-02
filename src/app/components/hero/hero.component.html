@@ -39,11 +39,14 @@
             <p class="text-sm sm:text-lg mb-6">{{ movie.overview | slice:0:100 }}...</p>
 
             <div class="flex items-center space-x-4">
-              <button class="bg-white text-blue-600 p-2 rounded-full hover:bg-gray-300 transition duration-300">
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" class="w-5 h-5 sm:w-6 sm:h-6" style="fill: rgba(0, 0, 0, 1);">
-                  <path d="M7 6v12l10-6z"></path>
-                </svg>
-              </button>
+              <button
+              class="bg-white text-blue-600 p-2 rounded-full hover:bg-gray-300 transition duration-300"
+              (click)="playMedia(movie.media_type || (movie.title ? 'movie' : 'tv'), movie.id)"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" class="w-5 h-5 sm:w-6 sm:h-6" style="fill: rgba(0, 0, 0, 1);">
+                <path d="M7 6v12l10-6z"></path>
+              </svg>
+            </button>
 
               <a   [routerLink]="['/details', movie.media_type || (movie.title ? 'movie' : 'tv'), movie.id]" class="inline-flex items-center border border-white text-white px-3 py-1 sm:px-4 sm:py-2 rounded-lg transition duration-300">
                 See More

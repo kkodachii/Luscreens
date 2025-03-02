@@ -1,5 +1,5 @@
 import { Component, OnInit } from '@angular/core';
-import { ActivatedRoute } from '@angular/router';
+import { ActivatedRoute, RouterModule, Router } from '@angular/router';
 import { TmdbService } from '../../services/tmdb.service';
 import { NgForOf, CommonModule, NgIf } from '@angular/common';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
@@ -7,7 +7,7 @@ import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 @Component({
   selector: 'app-details',
   standalone: true,
-  imports: [CommonModule, NgIf],
+  imports: [CommonModule, NgIf, RouterModule],
   templateUrl: './details.component.html',
   styleUrls: ['./details.component.css'],
 })
@@ -21,6 +21,7 @@ export class DetailsComponent implements OnInit {
   
   constructor(
     private route: ActivatedRoute,
+    private router: Router,
     private tmdbService: TmdbService,
     private sanitizer: DomSanitizer // Used to sanitize the URL
   ) {}
@@ -113,5 +114,15 @@ export class DetailsComponent implements OnInit {
     const minutes = totalMinutes % 60;
     return `${hours}h ${minutes}m`;
   }
+  playMedia(): void {
+    const mediaType = this.route.snapshot.paramMap.get('media_type');
+    const id = this.route.snapshot.paramMap.get('id');
 
+    if (mediaType === 'movie') {
+      this.router.navigate(['/frame', mediaType, id]);
+    } else if (mediaType === 'tv') {
+      // Default to the first season and episode
+      this.router.navigate(['/frame', mediaType, id, '1', '1']);
+    }
+  }
 }
