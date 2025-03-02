@@ -3,6 +3,8 @@ import { CommonModule } from '@angular/common';
 import { SlicePipe } from '@angular/common';
 import { TmdbService } from '../../services/tmdb.service';
 import { RouterModule, Router, NavigationEnd } from '@angular/router';
+import { ActivatedRoute } from '@angular/router';
+import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 
 @Component({
   selector: 'app-hero',
@@ -14,7 +16,12 @@ import { RouterModule, Router, NavigationEnd } from '@angular/router';
 export class HeroComponent implements OnInit {
   popularMovies: any[] = [];
 
-  constructor(private tmdbService: TmdbService) {}
+  constructor(
+    private route: ActivatedRoute,
+    private router: Router,
+    private tmdbService: TmdbService,
+    private sanitizer: DomSanitizer // Used to sanitize the URL
+  ) {}
 
   ngOnInit(): void {
     this.tmdbService.getPopularMovies().subscribe((data: any) => {
@@ -31,5 +38,13 @@ export class HeroComponent implements OnInit {
 
   getGenres(genreIds: number[]): string {
     return this.tmdbService.getGenreNames(genreIds);
+  }
+  playMedia(mediaType: string, id: number): void {
+    if (mediaType === 'movie') {
+      this.router.navigate(['/frame', mediaType, id]);
+    } else if (mediaType === 'tv') {
+      // Default to the first season and episode
+      this.router.navigate(['/frame', mediaType, id, '1', '1']);
+    }
   }
 }
