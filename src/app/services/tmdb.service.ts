@@ -274,4 +274,9 @@ export class TmdbService {
       `${this.baseUrl}/tv/${tvId}/season/${seasonNumber}?api_key=${this.apiKey}`
     );
   }
+  getTvImages(tvId: number): Observable<any> {
+    return this.http.get(`${this.baseUrl}/tv/${tvId}/images`, {
+      params: { api_key: this.apiKey },
+    });
+  }
 }

@@ -60,15 +60,34 @@ export class FrameComponent implements OnInit {
     }
   }
   fetchLogo(mediaType: string, id: number): void {
-    this.tmdbService.getMovieImages(id).subscribe(
-      (imagesData: any) => {
-        const logo = imagesData.logos.find((logo: any) => logo.iso_639_1 === 'en'); // Find English logo
-        this.item.logo_path = logo ? `https://image.tmdb.org/t/p/original${logo.file_path}` : null;
-      },
-      (error) => {
-        console.error('Error fetching logo:', error);
-      }
-    );
+    if (mediaType === 'movie') {
+      // Fetch movie logos
+      this.tmdbService.getMovieImages(id).subscribe(
+        (imagesData: any) => {
+          const logo = imagesData.logos.find((logo: any) => logo.iso_639_1 === 'en'); // Find English logo
+          this.item.logo_path = logo ? `https://image.tmdb.org/t/p/original${logo.file_path}` : null;
+        },
+        (error) => {
+          console.error('Error fetching movie logo:', error);
+          this.item.logo_path = null; // Fallback if no logo is found
+        }
+      );
+    } else if (mediaType === 'tv') {
+      // Fetch TV show logos
+      this.tmdbService.getTvImages(id).subscribe(
+        (imagesData: any) => {
+          const logo = imagesData.logos.find((logo: any) => logo.iso_639_1 === 'en'); // Find English logo
+          this.item.logo_path = logo ? `https://image.tmdb.org/t/p/original${logo.file_path}` : null;
+        },
+        (error) => {
+          console.error('Error fetching TV show logo:', error);
+          this.item.logo_path = null; // Fallback if no logo is found
+        }
+      );
+    } else {
+      console.error('Invalid media type for logo fetching.');
+      this.item.logo_path = null;
+    }
   }
 
   fetchMovieDetails(): void {
@@ -189,4 +208,5 @@ export class FrameComponent implements OnInit {
       console.error('Error accessing iframe content:', error);
     }
   }
+  
 }
