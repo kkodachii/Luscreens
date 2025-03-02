@@ -26,10 +26,9 @@ export class DetailsComponent implements OnInit {
   ) {}
 
   ngOnInit(): void {
-    // Get the media_type and ID from the route parameters
     const mediaType = this.route.snapshot.paramMap.get('media_type');
     const id = this.route.snapshot.paramMap.get('id');
-
+  
     if (mediaType && id) {
       // Fetch details based on media_type
       if (mediaType === 'movie') {
@@ -37,6 +36,8 @@ export class DetailsComponent implements OnInit {
           (data: any) => {
             this.item = data;
             this.fetchCast(mediaType, +id);
+            this.fetchLogo(mediaType, +id);
+            this.fetchTrailers(mediaType, +id); // Fetch trailers
           },
           (error) => {
             console.error('Error fetching movie details:', error);
@@ -48,6 +49,8 @@ export class DetailsComponent implements OnInit {
           (data: any) => {
             this.item = data;
             this.fetchCast(mediaType, +id);
+            this.fetchLogo(mediaType, +id);
+            this.fetchTrailers(mediaType, +id); // Fetch trailers
           },
           (error) => {
             console.error('Error fetching TV show details:', error);
@@ -56,6 +59,33 @@ export class DetailsComponent implements OnInit {
         );
       }
     }
+  }
+  
+  fetchTrailers(mediaType: string, id: number): void {
+    this.tmdbService.getVideos(mediaType, id).subscribe(
+      (videosData: any) => {
+        const videoKey = videosData?.results[0]?.key;
+        if (videoKey) {
+          // Sanitize the URL to make it safe for use in an iframe
+          this.embedUrl = this.sanitizer.bypassSecurityTrustResourceUrl(
+            `https://www.youtube.com/embed/${videoKey}`
+          );
+        }
+        this.isLoading = false;
+      },
+      (error) => {
+        console.error('Error fetching videos:', error);
+        this.isLoading = false;
+      }
+    );
+  }
+  
+  fetchLogo(mediaType: string, id: number): void {
+    this.tmdbService.getMovieImages(id).subscribe((imagesData: any) => {
+      const logo = imagesData.logos.find((logo: any) => logo.iso_639_1 === 'en'); // Find English logo
+      this.item.logo_path = logo ? `https://image.tmdb.org/t/p/original${logo.file_path}` : null;
+      this.isLoading = false;
+    });
   }
 
   fetchCast(mediaType: string, id: number): void {
@@ -70,17 +100,18 @@ export class DetailsComponent implements OnInit {
       }
     );
   }
-  embedMedia(): void {
-    const mediaType = this.route.snapshot.paramMap.get('media_type');
-    const id = this.route.snapshot.paramMap.get('id');
+  formatDate(date: string): string {
+    if (!date) return 'N/A';
+    const options: Intl.DateTimeFormatOptions = { month: 'numeric', day: 'numeric', year: 'numeric' };
+    return new Date(date).toLocaleDateString('en-US', options);
+  }
+  
+  formatRuntime(runtime: number | number[]): string {
+    if (!runtime) return 'N/A';
+    const totalMinutes = Array.isArray(runtime) ? runtime[0] : runtime;
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return `${hours}h ${minutes}m`;
+  }
 
-    if (mediaType && id) {
-      const playUrl = `https://moviesapi.club/${mediaType}/${id}`;
-      this.embedUrl = this.sanitizer.bypassSecurityTrustResourceUrl(playUrl); // Sanitize the URL
-      this.isEmbedVisible = true; // Show the embedded video
-    }
-  }
-  closeVideo(): void {
-    this.isEmbedVisible = false; // Hide the embedded video
-  }
 }

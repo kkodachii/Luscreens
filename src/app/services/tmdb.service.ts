@@ -260,4 +260,8 @@ export class TmdbService {
       },
     });
   }
+  getVideos(mediaType: string, id: number): Observable<any> {
+    const url = `${this.baseUrl}/${mediaType}/${id}/videos?api_key=${this.apiKey}`;
+    return this.http.get(url);
+  }
 }
