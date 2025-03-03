@@ -100,7 +100,7 @@ export class FrameComponent implements OnInit {
         this.details = data.overview || 'No details available.'; // Movie overview
 
         this.embedUrl = this.sanitizer.bypassSecurityTrustResourceUrl(
-          `https://vidsrc.rip/embed/movie/${this.id}?autoPlay=true`
+          `https://play2.123embed.net/movie/${this.id}`
         );
 
       },
