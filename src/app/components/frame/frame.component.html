@@ -165,7 +165,7 @@
                 <path d="M15 18l-6-6 6-6" />
               </svg>
             </button>
-
+        
             <!-- Scrollable Thumbnails -->
             <div #episodeScroll class="flex overflow-x-auto scrollbar-hide space-x-2">
               <span
@@ -175,9 +175,9 @@
                 class="relative cursor-pointer flex-shrink-0"
               >
                 <img
-                  [src]="episode.still_path ? 'https://image.tmdb.org/t/p/w200' + episode.still_path : 'assets/default-still.jpg'"
+                  [src]="episode.still_path ? 'https://image.tmdb.org/t/p/w300' + episode.still_path : 'assets/default-still.jpg'"
                   alt="{{ 'Episode ' + episode.episode_number }}"
-                  class="w-16 h-24 rounded-md object-cover border-2"
+                  class="w-32 h-18 rounded-md object-cover border-2"
                   [ngClass]="selectedEpisode === episode.episode_number ? 'border-red-600' : 'border-gray-700 hover:border-red-600'"
                 />
                 <div class="absolute bottom-1 left-1/2 transform -translate-x-1/2 text-xs font-medium text-white bg-black/70 px-1 rounded">
@@ -185,7 +185,7 @@
                 </div>
               </span>
             </div>
-
+        
             <!-- Next Scroll Button (Show if 5+ episodes) -->
             <button
               *ngIf="episodes.length >= 5"
