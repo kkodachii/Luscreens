@@ -100,8 +100,9 @@ export class FrameComponent implements OnInit {
         this.details = data.overview || 'No details available.'; // Movie overview
 
         this.embedUrl = this.sanitizer.bypassSecurityTrustResourceUrl(
-          `https://moviesapi.club/movie/${this.id}`
+          `https://vidsrc.cc/v2/embed/movie/${this.id}?autoPlay=true`
         );
+
       },
       (error) => {
         console.error('Error fetching movie details:', error);
@@ -162,7 +163,7 @@ export class FrameComponent implements OnInit {
   updateEmbedUrl(): void {
     if (this.mediaType === 'tv') {
       this.embedUrl = this.sanitizer.bypassSecurityTrustResourceUrl(
-        `https://moviesapi.club/tv/${this.id}-${this.selectedSeason}-${this.selectedEpisode}`
+        `https://vidsrc.cc/v2/embed/tv/${this.id}/${this.selectedSeason}/${this.selectedEpisode}?autoPlay=true`
       );
     }
   }
@@ -194,19 +195,5 @@ export class FrameComponent implements OnInit {
     const container = type === 'seasons' ? this.seasonScroll.nativeElement : this.episodeScroll.nativeElement;
     container.scrollBy({ left: 200, behavior: 'smooth' }); // Scroll right by 200px
   }
-  onIframeLoad(event: Event): void {
-    const iframe = event.target as HTMLIFrameElement;
-    try {
-      const iframeDocument = iframe.contentDocument || iframe.contentWindow?.document;
-  
-      // Check for ad-related keywords in the iframe content
-      if (iframeDocument && iframeDocument.body.innerText.includes('advertisement')) {
-        console.warn('Ad detected in iframe. Blocking...');
-        iframe.style.display = 'none'; // Hide the iframe
-      }
-    } catch (error) {
-      console.error('Error accessing iframe content:', error);
-    }
-  }
-  
+
 }
