@@ -100,7 +100,7 @@ export class FrameComponent implements OnInit {
         this.details = data.overview || 'No details available.'; // Movie overview
 
         this.embedUrl = this.sanitizer.bypassSecurityTrustResourceUrl(
-          `https://vidsrc.cc/v2/embed/movie/${this.id}?autoPlay=true`
+          `https://vidsrc.rip/embed/movie/${this.id}?autoPlay=true`
         );
 
       },
@@ -163,7 +163,7 @@ export class FrameComponent implements OnInit {
   updateEmbedUrl(): void {
     if (this.mediaType === 'tv') {
       this.embedUrl = this.sanitizer.bypassSecurityTrustResourceUrl(
-        `https://vidsrc.cc/v2/embed/tv/${this.id}/${this.selectedSeason}/${this.selectedEpisode}?autoPlay=true`
+        `https://moviesapi.club/tv/${this.id}-${this.selectedSeason}-${this.selectedEpisode}`
       );
     }
   }
