@@ -163,7 +163,7 @@ export class FrameComponent implements OnInit {
   updateEmbedUrl(): void {
     if (this.mediaType === 'tv') {
       this.embedUrl = this.sanitizer.bypassSecurityTrustResourceUrl(
-        `https://moviesapi.club/tv/${this.id}-${this.selectedSeason}-${this.selectedEpisode}`
+        `https://play2.123embed.net/tv/${this.id}/${this.selectedSeason}/${this.selectedEpisode}`
       );
     }
   }
