@@ -27,8 +27,16 @@ export class AppComponent implements AfterViewInit {
         this.isBrowseRouteActive = event.url.startsWith('/browse');
         this.isDetailsRoute = event.url.startsWith('/details');
         this.isFrameRoute = event.url.startsWith('/frame');
+        this.resetScrollPosition();
       }
     });
+  }
+  resetScrollPosition(): void {
+    // Reset the scroll position of the custom scrollbar container
+    const container = document.querySelector('.custom-scrollbar');
+    if (container) {
+      container.scrollTop = 0; // Scroll to the top
+    }
   }
   ngAfterViewInit(): void {
     // Initialize Flowbite after the view is fully initialized
