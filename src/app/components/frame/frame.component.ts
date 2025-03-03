@@ -100,9 +100,8 @@ export class FrameComponent implements OnInit {
         this.details = data.overview || 'No details available.'; // Movie overview
 
         this.embedUrl = this.sanitizer.bypassSecurityTrustResourceUrl(
-          `https://play2.123embed.net/movie/${this.id}`
+          `https://moviesapi.club/movie/${this.id}`
         );
-
       },
       (error) => {
         console.error('Error fetching movie details:', error);
@@ -163,7 +162,7 @@ export class FrameComponent implements OnInit {
   updateEmbedUrl(): void {
     if (this.mediaType === 'tv') {
       this.embedUrl = this.sanitizer.bypassSecurityTrustResourceUrl(
-        `https://play2.123embed.net/tv/${this.id}/${this.selectedSeason}/${this.selectedEpisode}`
+        `https://moviesapi.club/tv/${this.id}-${this.selectedSeason}-${this.selectedEpisode}`
       );
     }
   }
@@ -196,4 +195,6 @@ export class FrameComponent implements OnInit {
     container.scrollBy({ left: 200, behavior: 'smooth' }); // Scroll right by 200px
   }
 
+  
+  
 }
