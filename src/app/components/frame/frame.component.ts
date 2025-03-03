@@ -100,7 +100,7 @@ export class FrameComponent implements OnInit {
         this.details = data.overview || 'No details available.'; // Movie overview
 
         this.embedUrl = this.sanitizer.bypassSecurityTrustResourceUrl(
-          `https://vidfast.pro/movie/${this.id}`
+          `https://vidfast.pro/movie/${this.id}?autoPlay=true`
         );
       },
       (error) => {
@@ -162,7 +162,7 @@ export class FrameComponent implements OnInit {
   updateEmbedUrl(): void {
     if (this.mediaType === 'tv') {
       this.embedUrl = this.sanitizer.bypassSecurityTrustResourceUrl(
-        `https://vidfast.pro/tv/${this.id}/${this.selectedSeason}/${this.selectedEpisode}`
+        `https://vidfast.pro/tv/${this.id}/${this.selectedSeason}/${this.selectedEpisode}?autoPlay=true`
       );
     }
   }
