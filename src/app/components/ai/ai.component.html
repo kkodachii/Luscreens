@@ -7,10 +7,11 @@
       <div class="relative w-full sm:w-3/4 pr-0 sm:pr-2 mb-4 sm:mb-0">
         <input
           type="text"
-          placeholder="Enter your prompt (e.g., I want a sci-fi movie...)"
-          class="w-full px-4 py-3 pl-12 bg-transparent border border-white text-white rounded-full focus:outline-none focus:border-red-600 focus:ring-2 focus:ring-red-600 transition duration-300"
+          placeholder="Find movies or series with AI (e.g., I want a sci-fi movie...)"
+          class="w-full px-4 py-3 pr-14 pl-12 bg-transparent border border-white text-white rounded-full focus:outline-none focus:border-red-600 focus:ring-2 focus:ring-red-600 transition duration-300"
           [(ngModel)]="prompt"
         />
+        <!-- Search Icon -->
         <button
           (click)="sendMessage()"
           class="absolute inset-y-0 left-0 flex items-center px-3 ml-2 text-gray-400 hover:text-red-500 transition duration-300"
@@ -32,8 +33,30 @@
             <path d="M21 21l-6 -6" />
           </svg>
         </button>
+        <!-- Regenerate Icon -->
+        <button
+          (click)="regenerate()"
+          class="absolute inset-y-0 right-0 flex items-center px-3 mr-2 text-gray-400 hover:text-red-500 transition duration-300"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            class="icon icon-tabler icons-tabler-outline icon-tabler-refresh w-6 h-6"
+          >
+            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+            <path d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4" />
+            <path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4" />
+          </svg>
+        </button>
       </div>
-  
+    
       <!-- Send Button -->
       <div class="w-full sm:w-1/4 pl-0 sm:pl-2">
         <button

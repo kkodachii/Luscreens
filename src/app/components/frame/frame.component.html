@@ -13,19 +13,19 @@
   </div>
 
   <!-- Content -->
-  <div class="relative z-10 mt-28">
+  <div class="relative z-10 mt-28 px-4 sm:px-6 lg:px-8">
     <div class="max-w-7xl mx-auto flex flex-col lg:flex-row gap-8">
       <!-- Video Player -->
-      <div class="lg:w-3/4">
-<iframe
-  *ngIf="embedUrl"
-  [src]="embedUrl"
-  frameborder="0"
-  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-  allowfullscreen
-  sandbox="allow-same-origin allow-scripts allow-popups-to-escape-sandbox"
-  class="w-full aspect-video rounded-lg shadow-xl"
-></iframe>
+      <div class="lg:w-3/4 w-full">
+        <iframe
+          *ngIf="embedUrl"
+          [src]="embedUrl"
+          frameborder="0"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allowfullscreen
+          sandbox="allow-same-origin allow-scripts allow-popups-to-escape-sandbox"
+          class="w-full aspect-video rounded-lg shadow-xl"
+        ></iframe>
 
         <div *ngIf="!embedUrl" class="text-gray-500 text-center mt-8 mb-8">
           Unable to load the video.
@@ -40,15 +40,15 @@
             *ngIf="item.logo_path"
             [src]="item.logo_path"
             alt="{{ title }}"
-            class="w-48 h-auto object-contain mx-auto"
+            class="w-48 h-auto object-contain mx-auto sm:w-64"
           />
-          <h1 *ngIf="!item.logo_path" class="text-4xl font-bold text-white text-center">
+          <h1 *ngIf="!item.logo_path" class="text-2xl sm:text-4xl font-bold text-white text-center">
             {{ title }}
           </h1>
         </div>
 
         <!-- Rating and Release Date -->
-        <div class="flex items-center space-x-4 text-gray-300">
+        <div class="flex items-center space-x-4 text-gray-300 justify-center">
           <span class="flex items-center">
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -68,12 +68,12 @@
         </div>
 
         <!-- Details -->
-        <p class="text-gray-300 text-sm">{{ details }}</p>
+        <p class="text-gray-300 text-sm text-center">{{ details }}</p>
 
         <!-- Season Selector -->
-        <div *ngIf="mediaType === 'tv'">
-          <label class="block text-gray-300 font-medium mb-2">Season:</label>
-          <div class="relative w-[20rem]">
+        <div *ngIf="mediaType === 'tv'" class="w-full">
+          <label class="block text-gray-300 font-medium mb-2 text-center">Season:</label>
+          <div class="relative w-full overflow-x-auto scrollbar-hide">
             <!-- Previous Scroll Button (Show if 5+ seasons) -->
             <button
               *ngIf="seasons.length >= 5"
@@ -141,9 +141,9 @@
         </div>
 
         <!-- Episode Selector -->
-        <div *ngIf="mediaType === 'tv'">
-          <label class="block text-gray-300 font-medium mb-2">Episode:</label>
-          <div class="relative w-[20rem]">
+        <div *ngIf="mediaType === 'tv'" class="w-full">
+          <label class="block text-gray-300 font-medium mb-2 text-center">Episode:</label>
+          <div class="relative w-full overflow-x-auto scrollbar-hide">
             <!-- Previous Scroll Button (Show if 5+ episodes) -->
             <button
               *ngIf="episodes.length >= 5"
@@ -165,7 +165,7 @@
                 <path d="M15 18l-6-6 6-6" />
               </svg>
             </button>
-        
+
             <!-- Scrollable Thumbnails -->
             <div #episodeScroll class="flex overflow-x-auto scrollbar-hide space-x-2">
               <span
@@ -185,7 +185,7 @@
                 </div>
               </span>
             </div>
-        
+
             <!-- Next Scroll Button (Show if 5+ episodes) -->
             <button
               *ngIf="episodes.length >= 5"
