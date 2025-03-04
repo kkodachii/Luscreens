@@ -1,4 +1,4 @@
-import { Component } from '@angular/core';
+import { Component, OnInit } from '@angular/core';
 import { HttpClient, HttpHeaders,HttpClientModule } from '@angular/common/http';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
@@ -14,8 +14,9 @@ import { RouterModule, Router, NavigationEnd } from '@angular/router';
   standalone: true,
 })
 
-export class AiComponent {
+export class AiComponent implements OnInit {
   prompt: string = '';
+  query: string = ''; // Tracks the search query
   response: string = '';
   isLoading: boolean = false;
   tmdbResults: any[] = []; // Store TMDB search results
@@ -25,10 +26,16 @@ export class AiComponent {
 
   constructor(private http: HttpClient, private tmdbService: TmdbService) {}
 
+  ngOnInit(): void {
+    // Fetch top 20 movies on component load
+    this.fetchTopMovies();
+  }
+
   sendMessage(): void {
     if (!this.prompt.trim()) return;
 
     this.isLoading = true;
+    this.query = this.prompt;
     this.response = ''; // Clear previous response
     this.tmdbResults = []; // Clear previous TMDB results
 
@@ -74,11 +81,25 @@ export class AiComponent {
   searchTmdb(query: string): void {
     this.tmdbService.searchMulti(query).subscribe(
       (results) => {
-        this.tmdbResults = results.results; // Store TMDB search results
-        console.log('TMDB Results:', this.tmdbResults);
+        // Filter results to include only movies/series with ratings
+        this.tmdbResults = results.results.filter((item: any) => item.vote_average > 0);
+
+        console.log('Filtered TMDB Results:', this.tmdbResults);
       },
       (error) => {
         console.error('Error fetching TMDB results:', error);
+      }
+    );
+  }
+
+  fetchTopMovies(): void {
+    this.tmdbService.getTopRatedMovies().subscribe(
+      (results) => {
+        this.tmdbResults = results.results.slice(0, 20); // Limit to top 20 movies
+        console.log('Top 20 Movies:', this.tmdbResults);
+      },
+      (error) => {
+        console.error('Error fetching top movies:', error);
       }
     );
   }

@@ -1,11 +1,6 @@
 <section class="min-h-screen text-white p-4">
 
-    <!-- AI Movie Suggestions Heading -->
-    <div class="flex items-center text-white text-xl sm:text-2xl md:text-3xl font-bold mb-6">
-      <span class="w-2 h-7 bg-red-600 rounded-full mr-3 animate-pulse"></span>
-      AI Movie Suggestions
-    </div>
-
+  
     <!-- Input Area -->
     <div class="flex flex-col sm:flex-row w-full mb-8">
       <!-- Search Bar -->
@@ -49,11 +44,30 @@
         </button>
       </div>
     </div>
+
+        <!-- AI Movie Suggestions Heading -->
+        <div class="flex items-center text-white text-xl sm:text-2xl md:text-3xl font-bold mb-6">
+            <span class="w-2 h-7 bg-red-600 rounded-full mr-3 animate-pulse"></span>
+            {{
+              isLoading
+                ? 'Generating Suggestions...'
+                : query.trim()
+                  ? tmdbResults.length > 0
+                    ? 'Generated Title: ' + response
+                    : 'No Results Found for "' + query + '"'
+                  : 'Top AI Movie Suggestions'
+            }}
+          </div>
+  
+    <!-- Loading Spinner -->
+    <div *ngIf="isLoading" class="flex justify-center items-center min-h-[20vh]">
+      <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-red-600"></div>
+    </div>
   
     <!-- TMDB Results -->
-    <div *ngIf="tmdbResults.length > 0" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+    <div *ngIf="!isLoading && tmdbResults.length > 0" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
       <div *ngFor="let result of tmdbResults" class="group relative rounded-lg overflow-hidden bg-gray-800">
-        <a [routerLink]="['/details', result.media_type || (result.title ? 'movie' : 'tv'), result.id]" class="block">
+        <a [routerLink]="['/details', result.media_type || 'movie', result.id]" class="block">
           <!-- Poster Image -->
           <img
             [src]="result.poster_path ? 'https://image.tmdb.org/t/p/w500' + result.poster_path : 'assets/fallback.jpg'"
@@ -98,4 +112,5 @@
         </a>
       </div>
     </div>
+  
   </section>

@@ -61,6 +61,6 @@ body {
 
 
 .active-link {
-  @apply hidden sm:flex items-center space-x-2 text-white bg-gradient-to-r from-red-500 to-red-700 border border-red-600 hover:from-red-600 hover:to-red-800 transition duration-300 px-3 py-1 rounded-full;
+  @apply hidden sm:flex items-center text-white bg-gradient-to-r from-red-500 to-red-700 border border-red-600 hover:from-red-600 hover:to-red-800 transition duration-300 px-3 py-1 rounded-full;
 }
 
