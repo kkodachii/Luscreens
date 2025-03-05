@@ -85,68 +85,136 @@
           <p class="text-gray-400 text-sm leading-relaxed mb-6">{{ item.overview }}</p>
 
           <!-- Action Buttons -->
-          <div class="flex justify-center space-x-4">
-            <!-- Play Button -->
-            <button
-              class="w-12 h-12 rounded-full bg-white flex items-center justify-center transition-transform hover:scale-110"
-              (click)="playMedia()"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="24"
-                height="24"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-                class="text-netflix-black"
+          <div class="flex flex-col space-y-4">
+            <!-- First Row: Main Buttons -->
+            <div class="flex justify-center space-x-4">
+              <!-- Play Button -->
+              <button
+                class="w-12 h-12 rounded-full bg-white flex items-center justify-center transition-transform hover:scale-110"
+                (click)="playMedia()"
               >
-                <path
-                  d="M6 4v16a1 1 0 0 0 1.524 .852l13 -8a1 1 0 0 0 0 -1.704l-13 -8a1 1 0 0 0 -1.524 .852z"
-                ></path>
-              </svg>
-            </button>
-
-            <!-- Add to Watchlist -->
-            <button
-              class="px-4 py-2 rounded-full border-2 border-white text-white flex items-center justify-center space-x-2 transition-transform hover:scale-105"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="20"
-                height="20"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="mr-1"
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="24"
+                  height="24"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  class="text-netflix-black"
+                >
+                  <path
+                    d="M6 4v16a1 1 0 0 0 1.524 .852l13 -8a1 1 0 0 0 0 -1.704l-13 -8a1 1 0 0 0 -1.524 .852z"
+                  ></path>
+                </svg>
+              </button>
+          
+              <!-- Add to Watchlist -->
+              <button
+                class="px-4 py-2 rounded-full border-2 border-white text-white flex items-center justify-center space-x-2 transition-transform hover:scale-105"
               >
-                <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path>
-              </svg>
-              <span class="text-sm">Add to Watchlist</span>
-            </button>
-
-            <!-- Download Button -->
-            <button
-              class="w-12 h-12 rounded-full bg-white flex items-center justify-center transition-transform hover:scale-110"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="24"
-                height="24"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="text-netflix-black"
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  class="mr-1"
+                >
+                  <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path>
+                </svg>
+                <span class="text-sm">Add to Watchlist</span>
+              </button>
+          
+              <!-- Download Button -->
+              <button
+                class="w-12 h-12 rounded-full bg-white flex items-center justify-center transition-transform hover:scale-110"
+                (click)="toggleTorrentList()"
               >
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                <polyline points="7 10 12 15 17 10"></polyline>
-                <line x1="12" y1="15" x2="12" y2="3"></line>
-              </svg>
-            </button>
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="24"
+                  height="24"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  class="text-netflix-black"
+                >
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="7 10 12 15 17 10"></polyline>
+                  <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+              </button>
+            </div>
+          
+            <!-- Second Row: Torrent-Specific Download Buttons -->
+            <div *ngIf="showTorrentList">
+              <!-- Loading Indicator -->
+              <div *ngIf="loadingTorrents" class="flex justify-center items-center py-4">
+                <svg
+                  class="animate-spin h-5 w-5 text-gray-500"
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                >
+                  <circle
+                    class="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    stroke-width="4"
+                  ></circle>
+                  <path
+                    class="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 0012 20c4.411 0 8-3.589 8-8 0-1.23-.317-2.396-.879-3.429l-4.71 4.71z"
+                  ></path>
+                </svg>
+                <span class="ml-2 text-gray-500">Loading torrents...</span>
+              </div>
+            
+              <!-- Torrent Buttons -->
+              <div *ngIf="!loadingTorrents && torrents" class="flex flex-wrap justify-center gap-2">
+                <button
+                  *ngFor="let torrent of getUniqueTorrents()"
+                  class="px-4 py-2 bg-white text-black border border-gray-300 rounded-md hover:bg-gray-100 transition duration-300 flex items-center space-x-1"
+                  (click)="downloadTorrent(torrent.magnet)"
+                >
+                  <!-- Torrent Icon -->
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="24"
+                    height="24"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    class="icon icon-tabler icons-tabler-outline icon-tabler-circle-arrow-down"
+                  >
+                    <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                    <path d="M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0" />
+                    <path d="M8 12l4 4" />
+                    <path d="M12 8v8" />
+                    <path d="M16 12l-4 4" />
+                  </svg>
+                  <!-- Button Text -->
+                  <span>Download {{ torrent.quality }}</span>
+                </button>
+              </div>
+            
+              <!-- No Torrents Available -->
+              <div *ngIf="!loadingTorrents && !torrents" class="text-center text-gray-500">
+                No torrents available.
+              </div>
+            </div>
           </div>
         </div>
       </div>
