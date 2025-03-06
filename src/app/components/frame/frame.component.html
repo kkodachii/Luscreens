@@ -15,8 +15,8 @@
   <!-- Content -->
   <div class="relative z-10 mt-28 px-4 sm:px-6 lg:px-8">
     <div class="max-w-7xl mx-auto flex flex-col lg:flex-row gap-8">
-      <!-- Video Player -->
       <div class="lg:w-3/4 w-full">
+        <!-- Video Player -->
         <iframe
           *ngIf="embedUrl"
           [src]="embedUrl"
@@ -26,7 +26,7 @@
           sandbox="allow-same-origin allow-scripts allow-popups-to-escape-sandbox"
           class="w-full aspect-video rounded-lg shadow-xl"
         ></iframe>
-
+      
         <div *ngIf="!embedUrl" class="text-gray-500 text-center mt-8 mb-8">
           Unable to load the video.
         </div>
@@ -211,5 +211,189 @@
         </div>
       </div>
     </div>
+    <section>
+      <!-- Navigation Tabs -->
+      <div class="mt-8">
+        <div class="flex space-x-4">
+          <!-- Plot Tab -->
+          <button
+            (click)="setActiveSection('plot')"
+            [class.active]="activeSection === 'plot'"
+            class="relative px-4 py-2 text-sm font-medium text-gray-300 hover:text-white transition duration-300 focus:outline-none"
+          >
+            Plot
+            <span
+              *ngIf="activeSection === 'plot'"
+              class="absolute bottom-0 left-0 right-0 h-0.5 bg-red-600"
+            ></span>
+          </button>
+    
+          <!-- Summary Tab with Spoiler Warning -->
+          <button
+            (click)="setActiveSection('summary')"
+            [class.active]="activeSection === 'summary'"
+            class="relative px-4 py-2 text-sm font-medium text-gray-300 hover:text-white transition duration-300 focus:outline-none flex items-center space-x-1"
+          >
+            <span>Summary</span>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="white"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="icon icon-tabler icons-tabler-outline icon-tabler-alert-circle ml-1"
+            >
+              <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+              <path d="M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0" />
+              <path d="M12 8v4" />
+              <path d="M12 16h.01" />
+            </svg>
+            <span
+              *ngIf="activeSection === 'summary'"
+              class="absolute bottom-0 left-0 right-0 h-0.5 bg-red-600"
+            ></span>
+          </button>
+    
+          <!-- Ending Explanation Tab with Spoiler Warning -->
+          <button
+            (click)="setActiveSection('ending')"
+            [class.active]="activeSection === 'ending'"
+            class="relative px-4 py-2 text-sm font-medium text-gray-300 hover:text-white transition duration-300 focus:outline-none flex items-center space-x-1"
+          >
+            <span class="hidden sm:inline">Ending Explanation</span>
+            <span class="sm:hidden">Ending</span>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="white"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="icon icon-tabler icons-tabler-outline icon-tabler-alert-circle ml-1"
+            >
+              <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+              <path d="M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0" />
+              <path d="M12 8v4" />
+              <path d="M12 16h.01" />
+            </svg>
+            <span
+              *ngIf="activeSection === 'ending'"
+              class="absolute bottom-0 left-0 right-0 h-0.5 bg-red-600"
+            ></span>
+          </button>
+    
+          <!-- Ask AI Tab -->
+          <button
+            (click)="setActiveSection('ask')"
+            [class.active]="activeSection === 'ask'"
+            class="relative px-4 py-2 text-sm font-medium text-gray-300 hover:text-white transition duration-300 focus:outline-none flex items-center space-x-1"
+          >
+          <span class="hidden sm:inline">Ask AI</span>
+          <span class="sm:hidden">Ask</span>
+            <svg  xmlns="http://www.w3.org/2000/svg"  width="16"  height="16"  viewBox="0 0 24 24"  fill="none"  stroke="currentColor"  stroke-width="2"  stroke-linecap="round"  stroke-linejoin="round"  class="icon icon-tabler icons-tabler-outline icon-tabler-message-circle"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M3 20l1.3 -3.9c-2.324 -3.437 -1.426 -7.872 2.1 -10.374c3.526 -2.501 8.59 -2.296 11.845 .48c3.255 2.777 3.695 7.266 1.029 10.501c-2.666 3.235 -7.615 4.215 -11.574 2.293l-4.7 1" /></svg>
+            <span
+              *ngIf="activeSection === 'ask'"
+              class="absolute bottom-0 left-0 right-0 h-0.5 bg-red-600"
+            ></span>
+          </button>
+        </div>
+    
+        <!-- Content Based on Active Section -->
+        <div class="mt-4 text-gray-300">
+          <!-- Loading Spinner for Season/Episode Changes -->
+          <div *ngIf="isSeasonEpisodeLoading" class="flex flex-col items-center text-center mb-4">
+            <span class="loading-spinner inline-block w-6 h-6 border-t-2 border-b-2 border-gray-300 rounded-full animate-spin mb-2"></span>
+            <p>Loading content for Season {{ selectedSeason }}, Episode {{ selectedEpisode }}...</p>
+          </div>
+    
+          <!-- Plot Section -->
+          <div *ngIf="activeSection === 'plot' && !isSeasonEpisodeLoading">
+            <p *ngIf="!plot" class="flex flex-col items-center text-center">
+              <span class="loading-spinner inline-block w-6 h-6 border-t-2 border-b-2 border-gray-300 rounded-full animate-spin mb-2"></span>
+              Loading plot...
+            </p>
+            <p *ngIf="plot" class="text-sm leading-relaxed pb-8">{{ plot }}</p>
+          </div>
+    
+          <!-- Summary Section -->
+          <div *ngIf="activeSection === 'summary' && !isSeasonEpisodeLoading">
+            <div *ngIf="summary" class="mb-2 p-2 bg-red-700 text-white rounded flex flex-col items-center justify-center text-center text-md">
+              <strong>Spoiler Alert</strong>
+            </div>
+            <p *ngIf="!summary" class="flex flex-col items-center text-center">
+              <span class="loading-spinner inline-block w-6 h-6 border-t-2 border-b-2 border-gray-300 rounded-full animate-spin mb-2"></span>
+              Loading summary...
+            </p>
+            <p *ngIf="summary" class="text-sm leading-relaxed pb-8 ">{{ summary }}</p>
+          </div>
+    
+          <!-- Ending Explanation Section -->
+          <div *ngIf="activeSection === 'ending' && !isSeasonEpisodeLoading">
+            <div *ngIf="endingExplanation" class="mb-2 p-2 bg-red-700 text-white rounded flex flex-col items-center justify-center text-center text-md">
+              <strong>Spoiler Alert</strong>
+            </div>
+            <p *ngIf="!endingExplanation" class="flex flex-col items-center text-center">
+              <span class="loading-spinner inline-block w-6 h-6 border-t-2 border-b-2 border-gray-300 rounded-full animate-spin mb-2"></span>
+              Loading ending explanation...
+            </p>
+            <p *ngIf="endingExplanation" class="text-sm leading-relaxed pb-8">{{ endingExplanation }}</p>
+          </div>
+    
+          <!-- Ask AI Section -->
+          <div *ngIf="activeSection === 'ask' && !isSeasonEpisodeLoading">
+            <!-- Chat Container -->
+            <div class="flex flex-col max-h-[400px] overflow-y-auto p-4 space-y-4 rounded-lg shadow-md chat-container">
+              <!-- Initial AI Message -->
+              <div *ngIf="chatHistory.length === 0" class="flex justify-start">
+                <div class="w-fit px-4 py-2 bg-netflix-black text-gray-300 rounded-lg">
+                  Note: Only 2023 movies/series below can answer.
+                </div>
+              </div>
+          
+              <!-- Chat History -->
+              <div *ngFor="let message of chatHistory" [class.justify-end]="message.sender === 'user'" [class.justify-start]="message.sender === 'ai'">
+                <div
+                  class="w-fit px-4 py-2 rounded-lg"
+                  [class.bg-red-600]="message.sender === 'user'"
+                  [class.text-white]="message.sender === 'user'"
+                  [class.bg-netflix-black]="message.sender === 'ai'"
+                  [class.text-gray-300]="message.sender === 'ai'"
+                  [class.ml-auto]="message.sender === 'user'"
+                  [class.mr-auto]="message.sender === 'ai'"
+                >
+                  {{ message.text }}
+                </div>
+              </div>
+          
+              <!-- Loading Spinner for AI Response -->
+              <div *ngIf="isAIResponding" class="flex justify-start">
+                <div class="w-fit px-4 py-2 class.bg-netflix-black text-gray-300 rounded-lg flex items-center space-x-2">
+                  <span class="loading-spinner inline-block w-6 h-6 border-t-2 border-b-2 border-gray-300 rounded-full animate-spin"></span>
+                  <p>Waiting for AI response...</p>
+                </div>
+              </div>
+            </div>
+          
+            <!-- Input Field -->
+            <div class="mt-4 pb-8">
+              <input
+                [(ngModel)]="userQuestion"
+                (keyup.enter)="sendMessage()"
+                placeholder="Ask a question about this movie/series..."
+                class="w-full px-4 py-2 text-sm text-gray-300 bg-transparent border border-white rounded-full focus:outline-none focus:border-red-600"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
   </div>
+  
 </section>
