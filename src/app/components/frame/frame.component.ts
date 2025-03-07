@@ -266,7 +266,7 @@ export class FrameComponent implements OnInit {
         this.isLoading = false; // Mark loading as complete
 
         this.embedUrl = this.sanitizer.bypassSecurityTrustResourceUrl(
-          `https://vidfast.pro/movie/${this.id}?autoPlay=true`
+          `https://vidfast.pro/movie/${this.id}?autoPlay=true&theme=red&title=false`
         );
 
         // Fetch initial content after loading is complete
@@ -350,7 +350,7 @@ export class FrameComponent implements OnInit {
   updateEmbedUrl(): void {
     if (this.mediaType === 'tv') {
       this.embedUrl = this.sanitizer.bypassSecurityTrustResourceUrl(
-        `https://vidfast.pro/tv/${this.id}/${this.selectedSeason}/${this.selectedEpisode}?autoPlay=true`
+        `https://vidfast.pro/tv/${this.id}/${this.selectedSeason}/${this.selectedEpisode}?autoPlay=true&theme=red&title=false`
       );
     }
   }
