@@ -23,6 +23,7 @@
     "@ng-icons/lucide": ">=29.0.0",
     "@spartan-ng/brain": "0.0.1-alpha.407",
     "@tailwindcss/postcss": "^4.0.7",
+    "@vercel/analytics": "^1.5.0",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
     "core-js": "^3.40.0",

@@ -5,6 +5,7 @@ import { NgForOf, NgIf, CommonModule } from '@angular/common';
 import { TmdbService } from '../../services/tmdb.service';
 import { FormsModule } from '@angular/forms';
 import { HttpClient, HttpHeaders,HttpClientModule } from '@angular/common/http';
+import { inject } from '@vercel/analytics';
 
 @Component({
   selector: 'app-frame',
@@ -67,10 +68,11 @@ export class FrameComponent implements OnInit {
   ) {}
 
   ngOnInit(): void {
+    // Initialize Vercel Analytics
+    inject();
+
     this.mediaType = this.route.snapshot.paramMap.get('media_type') || '';
     this.id = this.route.snapshot.paramMap.get('id') || '';
-
-    
 
     if (this.mediaType && this.id) {
       if (this.mediaType === 'movie') {
@@ -80,8 +82,7 @@ export class FrameComponent implements OnInit {
       } else {
         console.error('Invalid media type.');
       }
-            // Fetch logo after determining media type and ID
-            this.fetchLogo(this.mediaType, +this.id);
+      this.fetchLogo(this.mediaType, +this.id);
     } else {
       console.error('Missing required route parameters.');
     }
@@ -395,7 +396,7 @@ export class FrameComponent implements OnInit {
   You are an expert assistant answering questions about the ${this.mediaType} "${title}".
   - Answer the following question: "${this.userQuestion}"
   - Be formal and concise in your response.
-  - If the question is not related to this ${this.mediaType}, respond with: "I’d love to help, but I’m only answering movie/series-related questions!"
+  - If the question is not related to this ${this.mediaType}, respond with: "I'd love to help, but I'm only answering movie/series-related questions!"
 `;
 
     // Call the Gemini API
@@ -441,7 +442,7 @@ export class FrameComponent implements OnInit {
       You are an expert assistant answering questions about the ${this.mediaType} "${title}".
       - Answer the following question: "${this.userQuestion}"
       - Be formal and concise in your response.
-      - If the question is not related to this ${this.mediaType}, respond with: "Sorry, but your question doesn’t seem related to this movies or series!"
+      - If the question is not related to this ${this.mediaType}, respond with: "Sorry, but your question doesn't seem related to this movies or series!"
     `;
   
     // Call the Gemini API
@@ -459,7 +460,7 @@ export class FrameComponent implements OnInit {
   
           // Post-process the response to ensure relevance
           if (!this.isResponseRelevant(aiResponse)) {
-            aiResponse = "Sorry, but your question doesn’t seem related to this movies or series!";
+            aiResponse = "Sorry, but your question doesn't seem related to this movies or series!";
           }
   
           // Add AI's response to chat history
@@ -481,7 +482,7 @@ export class FrameComponent implements OnInit {
   
   // Helper function to check if the response is relevant
   isResponseRelevant(response: string): boolean {
-    const fallbackMessage = "Sorry, but your question doesn’t seem related to this movies or series!";
+    const fallbackMessage = "Sorry, but your question doesn't seem related to this movies or series!";
     const irrelevantKeywords = ['not related', 'unrelated', 'cannot answer'];
   
     // Check if the response contains the fallback message or irrelevant keywords
