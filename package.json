@@ -1,6 +1,19 @@
 {
   "name": "luscreen",
   "version": "0.0.0",
+  "browserslist": [
+    "last 2 Chrome versions",
+    "last 2 Firefox versions",
+    "last 2 Edge versions",
+    "last 2 Safari versions",
+    "last 2 iOS versions",
+    "last 2 Android versions",
+    "last 2 ChromeAndroid versions",
+    "last 2 FirefoxAndroid versions",
+    "last 2 Samsung versions",
+    "last 2 UCAndroid versions",
+    "last 2 QQAndroid versions"
+  ],
   "scripts": {
     "ng": "ng",
     "start": "ng serve",
@@ -25,6 +38,7 @@
     "@tailwindcss/postcss": "^4.0.7",
     "@vercel/analytics": "^1.5.0",
     "class-variance-authority": "^0.7.0",
+    "classlist.js": "^1.1.20150312",
     "clsx": "^2.1.1",
     "core-js": "^3.40.0",
     "embla-carousel-angular": "18.0.0",
@@ -34,6 +48,7 @@
     "regenerator-runtime": "^0.14.1",
     "rxjs": "~7.8.0",
     "tslib": "^2.3.0",
+    "web-animations-js": "^2.3.2",
     "zone.js": "~0.15.0"
   },
   "devDependencies": {
