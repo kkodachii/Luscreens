@@ -1,17 +1,38 @@
+
 # Luscreen
 
 A modern web application built with Angular 19, featuring a sleek UI powered by Tailwind CSS and Spartan UI components.
 
 ## 🚀 Features
 
-- Modern Angular 19 architecture
-- Responsive design with Tailwind CSS
-- Beautiful UI components using Spartan UI
-- Smooth animations and transitions
-- Carousel functionality with Embla Carousel
-- Toast notifications with ngx-sonner
-- Custom scrollbars with ngx-scrollbar
-- Analytics integration with Vercel Analytics
+- **Media Streaming Platform**
+  - Browse movies and TV series
+  - Detailed media information pages
+  - Frame-based media player
+  - Season and episode navigation for TV series
+
+- **Smart Search & Discovery**
+  - Advanced search functionality
+  - Browse by media type
+  - Top-rated content section
+  - Discover new movies and series
+
+- **AI Integration**
+  - AI-powered features and recommendations
+  - Smart content discovery
+
+- **Modern UI/UX**
+  - Responsive design with Tailwind CSS
+  - Beautiful UI components using Spartan UI
+  - Smooth animations and transitions
+  - Custom scrollbars for better navigation
+  - Toast notifications for user feedback
+
+- **Performance & Analytics**
+  - Optimized media loading
+  - Vercel Analytics integration
+  - Fast and responsive interface
+
 
 ## 🛠️ Technologies
 
