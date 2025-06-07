@@ -1,59 +1,100 @@
 # Luscreen
 
-This project was generated using [Angular CLI](https://github.com/angular/angular-cli) version 19.1.8.
+A modern web application built with Angular 19, featuring a sleek UI powered by Tailwind CSS and Spartan UI components.
 
-## Development server
+## 🚀 Features
 
-To start a local development server, run:
+- Modern Angular 19 architecture
+- Responsive design with Tailwind CSS
+- Beautiful UI components using Spartan UI
+- Smooth animations and transitions
+- Carousel functionality with Embla Carousel
+- Toast notifications with ngx-sonner
+- Custom scrollbars with ngx-scrollbar
+- Analytics integration with Vercel Analytics
 
-```bash
-ng serve
-```
+## 🛠️ Technologies
 
-Once the server is running, open your browser and navigate to `http://localhost:4200/`. The application will automatically reload whenever you modify any of the source files.
+- **Frontend Framework:** Angular 19
+- **Styling:** Tailwind CSS
+- **UI Components:** Spartan UI (@spartan-ng)
+- **Icons:** Lucide Icons
+- **Carousel:** Embla Carousel
+- **Notifications:** ngx-sonner
+- **Scrollbars:** ngx-scrollbar
+- **Analytics:** Vercel Analytics
 
-## Code scaffolding
+## 📋 Prerequisites
 
-Angular CLI includes powerful code scaffolding tools. To generate a new component, run:
+Before you begin, ensure you have the following installed:
+- Node.js (Latest LTS version recommended)
+- npm (comes with Node.js)
+- Angular CLI (`npm install -g @angular/cli`)
 
-```bash
-ng generate component component-name
-```
+## 🚀 Getting Started
 
-For a complete list of available schematics (such as `components`, `directives`, or `pipes`), run:
+1. **Clone the repository**
+   ```bash
+   git clone [your-repository-url]
+   cd luscreen
+   ```
 
-```bash
-ng generate --help
-```
+2. **Install dependencies**
+   ```bash
+   npm install
+   ```
 
-## Building
+3. **Start the development server**
+   ```bash
+   ng serve
+   ```
+   Navigate to `http://localhost:4200/` in your browser.
 
-To build the project run:
+## 🏗️ Building
 
+To build the project for production:
 ```bash
 ng build
 ```
+The build artifacts will be stored in the `dist/` directory.
 
-This will compile your project and store the build artifacts in the `dist/` directory. By default, the production build optimizes your application for performance and speed.
+## 🧪 Testing
 
-## Running unit tests
-
-To execute unit tests with the [Karma](https://karma-runner.github.io) test runner, use the following command:
-
+Run unit tests:
 ```bash
 ng test
 ```
 
-## Running end-to-end tests
+## 📦 Project Structure
 
-For end-to-end (e2e) testing, run:
-
-```bash
-ng e2e
+```
+luscreen/
+├── src/              # Source files
+├── public/           # Public assets
+├── dist/            # Build output
+├── .angular/        # Angular cache
+├── .vscode/         # VS Code settings
+└── node_modules/    # Dependencies
 ```
 
-Angular CLI does not come with an end-to-end testing framework by default. You can choose one that suits your needs.
+## 🔧 Available Scripts
 
-## Additional Resources
+- `ng serve` - Start development server
+- `ng build` - Build the project
+- `ng test` - Run unit tests
+- `ng generate` - Generate new components, services, etc.
 
-For more information on using the Angular CLI, including detailed command references, visit the [Angular CLI Overview and Command Reference](https://angular.dev/tools/cli) page.
+## 📚 Additional Resources
+
+- [Angular Documentation](https://angular.dev)
+- [Tailwind CSS Documentation](https://tailwindcss.com/docs)
+- [Spartan UI Documentation](https://spartan.ng)
+- [Angular CLI Overview](https://angular.dev/tools/cli)
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## 📝 License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
