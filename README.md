@@ -1,3 +1,6 @@
+
+
+````markdown
 # Luscreen
 
 A modern web application built with Angular 19, featuring a sleek UI powered by Tailwind CSS and Spartan UI components.
@@ -46,6 +49,7 @@ A modern web application built with Angular 19, featuring a sleek UI powered by 
 ## 📋 Prerequisites
 
 Before you begin, ensure you have the following installed:
+
 - Node.js (Latest LTS version recommended)
 - npm (comes with Node.js)
 - Angular CLI (`npm install -g @angular/cli`)
@@ -56,30 +60,36 @@ Before you begin, ensure you have the following installed:
    ```bash
    git clone [your-repository-url]
    cd luscreen
-   ```
+````
 
 2. **Install dependencies**
+
    ```bash
    npm install
    ```
 
 3. **Start the development server**
+
    ```bash
    ng serve
    ```
+
    Navigate to `http://localhost:4200/` in your browser.
 
 ## 🏗️ Building
 
 To build the project for production:
+
 ```bash
 ng build
 ```
+
 The build artifacts will be stored in the `dist/` directory.
 
 ## 🧪 Testing
 
 Run unit tests:
+
 ```bash
 ng test
 ```
@@ -90,30 +100,27 @@ ng test
 luscreen/
 ├── src/              # Source files
 ├── public/           # Public assets
-├── dist/            # Build output
-├── .angular/        # Angular cache
-├── .vscode/         # VS Code settings
-└── node_modules/    # Dependencies
+├── dist/             # Build output
+├── .angular/         # Angular cache
+├── .vscode/          # VS Code settings
+└── node_modules/     # Dependencies
 ```
 
 ## 🔧 Available Scripts
 
-- `ng serve` - Start development server
-- `ng build` - Build the project
-- `ng test` - Run unit tests
-- `ng generate` - Generate new components, services, etc.
+* `ng serve` - Start development server
+* `ng build` - Build the project
+* `ng test` - Run unit tests
+* `ng generate` - Generate new components, services, etc.
 
 ## 📚 Additional Resources
 
-- [Angular Documentation](https://angular.dev)
-- [Tailwind CSS Documentation](https://tailwindcss.com/docs)
-- [Spartan UI Documentation](https://spartan.ng)
-- [Angular CLI Overview](https://angular.dev/tools/cli)
+* [Angular Documentation](https://angular.dev)
+* [Tailwind CSS Documentation](https://tailwindcss.com/docs)
+* [Spartan UI Documentation](https://spartan.ng)
+* [Angular CLI Overview](https://angular.dev/tools/cli)
 
 ## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
-## 📝 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
