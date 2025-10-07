@@ -22,8 +22,8 @@ export class AiComponent implements OnInit {
   tmdbResults: any[] = []; // Store TMDB search results
   generatedTitles: string[] = [];
 
-  private GEMINI_API_KEY = 'AIzaSyBIaly87RD4LviGrnhPCG9TGBbDLmnte68'; // Replace with your API key
-  private GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
+  private GEMINI_API_KEY = 'AIzaSyA9C9R2DDRprhiaigMjG0LuUJKrat8zZhk'; // Replace with your API key
+  private GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 
   constructor(private http: HttpClient, private tmdbService: TmdbService) {}
 
