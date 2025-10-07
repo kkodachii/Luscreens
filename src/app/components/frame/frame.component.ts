@@ -16,8 +16,8 @@ import { inject } from '@vercel/analytics';
 })
 export class FrameComponent implements OnInit {
 
-  private GEMINI_API_KEY = 'AIzaSyBIaly87RD4LviGrnhPCG9TGBbDLmnte68';
-  private GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
+  private GEMINI_API_KEY = 'AIzaSyA9C9R2DDRprhiaigMjG0LuUJKrat8zZhk';
+  private GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 
   activeSection: string = 'plot'; 
   plot: string = ''; 
