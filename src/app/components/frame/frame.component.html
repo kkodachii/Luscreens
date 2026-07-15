@@ -173,22 +173,41 @@
               />
               <span class="text-xs text-gray-400 tabular-nums w-12 shrink-0">{{ formatTime(duration) }}</span>
 
-              <button
-                *ngIf="isFullscreen"
-                type="button"
-                (click)="toggleFullscreenControls()"
-                class="p-1.5 rounded-full text-white hover:bg-white/10 transition shrink-0"
-                [attr.aria-label]="showFullscreenControls ? 'Hide controls' : 'Show controls'"
-                [title]="showFullscreenControls ? 'Hide controls' : 'Show controls'"
-              >
-                <!-- Chevron up = show more / down = hide -->
-                <svg *ngIf="!showFullscreenControls" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M18 15l-6-6-6 6" />
-                </svg>
-                <svg *ngIf="showFullscreenControls" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M6 9l6 6 6-6" />
-                </svg>
-              </button>
+              <div *ngIf="isFullscreen" class="flex items-center gap-0.5 shrink-0">
+                <button
+                  *ngIf="watchParty.connected"
+                  type="button"
+                  (click)="toggleFloatingPartyChat()"
+                  class="relative p-1.5 rounded-full text-white hover:bg-white/10 transition"
+                  [class.text-red-400]="showFloatingPartyChat"
+                  [attr.aria-label]="showFloatingPartyChat ? 'Hide chat' : 'Show chat'"
+                  [title]="showFloatingPartyChat ? 'Hide chat' : 'Show chat'"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                  </svg>
+                  <span
+                    *ngIf="partyChatUnread > 0 && !showFloatingPartyChat"
+                    class="absolute top-1 right-1 w-2 h-2 rounded-full bg-red-500 ring-2 ring-black"
+                    aria-hidden="true"
+                  ></span>
+                </button>
+
+                <button
+                  type="button"
+                  (click)="toggleFullscreenControls()"
+                  class="p-1.5 rounded-full text-white hover:bg-white/10 transition"
+                  [attr.aria-label]="showFullscreenControls ? 'Hide controls' : 'Show controls'"
+                  [title]="showFullscreenControls ? 'Hide controls' : 'Show controls'"
+                >
+                  <svg *ngIf="!showFullscreenControls" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M18 15l-6-6-6 6" />
+                  </svg>
+                  <svg *ngIf="showFullscreenControls" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M6 9l6 6 6-6" />
+                  </svg>
+                </button>
+              </div>
             </div>
 
             <!-- Control buttons (hidden in fullscreen until chevron is tapped) -->
@@ -335,6 +354,25 @@
                 </button>
 
                 <button
+                  *ngIf="isFullscreen && watchParty.connected"
+                  type="button"
+                  (click)="toggleFloatingPartyChat()"
+                  class="relative p-2 rounded-full text-white hover:bg-white/10 transition"
+                  [class.text-red-400]="showFloatingPartyChat"
+                  [attr.aria-label]="showFloatingPartyChat ? 'Hide chat' : 'Show chat'"
+                  [title]="showFloatingPartyChat ? 'Hide chat' : 'Party chat'"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                  </svg>
+                  <span
+                    *ngIf="partyChatUnread > 0 && !showFloatingPartyChat"
+                    class="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-black"
+                    aria-hidden="true"
+                  ></span>
+                </button>
+
+                <button
                   *ngIf="supportsDocumentPip"
                   type="button"
                   (click)="togglePictureInPicture()"
@@ -373,6 +411,86 @@
                 </button>
               </div>
             </div>
+          </div>
+
+          <!-- Floating party chat (fullscreen) -->
+          <div
+            *ngIf="isFullscreen && watchParty.connected && showFloatingPartyChat"
+            class="absolute bottom-24 right-3 sm:right-4 z-40 w-[min(22rem,calc(100%-1.5rem))] rounded-xl border border-white/15 bg-black/90 shadow-2xl backdrop-blur-sm overflow-hidden flex flex-col max-h-[min(50vh,24rem)]"
+            (click)="$event.stopPropagation()"
+            (mousedown)="$event.stopPropagation()"
+          >
+            <div class="px-3 py-2 border-b border-white/10 flex items-center justify-between gap-2 shrink-0">
+              <div class="flex items-center gap-2 min-w-0">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-red-400 shrink-0" aria-hidden="true">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                </svg>
+                <p class="text-xs font-semibold text-white truncate">Party chat</p>
+              </div>
+              <button
+                type="button"
+                (click)="toggleFloatingPartyChat()"
+                class="p-1 rounded-md text-gray-400 hover:text-white hover:bg-white/10 transition"
+                aria-label="Close chat"
+                title="Hide chat"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M18 6L6 18" />
+                  <path d="M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div
+              #partyChatScroll
+              class="flex-1 min-h-0 overflow-y-auto px-3 py-2 space-y-2"
+            >
+              <p *ngIf="partyChatMessages.length === 0" class="text-xs text-gray-500 py-6 text-center">
+                Say hi — messages stay in this party only.
+              </p>
+              <div
+                *ngFor="let msg of partyChatMessages; trackBy: trackPartyChat"
+                class="text-sm"
+                [class.text-right]="msg.isLocal"
+              >
+                <div
+                  class="inline-block max-w-[90%] text-left rounded-lg px-2.5 py-1.5"
+                  [ngClass]="msg.isLocal
+                    ? 'bg-red-600/25 border border-red-500/30'
+                    : 'bg-white/5 border border-white/10'"
+                >
+                  <div class="flex items-baseline gap-2 mb-0.5">
+                    <span class="text-[11px] font-semibold" [ngClass]="msg.isLocal ? 'text-red-300' : 'text-sky-300'">
+                      {{ msg.isLocal ? 'You' : msg.displayName }}
+                    </span>
+                    <span class="text-[10px] text-gray-500">{{ formatChatTime(msg.sentAt) }}</span>
+                  </div>
+                  <p class="text-gray-100 whitespace-pre-wrap break-words leading-snug">{{ msg.text }}</p>
+                </div>
+              </div>
+            </div>
+
+            <form
+              class="flex gap-2 p-2 border-t border-white/10 shrink-0"
+              (ngSubmit)="sendPartyChat()"
+            >
+              <input
+                type="text"
+                [(ngModel)]="partyChatDraft"
+                name="partyChatDraftFullscreen"
+                maxlength="500"
+                placeholder="Message the party…"
+                autocomplete="off"
+                class="flex-1 min-w-0 px-3 py-2 text-sm bg-transparent border border-white/15 rounded-md focus:outline-none focus:border-red-600"
+              />
+              <button
+                type="submit"
+                [disabled]="!partyChatDraft.trim()"
+                class="shrink-0 px-3 py-2 rounded-md bg-red-600 hover:bg-red-500 disabled:opacity-40 text-sm font-medium transition"
+              >
+                Send
+              </button>
+            </form>
           </div>
         </div>
       
@@ -542,6 +660,95 @@
                     <span *ngIf="member.isHost" class="text-[10px] uppercase tracking-wide text-gray-400">host</span>
                   </li>
                 </ul>
+              </div>
+
+              <!-- Party chat (collapsible) -->
+              <div class="rounded-lg border border-white/10 bg-black/40 overflow-hidden">
+                <div class="px-3 py-2 border-b border-white/10 flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    (click)="togglePartyChat()"
+                    class="flex items-center gap-2 text-xs font-medium text-gray-300 hover:text-white transition"
+                    [attr.aria-expanded]="showPartyChat"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                    </svg>
+                    Chat
+                    <span
+                      *ngIf="partyChatUnread > 0 && !showPartyChat"
+                      class="w-2 h-2 rounded-full bg-red-500 shrink-0"
+                      aria-hidden="true"
+                    ></span>
+                  </button>
+                  <button
+                    type="button"
+                    (click)="togglePartyChat()"
+                    class="text-[10px] text-gray-400 hover:text-white transition"
+                  >
+                    {{ showPartyChat ? 'Hide' : 'Show' }}
+                  </button>
+                </div>
+
+                <ng-container *ngIf="showPartyChat && !isFullscreen">
+                  <div
+                    #partyChatScroll
+                    class="h-44 overflow-y-auto px-3 py-2 space-y-2"
+                  >
+                    <p *ngIf="partyChatMessages.length === 0" class="text-xs text-gray-500 py-6 text-center">
+                      Say hi — messages stay in this party only.
+                    </p>
+                    <div
+                      *ngFor="let msg of partyChatMessages; trackBy: trackPartyChat"
+                      class="text-sm"
+                      [class.text-right]="msg.isLocal"
+                    >
+                      <div
+                        class="inline-block max-w-[90%] text-left rounded-lg px-2.5 py-1.5"
+                        [ngClass]="msg.isLocal
+                          ? 'bg-red-600/25 border border-red-500/30'
+                          : 'bg-white/5 border border-white/10'"
+                      >
+                        <div class="flex items-baseline gap-2 mb-0.5">
+                          <span class="text-[11px] font-semibold" [ngClass]="msg.isLocal ? 'text-red-300' : 'text-sky-300'">
+                            {{ msg.isLocal ? 'You' : msg.displayName }}
+                          </span>
+                          <span class="text-[10px] text-gray-500">{{ formatChatTime(msg.sentAt) }}</span>
+                        </div>
+                        <p class="text-gray-100 whitespace-pre-wrap break-words leading-snug">{{ msg.text }}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <form
+                    class="flex gap-2 p-2 border-t border-white/10"
+                    (ngSubmit)="sendPartyChat()"
+                  >
+                    <input
+                      type="text"
+                      [(ngModel)]="partyChatDraft"
+                      name="partyChatDraft"
+                      maxlength="500"
+                      placeholder="Message the party…"
+                      autocomplete="off"
+                      class="flex-1 min-w-0 px-3 py-2 text-sm bg-transparent border border-white/15 rounded-md focus:outline-none focus:border-red-600"
+                    />
+                    <button
+                      type="submit"
+                      [disabled]="!partyChatDraft.trim()"
+                      class="shrink-0 px-3 py-2 rounded-md bg-red-600 hover:bg-red-500 disabled:opacity-40 text-sm font-medium transition"
+                    >
+                      Send
+                    </button>
+                  </form>
+                </ng-container>
+
+                <p
+                  *ngIf="!showPartyChat"
+                  class="px-3 py-2 text-[11px] text-gray-500"
+                >
+                  Chat hidden. New messages show a badge until you open it.
+                </p>
               </div>
 
               <p class="text-xs text-gray-400">

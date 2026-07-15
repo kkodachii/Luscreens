@@ -13,12 +13,23 @@ export interface WatchPartyMediaState {
 }
 
 export interface WatchPartyCommand {
-  action: 'play' | 'pause' | 'seek' | 'sync' | 'hello' | 'media';
+  action: 'play' | 'pause' | 'seek' | 'sync' | 'hello' | 'media' | 'chat';
   time?: number;
   playing?: boolean;
   media?: WatchPartyMediaState;
   displayName?: string;
+  text?: string;
+  messageId?: string;
   sentAt?: number;
+}
+
+export interface WatchPartyChatMessage {
+  id: string;
+  peerId: string;
+  displayName: string;
+  text: string;
+  sentAt: number;
+  isLocal: boolean;
 }
 
 export interface WatchPartyMember {
@@ -84,6 +95,11 @@ export class WatchPartyService implements OnDestroy {
   /** Host-only: fired when a guest connects and needs a playback snapshot. */
   private readonly syncRequestedSubject = new Subject<void>();
   readonly syncRequested$ = this.syncRequestedSubject.asObservable();
+
+  private readonly chatSubject = new Subject<WatchPartyChatMessage>();
+  readonly chatMessages$ = this.chatSubject.asObservable();
+
+  private static readonly MAX_CHAT_LENGTH = 500;
 
   get snapshot(): WatchPartyState {
     return this.stateSubject.value;
@@ -302,6 +318,40 @@ export class WatchPartyService implements OnDestroy {
     this.stateSubject.next({ ...INITIAL_STATE });
   }
 
+  /** Send a chat message to everyone in the party. */
+  sendChat(text: string): boolean {
+    if (!this.isInParty || !this.peer) {
+      return false;
+    }
+
+    const trimmed = text.trim().slice(0, WatchPartyService.MAX_CHAT_LENGTH);
+    if (!trimmed) {
+      return false;
+    }
+
+    const messageId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const sentAt = Date.now();
+
+    this.chatSubject.next({
+      id: messageId,
+      peerId: this.peer.id,
+      displayName: this.displayName,
+      text: trimmed,
+      sentAt,
+      isLocal: true,
+    });
+
+    this.broadcast({
+      action: 'chat',
+      text: trimmed,
+      messageId,
+      displayName: this.displayName,
+      sentAt,
+    });
+
+    return true;
+  }
+
   /** Anyone in the party can broadcast play/pause/seek. */
   broadcastPlayerEvent(event: 'play' | 'pause' | 'seeked', time: number): void {
     if (!this.isInParty) {
@@ -356,6 +406,7 @@ export class WatchPartyService implements OnDestroy {
     this.disconnectKeepingSession();
     this.remoteCommandSubject.complete();
     this.syncRequestedSubject.complete();
+    this.chatSubject.complete();
     this.stateSubject.complete();
   }
 
@@ -611,6 +662,26 @@ export class WatchPartyService implements OnDestroy {
         });
       }
       this.patchState({ members });
+      return;
+    }
+
+    if (command.action === 'chat') {
+      const text = (command.text || '').trim().slice(0, WatchPartyService.MAX_CHAT_LENGTH);
+      if (text) {
+        this.chatSubject.next({
+          id: command.messageId || `${command.sentAt || Date.now()}-${conn.peer}`,
+          peerId: conn.peer,
+          displayName: command.displayName || 'Guest',
+          text,
+          sentAt: command.sentAt || Date.now(),
+          isLocal: false,
+        });
+      }
+
+      // Star topology: host relays guest chat to the other guests
+      if (this.isHost) {
+        this.relayExcept(conn.peer, command);
+      }
       return;
     }
 

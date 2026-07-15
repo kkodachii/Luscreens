@@ -9,6 +9,7 @@ import { Subscription } from 'rxjs';
 import { inject } from '@vercel/analytics';
 import { environment } from '../../../environments/environment';
 import {
+  WatchPartyChatMessage,
   WatchPartyCommand,
   WatchPartyService,
   WatchPartyState,
@@ -179,6 +180,13 @@ export class FrameComponent implements OnInit, OnDestroy {
   watchPartyName = '';
   joinRoomCode = '';
   watchPartyCopied = false;
+  partyChatMessages: WatchPartyChatMessage[] = [];
+  partyChatDraft = '';
+  /** Collapsible chat inside the watch-party panel (non-fullscreen). */
+  showPartyChat = true;
+  /** Floating chat overlay while the player is fullscreen. */
+  showFloatingPartyChat = false;
+  partyChatUnread = 0;
   private watchPartySubs = new Subscription();
   private ignorePartyBroadcastUntil = 0;
 
@@ -186,6 +194,9 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.isFullscreen = !!document.fullscreenElement;
     // Entering fullscreen → minimal time bar only
     this.showFullscreenControls = !this.isFullscreen;
+    if (!this.isFullscreen) {
+      this.showFloatingPartyChat = false;
+    }
   };
   
 
@@ -193,6 +204,7 @@ export class FrameComponent implements OnInit, OnDestroy {
   @ViewChild('episodeScroll') episodeScroll!: ElementRef;
   @ViewChild('playerIframe') playerIframe!: ElementRef<HTMLIFrameElement>;
   @ViewChild('playerContainer') playerContainer!: ElementRef<HTMLDivElement>;
+  @ViewChild('partyChatScroll') partyChatScroll?: ElementRef<HTMLDivElement>;
 
   constructor(
     private route: ActivatedRoute,
@@ -892,6 +904,12 @@ export class FrameComponent implements OnInit, OnDestroy {
         if (state.connected && state.roomCode) {
           this.syncPartyQueryParam(state.roomCode);
         }
+        if (!state.connected) {
+          this.partyChatMessages = [];
+          this.partyChatDraft = '';
+          this.partyChatUnread = 0;
+          this.showFloatingPartyChat = false;
+        }
       })
     );
 
@@ -904,6 +922,17 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.watchPartySubs.add(
       this.watchPartyService.syncRequested$.subscribe(() => {
         this.watchPartyService.broadcastSync(this.currentTime, this.isPlaying);
+      })
+    );
+
+    this.watchPartySubs.add(
+      this.watchPartyService.chatMessages$.subscribe((message) => {
+        this.partyChatMessages = [...this.partyChatMessages, message].slice(-100);
+        if (!message.isLocal && !this.isPartyChatVisible()) {
+          this.partyChatUnread += 1;
+        }
+        this.cdr.detectChanges();
+        queueMicrotask(() => this.scrollPartyChatToBottom());
       })
     );
   }
@@ -991,6 +1020,9 @@ export class FrameComponent implements OnInit, OnDestroy {
 
   toggleWatchPartyPanel(): void {
     this.showWatchPartyPanel = !this.showWatchPartyPanel;
+    if (this.showWatchPartyPanel && this.showPartyChat && !this.isFullscreen) {
+      this.partyChatUnread = 0;
+    }
   }
 
   async startWatchParty(): Promise<void> {
@@ -1020,12 +1052,71 @@ export class FrameComponent implements OnInit, OnDestroy {
   leaveWatchParty(): void {
     this.watchPartyService.leaveParty();
     this.watchPartyCopied = false;
+    this.partyChatMessages = [];
+    this.partyChatDraft = '';
+    this.partyChatUnread = 0;
+    this.showFloatingPartyChat = false;
     this.router.navigate([], {
       relativeTo: this.route,
       queryParams: { party: null },
       queryParamsHandling: 'merge',
       replaceUrl: true,
     });
+  }
+
+  sendPartyChat(): void {
+    if (!this.watchParty.connected) {
+      return;
+    }
+    const sent = this.watchPartyService.sendChat(this.partyChatDraft);
+    if (sent) {
+      this.partyChatDraft = '';
+    }
+  }
+
+  togglePartyChat(): void {
+    this.showPartyChat = !this.showPartyChat;
+    if (this.showPartyChat) {
+      this.partyChatUnread = 0;
+      queueMicrotask(() => this.scrollPartyChatToBottom());
+    }
+  }
+
+  toggleFloatingPartyChat(): void {
+    this.showFloatingPartyChat = !this.showFloatingPartyChat;
+    if (this.showFloatingPartyChat) {
+      this.partyChatUnread = 0;
+      queueMicrotask(() => this.scrollPartyChatToBottom());
+    }
+  }
+
+  private isPartyChatVisible(): boolean {
+    if (this.isFullscreen) {
+      return this.showFloatingPartyChat;
+    }
+    return this.showWatchPartyPanel && this.showPartyChat;
+  }
+
+  formatChatTime(timestamp: number): string {
+    try {
+      return new Date(timestamp).toLocaleTimeString([], {
+        hour: 'numeric',
+        minute: '2-digit',
+      });
+    } catch {
+      return '';
+    }
+  }
+
+  trackPartyChat(_index: number, msg: WatchPartyChatMessage): string {
+    return msg.id;
+  }
+
+  private scrollPartyChatToBottom(): void {
+    const el = this.partyChatScroll?.nativeElement;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    }
   }
 
   /** Push your current time/play state to everyone (fixes drift). */
