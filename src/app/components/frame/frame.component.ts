@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, ViewChild, ElementRef } from '@angular/core';
+import { Component, OnInit, OnDestroy, ViewChild, ElementRef, ChangeDetectorRef } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { NgForOf, NgIf, CommonModule } from '@angular/common';
@@ -13,6 +13,11 @@ import {
   WatchPartyService,
   WatchPartyState,
 } from '../../services/watch-party.service';
+
+/** Chromium Document Picture-in-Picture (not on Window by default in TS libs). */
+interface DocumentPictureInPicture {
+  requestWindow(options?: { width?: number; height?: number }): Promise<Window>;
+}
 
 type PlayerEventName = 'play' | 'pause' | 'seeked' | 'ended' | 'timeupdate' | 'playerstatus';
 
@@ -123,6 +128,40 @@ export class FrameComponent implements OnInit, OnDestroy {
   isFullscreen = false;
   /** In fullscreen, buttons stay hidden until the user expands controls. */
   showFullscreenControls = false;
+  isPictureInPicture = false;
+  readonly supportsDocumentPip =
+    typeof window !== 'undefined' && 'documentPictureInPicture' in window;
+
+  private pipWindow: Window | null = null;
+  private pipPlaceholder: HTMLElement | null = null;
+
+  // Subtitles / server (VidFast URL params)
+  readonly subtitleOptions: { code: string | null; label: string }[] = [
+    { code: null, label: 'Off' },
+    { code: 'en', label: 'English' },
+    { code: 'es', label: 'Spanish' },
+    { code: 'fr', label: 'French' },
+    { code: 'de', label: 'German' },
+    { code: 'it', label: 'Italian' },
+    { code: 'pt', label: 'Portuguese' },
+    { code: 'ja', label: 'Japanese' },
+    { code: 'ko', label: 'Korean' },
+    { code: 'zh', label: 'Chinese' },
+  ];
+  selectedSubtitle: string | null = null;
+  selectedServer: string = environment.streamServer || 'vEdge';
+  showCcMenu = false;
+  showServerMenu = false;
+  isPlayerReloading = false;
+  playerReloadLabel = 'Loading…';
+
+  get serverOptions(): { id: string; label: string }[] {
+    const fromEnv = (environment as { streamServers?: string[] }).streamServers ?? [];
+    const preferred = environment.streamServer || 'vEdge';
+    const names = [preferred, ...fromEnv].filter(Boolean);
+    // Keep vEdge (preferred) first, then the rest unique
+    return [...new Set(names)].map((id) => ({ id, label: id }));
+  }
 
   // Watch party
   watchParty: WatchPartyState = {
@@ -162,6 +201,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     private tmdbService: TmdbService,
     private http: HttpClient,
     private watchPartyService: WatchPartyService,
+    private cdr: ChangeDetectorRef,
   ) {}
 
   ngOnInit(): void {
@@ -204,6 +244,7 @@ export class FrameComponent implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     window.removeEventListener('message', this.onPlayerMessage);
     document.removeEventListener('fullscreenchange', this.onFullscreenChange);
+    this.closePictureInPicture();
     this.watchPartySubs.unsubscribe();
     // Keep session so a full page reload can rejoin the same party
     this.watchPartyService.disconnectKeepingSession();
@@ -487,20 +528,29 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
   }
 
-  private buildEmbedUrl(path: string): SafeResourceUrl {
-    const server = environment.streamServer || 'vEdge';
-    const startAt = this.getSavedStartAt();
+  private buildEmbedUrl(path: string, resumeAt?: number): SafeResourceUrl {
     const params = new URLSearchParams({
       autoPlay: 'true',
       theme: 'red',
       title: 'false',
-      server,
       // Reduce embed chrome so users rely on our custom controls instead
       hideServer: 'true',
       fullscreenButton: 'false',
       chromecast: 'false',
     });
 
+    if (this.selectedServer) {
+      params.set('server', this.selectedServer);
+    }
+
+    if (this.selectedSubtitle) {
+      params.set('sub', this.selectedSubtitle);
+    }
+
+    const startAt =
+      resumeAt != null && resumeAt > 0
+        ? resumeAt
+        : this.getSavedStartAt();
     if (startAt > 0) {
       params.set('startAt', String(Math.floor(startAt)));
     }
@@ -512,6 +562,69 @@ export class FrameComponent implements OnInit, OnDestroy {
 
     const url = `https://vidfast.vc/${path}?${params.toString()}`;
     return this.sanitizer.bypassSecurityTrustResourceUrl(url);
+  }
+
+  private getEmbedPath(): string | null {
+    if (!this.id || !this.mediaType) {
+      return null;
+    }
+    if (this.mediaType === 'movie') {
+      return `movie/${this.id}`;
+    }
+    if (this.mediaType === 'tv') {
+      return `tv/${this.id}/${this.selectedSeason}/${this.selectedEpisode}`;
+    }
+    return null;
+  }
+
+  private reloadPlayer(resumeAt?: number, label = 'Loading…'): void {
+    const path = this.getEmbedPath();
+    if (!path) {
+      return;
+    }
+    const time = resumeAt ?? this.currentTime;
+    this.playerReloadLabel = label;
+    this.isPlayerReloading = true;
+    // Keep previous frame painted under the overlay; swap src on next tick
+    setTimeout(() => {
+      this.embedUrl = this.buildEmbedUrl(path, time > 5 ? time : undefined);
+    }, 50);
+  }
+
+  onPlayerIframeLoad(): void {
+    this.isPlayerReloading = false;
+    this.requestPlayerStatus();
+  }
+
+  toggleCcMenu(): void {
+    this.showCcMenu = !this.showCcMenu;
+    this.showServerMenu = false;
+  }
+
+  toggleServerMenu(): void {
+    this.showServerMenu = !this.showServerMenu;
+    this.showCcMenu = false;
+  }
+
+  selectSubtitle(code: string | null): void {
+    if (this.selectedSubtitle === code) {
+      this.showCcMenu = false;
+      return;
+    }
+    this.selectedSubtitle = code;
+    this.showCcMenu = false;
+    // Soft-reload with sub= URL param (VidFast's supported way) — overlay avoids black flash
+    this.reloadPlayer(this.currentTime, code ? 'Applying subtitles…' : 'Turning off subtitles…');
+  }
+
+  selectServer(server: string): void {
+    if (this.selectedServer === server) {
+      this.showServerMenu = false;
+      return;
+    }
+    this.selectedServer = server;
+    this.showServerMenu = false;
+    this.reloadPlayer(this.currentTime, 'Switching server…');
   }
 
   private resetPlayerState(): void {
@@ -630,6 +743,14 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.postPlayerCommand({ command: this.isPlaying ? 'pause' : 'play' });
   }
 
+  /** Overlay over the iframe — play/pause without clicking into the embed (avoids ads). */
+  onPlayerOverlayClick(): void {
+    if (this.isPlayerReloading) {
+      return;
+    }
+    this.togglePlayPause();
+  }
+
   seekTo(time: number): void {
     const clamped = Math.max(0, Math.min(time, this.duration || time));
     this.isSeeking = true;
@@ -673,6 +794,87 @@ export class FrameComponent implements OnInit, OnDestroy {
     } catch (error) {
       console.error('Fullscreen toggle failed:', error);
     }
+  }
+
+  async togglePictureInPicture(): Promise<void> {
+    if (!this.supportsDocumentPip) {
+      return;
+    }
+
+    if (this.isPictureInPicture) {
+      this.closePictureInPicture();
+      return;
+    }
+
+    const container = this.playerContainer?.nativeElement;
+    if (!container) {
+      return;
+    }
+
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      }
+
+      const dpip = (window as unknown as { documentPictureInPicture: DocumentPictureInPicture })
+        .documentPictureInPicture;
+      const pipWindow = await dpip.requestWindow({
+        width: Math.max(360, Math.round(container.clientWidth * 0.45)),
+        height: Math.max(240, Math.round(container.clientHeight * 0.45)),
+      });
+
+      this.copyStylesToPipWindow(pipWindow);
+
+      const placeholder = document.createElement('div');
+      placeholder.className =
+        'w-full aspect-video bg-black/80 rounded-lg flex items-center justify-center text-sm text-gray-400 border border-white/10';
+      placeholder.textContent = 'Playing in Picture-in-Picture';
+      container.parentNode?.insertBefore(placeholder, container);
+      this.pipPlaceholder = placeholder;
+
+      pipWindow.document.body.style.margin = '0';
+      pipWindow.document.body.style.background = '#000';
+      pipWindow.document.body.style.overflow = 'hidden';
+      pipWindow.document.body.appendChild(container);
+
+      this.pipWindow = pipWindow;
+      this.isPictureInPicture = true;
+
+      pipWindow.addEventListener('pagehide', () => {
+        this.restorePlayerFromPip();
+        this.cdr.markForCheck();
+      });
+    } catch (error) {
+      console.error('Picture-in-Picture failed:', error);
+      this.restorePlayerFromPip();
+    }
+  }
+
+  private closePictureInPicture(): void {
+    if (this.pipWindow && !this.pipWindow.closed) {
+      this.pipWindow.close();
+    }
+    this.restorePlayerFromPip();
+  }
+
+  private restorePlayerFromPip(): void {
+    const container = this.playerContainer?.nativeElement;
+    const placeholder = this.pipPlaceholder;
+
+    if (container && placeholder?.parentNode) {
+      placeholder.parentNode.insertBefore(container, placeholder);
+      placeholder.remove();
+    }
+
+    this.pipPlaceholder = null;
+    this.pipWindow = null;
+    this.isPictureInPicture = false;
+  }
+
+  private copyStylesToPipWindow(pipWindow: Window): void {
+    document.querySelectorAll('link[rel="stylesheet"], style').forEach((node) => {
+      pipWindow.document.head.appendChild(node.cloneNode(true));
+    });
   }
 
   toggleFullscreenControls(): void {

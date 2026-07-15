@@ -84,25 +84,73 @@
         <div
           *ngIf="embedUrl"
           #playerContainer
-          class="w-full bg-black"
+          class="w-full bg-black relative"
           [class.fixed]="isFullscreen"
           [class.inset-0]="isFullscreen"
           [class.z-50]="isFullscreen"
           [class.flex]="isFullscreen"
           [class.flex-col]="isFullscreen"
         >
-          <iframe
-            #playerIframe
-            [src]="embedUrl"
-            (load)="requestPlayerStatus()"
-            frameborder="0"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; cast"
-            allowfullscreen
-            referrerpolicy="no-referrer"
-            loading="lazy"
-            class="w-full shadow-xl"
-            [ngClass]="isFullscreen ? 'flex-1 min-h-0 rounded-none' : 'aspect-video rounded-t-lg'"
-          ></iframe>
+          <div
+            class="relative w-full overflow-hidden"
+            [ngClass]="isFullscreen ? 'flex-1 min-h-0' : 'aspect-video'"
+          >
+            <iframe
+              #playerIframe
+              [src]="embedUrl"
+              (load)="onPlayerIframeLoad()"
+              frameborder="0"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; cast"
+              referrerpolicy="no-referrer"
+              loading="lazy"
+              tabindex="-1"
+              aria-hidden="true"
+              inert
+              class="player-embed w-full h-full shadow-xl absolute inset-0"
+              [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-t-lg'"
+            ></iframe>
+
+            <!--
+              Hard click shield above the iframe. Tiny alpha bg so the layer always receives hits
+              (fully transparent layers can miss pointer events in some browsers).
+            -->
+            <div
+              class="player-click-shield absolute inset-0 z-20 flex items-center justify-center cursor-pointer select-none"
+              [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-t-lg'"
+              (click)="onPlayerOverlayClick()"
+              (dblclick)="$event.preventDefault()"
+              (contextmenu)="$event.preventDefault()"
+              (auxclick)="$event.preventDefault()"
+              role="button"
+              [attr.aria-label]="isPlaying ? 'Pause' : 'Play'"
+              [title]="isPlaying ? 'Pause' : 'Play'"
+            >
+              <span
+                *ngIf="!isPlaying && !isPlayerReloading"
+                class="flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-red-600/90 text-white shadow-xl pointer-events-none"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="currentColor" class="ml-1">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              </span>
+            </div>
+
+            <!-- Covers the black iframe flash while CC / server reload -->
+            <div
+              *ngIf="isPlayerReloading"
+              class="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-cover bg-center"
+              [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-t-lg'"
+              style="pointer-events: auto;"
+              [ngStyle]="{
+                'background-image': backdropPath
+                  ? 'linear-gradient(rgba(0,0,0,.65), rgba(0,0,0,.8)), url(https://image.tmdb.org/t/p/w780' + backdropPath + ')'
+                  : 'linear-gradient(#111, #000)'
+              }"
+            >
+              <span class="inline-block w-7 h-7 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+              <p class="text-sm text-white/90">{{ playerReloadLabel }}</p>
+            </div>
+          </div>
 
           <!-- Custom player controls (use these instead of clicking inside the embed) -->
           <div
@@ -144,7 +192,7 @@
             </div>
 
             <!-- Control buttons (hidden in fullscreen until chevron is tapped) -->
-            <div *ngIf="showPlayerButtons" class="grid grid-cols-3 items-center gap-1">
+            <div *ngIf="showPlayerButtons" class="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1">
               <!-- Left: episode nav (balances the right side) -->
               <div class="flex items-center justify-start gap-0.5 sm:gap-1 min-h-[40px]">
                 <button
@@ -212,8 +260,70 @@
                 </button>
               </div>
 
-              <!-- Right: sync + fullscreen -->
-              <div class="flex items-center justify-end gap-0.5 sm:gap-1">
+              <!-- Right: cc + server + sync + fullscreen -->
+              <div class="flex items-center justify-end gap-1 flex-wrap">
+                <!-- CC / subtitles -->
+                <div class="relative">
+                  <button
+                    type="button"
+                    (click)="toggleCcMenu()"
+                    class="px-2.5 py-1.5 rounded-md text-xs font-semibold border transition"
+                    [ngClass]="selectedSubtitle || showCcMenu
+                      ? 'border-red-500/60 text-red-400 bg-red-600/10'
+                      : 'border-white/20 text-white hover:bg-white/10'"
+                    aria-label="Subtitles"
+                    title="Subtitles (CC)"
+                  >
+                    CC
+                  </button>
+                  <div
+                    *ngIf="showCcMenu"
+                    class="absolute bottom-full right-0 mb-2 w-40 max-h-56 overflow-y-auto rounded-lg border border-white/15 bg-black/95 shadow-xl py-1 z-30"
+                  >
+                    <button
+                      *ngFor="let opt of subtitleOptions"
+                      type="button"
+                      (click)="selectSubtitle(opt.code)"
+                      class="w-full text-left px-3 py-1.5 text-xs hover:bg-white/10 transition"
+                      [class.text-red-400]="selectedSubtitle === opt.code"
+                      [class.font-semibold]="selectedSubtitle === opt.code"
+                    >
+                      {{ opt.label }}
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Server -->
+                <div class="relative">
+                  <button
+                    type="button"
+                    (click)="toggleServerMenu()"
+                    class="px-2.5 py-1.5 rounded-md text-xs font-semibold border transition max-w-[5.5rem] truncate"
+                    [ngClass]="showServerMenu
+                      ? 'border-red-500/60 text-red-400 bg-red-600/10'
+                      : 'border-white/20 text-white hover:bg-white/10'"
+                    aria-label="Server"
+                    [title]="'Server: ' + (selectedServer || 'Auto')"
+                  >
+                    {{ selectedServer || 'Server' }}
+                  </button>
+                  <div
+                    *ngIf="showServerMenu"
+                    class="absolute bottom-full right-0 mb-2 w-40 max-h-56 overflow-y-auto rounded-lg border border-white/15 bg-black/95 shadow-xl py-1 z-30"
+                  >
+                    <button
+                      *ngFor="let server of serverOptions"
+                      type="button"
+                      (click)="selectServer(server.id)"
+                      class="w-full text-left px-3 py-1.5 text-xs hover:bg-white/10 transition"
+                      [class.text-red-400]="selectedServer === server.id"
+                      [class.font-semibold]="selectedServer === server.id"
+                    >
+                      {{ server.label }}
+                    </button>
+                  </div>
+                </div>
+
                 <button
                   *ngIf="watchParty.connected"
                   type="button"
@@ -222,6 +332,23 @@
                   title="Sync everyone to your current time"
                 >
                   Sync
+                </button>
+
+                <button
+                  *ngIf="supportsDocumentPip"
+                  type="button"
+                  (click)="togglePictureInPicture()"
+                  class="p-2 rounded-full text-white hover:bg-white/10 transition"
+                  [class.text-red-400]="isPictureInPicture"
+                  [attr.aria-label]="isPictureInPicture ? 'Exit picture-in-picture' : 'Picture-in-picture'"
+                  [title]="isPictureInPicture ? 'Exit picture-in-picture' : 'Picture-in-picture'"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="2" y="3.5" width="20" height="17" rx="2.5" />
+                    <rect x="13" y="12" width="7.5" height="6" rx="1.25" fill="currentColor" stroke="none" />
+                    <path d="M7.5 9.5 L11.5 13.5" />
+                    <path d="M11.5 10 v3.5 h-3.5" />
+                  </svg>
                 </button>
 
                 <button
