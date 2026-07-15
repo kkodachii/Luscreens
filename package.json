@@ -31,6 +31,7 @@
     "flowbite": "^3.1.2",
     "ngx-scrollbar": ">=16.0.0",
     "ngx-sonner": "^2.0.0",
+    "peerjs": "^1.5.5",
     "regenerator-runtime": "^0.14.1",
     "rxjs": "~7.8.0",
     "tslib": "^2.3.0",

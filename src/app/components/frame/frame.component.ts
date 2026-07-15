@@ -5,8 +5,14 @@ import { NgForOf, NgIf, CommonModule } from '@angular/common';
 import { TmdbService } from '../../services/tmdb.service';
 import { FormsModule } from '@angular/forms';
 import { HttpClient, HttpHeaders,HttpClientModule } from '@angular/common/http';
+import { Subscription } from 'rxjs';
 import { inject } from '@vercel/analytics';
 import { environment } from '../../../environments/environment';
+import {
+  WatchPartyCommand,
+  WatchPartyService,
+  WatchPartyState,
+} from '../../services/watch-party.service';
 
 type PlayerEventName = 'play' | 'pause' | 'seeked' | 'ended' | 'timeupdate' | 'playerstatus';
 
@@ -111,15 +117,36 @@ export class FrameComponent implements OnInit, OnDestroy {
 
   // Custom player state (driven by VidFast PLAYER_EVENT)
   isPlaying = false;
-  isMuted = false;
-  volume = 1;
   currentTime = 0;
   duration = 0;
   isSeeking = false;
   isFullscreen = false;
+  /** In fullscreen, buttons stay hidden until the user expands controls. */
+  showFullscreenControls = false;
+
+  // Watch party
+  watchParty: WatchPartyState = {
+    role: null,
+    roomCode: null,
+    connected: false,
+    connecting: false,
+    members: [],
+    error: null,
+    inviteUrl: null,
+  };
+  showWatchPartyPanel = false;
+  showJoinInviteModal = false;
+  watchPartyMode: 'create' | 'join' = 'create';
+  watchPartyName = '';
+  joinRoomCode = '';
+  watchPartyCopied = false;
+  private watchPartySubs = new Subscription();
+  private ignorePartyBroadcastUntil = 0;
 
   private readonly onFullscreenChange = (): void => {
     this.isFullscreen = !!document.fullscreenElement;
+    // Entering fullscreen → minimal time bar only
+    this.showFullscreenControls = !this.isFullscreen;
   };
   
 
@@ -134,6 +161,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     private sanitizer: DomSanitizer,
     private tmdbService: TmdbService,
     private http: HttpClient,
+    private watchPartyService: WatchPartyService,
   ) {}
 
   ngOnInit(): void {
@@ -142,9 +170,19 @@ export class FrameComponent implements OnInit, OnDestroy {
 
     window.addEventListener('message', this.onPlayerMessage);
     document.addEventListener('fullscreenchange', this.onFullscreenChange);
+    this.setupWatchParty();
 
     this.mediaType = this.route.snapshot.paramMap.get('media_type') || '';
     this.id = this.route.snapshot.paramMap.get('id') || '';
+
+    const seasonParam = this.route.snapshot.paramMap.get('season');
+    const episodeParam = this.route.snapshot.paramMap.get('episode');
+    if (seasonParam) {
+      this.selectedSeason = +seasonParam;
+    }
+    if (episodeParam) {
+      this.selectedEpisode = +episodeParam;
+    }
 
     if (this.mediaType && this.id) {
       if (this.mediaType === 'movie') {
@@ -159,11 +197,16 @@ export class FrameComponent implements OnInit, OnDestroy {
       console.error('Missing required route parameters.');
     }
     this.fetchContent('plot');
+
+    void this.tryRestoreWatchParty();
   }
 
   ngOnDestroy(): void {
     window.removeEventListener('message', this.onPlayerMessage);
     document.removeEventListener('fullscreenchange', this.onFullscreenChange);
+    this.watchPartySubs.unsubscribe();
+    // Keep session so a full page reload can rejoin the same party
+    this.watchPartyService.disconnectKeepingSession();
   }
 
   
@@ -344,6 +387,7 @@ export class FrameComponent implements OnInit, OnDestroy {
         this.isLoading = false; // Mark loading as complete
 
         this.embedUrl = this.buildEmbedUrl(`movie/${this.id}`);
+        this.syncWatchPartyMedia();
 
         // Fetch initial content after loading is complete
         this.fetchContent('plot');
@@ -367,7 +411,12 @@ export class FrameComponent implements OnInit, OnDestroy {
 
         this.seasons = data.seasons.filter((season: any) => season.season_number > 0);
         if (this.seasons.length > 0) {
-          this.selectedSeason = this.seasons[0].season_number;
+          const hasRouteSeason = this.seasons.some(
+            (season) => season.season_number === this.selectedSeason
+          );
+          if (!hasRouteSeason) {
+            this.selectedSeason = this.seasons[0].season_number;
+          }
           this.fetchEpisodes(this.selectedSeason);
         } else {
           console.error('No seasons found for this TV show.');
@@ -389,7 +438,12 @@ export class FrameComponent implements OnInit, OnDestroy {
       (data: any) => {
         this.episodes = data.episodes;
         if (this.episodes.length > 0) {
-          this.selectedEpisode = this.episodes[0].episode_number;
+          const hasRouteEpisode = this.episodes.some(
+            (episode) => episode.episode_number === this.selectedEpisode
+          );
+          if (!hasRouteEpisode) {
+            this.selectedEpisode = this.episodes[0].episode_number;
+          }
           this.updateEmbedUrl();
         } else {
           console.error(`No episodes found for Season ${seasonNumber}.`);
@@ -429,6 +483,7 @@ export class FrameComponent implements OnInit, OnDestroy {
       this.embedUrl = this.buildEmbedUrl(
         `tv/${this.id}/${this.selectedSeason}/${this.selectedEpisode}`
       );
+      this.syncWatchPartyMedia();
     }
   }
 
@@ -490,21 +545,22 @@ export class FrameComponent implements OnInit, OnDestroy {
 
     this.duration = data.duration ?? this.duration;
     this.isPlaying = data.playing ?? this.isPlaying;
-    this.isMuted = data.muted ?? this.isMuted;
-    this.volume = data.volume ?? this.volume;
 
     switch (data.event) {
       case 'play':
         this.isPlaying = true;
+        this.broadcastWatchPartyEvent('play', data.currentTime);
         break;
       case 'pause':
         this.isPlaying = false;
+        this.broadcastWatchPartyEvent('pause', data.currentTime);
         break;
       case 'ended':
         this.isPlaying = false;
         break;
       case 'seeked':
         this.isSeeking = false;
+        this.broadcastWatchPartyEvent('seeked', data.currentTime);
         break;
       case 'timeupdate':
       case 'playerstatus':
@@ -596,19 +652,6 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.seekTo(this.currentTime + seconds);
   }
 
-  toggleMute(): void {
-    const nextMuted = !this.isMuted;
-    this.isMuted = nextMuted;
-    this.postPlayerCommand({ command: 'mute', muted: nextMuted });
-  }
-
-  onVolumeInput(event: Event): void {
-    const level = Number((event.target as HTMLInputElement).value);
-    this.volume = level;
-    this.isMuted = level === 0;
-    this.postPlayerCommand({ command: 'volume', level });
-  }
-
   requestPlayerStatus(): void {
     this.postPlayerCommand({ command: 'getStatus' });
   }
@@ -621,12 +664,284 @@ export class FrameComponent implements OnInit, OnDestroy {
 
     try {
       if (!document.fullscreenElement) {
+        this.showFullscreenControls = false;
         await container.requestFullscreen();
       } else {
         await document.exitFullscreen();
+        this.showFullscreenControls = false;
       }
     } catch (error) {
       console.error('Fullscreen toggle failed:', error);
+    }
+  }
+
+  toggleFullscreenControls(): void {
+    this.showFullscreenControls = !this.showFullscreenControls;
+  }
+
+  get showPlayerButtons(): boolean {
+    return !this.isFullscreen || this.showFullscreenControls;
+  }
+
+  private setupWatchParty(): void {
+    this.watchPartySubs.add(
+      this.watchPartyService.state$.subscribe((state) => {
+        this.watchParty = state;
+        if (state.connected && state.roomCode) {
+          this.syncPartyQueryParam(state.roomCode);
+        }
+      })
+    );
+
+    this.watchPartySubs.add(
+      this.watchPartyService.remoteCommands$.subscribe((command) => {
+        this.applyWatchPartyCommand(command);
+      })
+    );
+
+    this.watchPartySubs.add(
+      this.watchPartyService.syncRequested$.subscribe(() => {
+        this.watchPartyService.broadcastSync(this.currentTime, this.isPlaying);
+      })
+    );
+  }
+
+  private async tryRestoreWatchParty(): Promise<void> {
+    const saved = this.watchPartyService.getSavedSession();
+    const partyFromUrl = this.route.snapshot.queryParamMap.get('party');
+
+    if (saved) {
+      this.showWatchPartyPanel = true;
+      this.watchPartyName = saved.displayName || '';
+      this.joinRoomCode = saved.roomCode;
+      this.watchPartyMode = saved.role === 'host' ? 'create' : 'join';
+
+      try {
+        const restored = await this.watchPartyService.restoreSession();
+        if (restored) {
+          this.syncWatchPartyMedia();
+        } else if (saved.role === 'guest') {
+          // Host may still be reconnecting — show join modal so they can retry with a name
+          this.openJoinInviteModal(saved.roomCode);
+          this.watchPartyName = saved.displayName || '';
+        }
+      } catch (error) {
+        console.error('Failed to restore watch party:', error);
+        if (saved.role === 'guest') {
+          this.openJoinInviteModal(saved.roomCode);
+          this.watchPartyName = saved.displayName || '';
+        }
+      }
+      return;
+    }
+
+    if (partyFromUrl) {
+      this.openJoinInviteModal(partyFromUrl);
+    }
+  }
+
+  private openJoinInviteModal(roomCode: string): void {
+    this.joinRoomCode = roomCode.trim().toUpperCase();
+    this.watchPartyMode = 'join';
+    this.showJoinInviteModal = true;
+    this.showWatchPartyPanel = false;
+  }
+
+  closeJoinInviteModal(): void {
+    this.showJoinInviteModal = false;
+  }
+
+  private syncPartyQueryParam(roomCode: string): void {
+    const current = this.route.snapshot.queryParamMap.get('party');
+    if (current?.toUpperCase() === roomCode.toUpperCase()) {
+      return;
+    }
+    this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { party: roomCode },
+      queryParamsHandling: 'merge',
+      replaceUrl: true,
+    });
+  }
+
+  private syncWatchPartyMedia(): void {
+    this.watchPartyService.setMediaState({
+      mediaType: this.mediaType,
+      id: this.id,
+      season: this.mediaType === 'tv' ? this.selectedSeason : undefined,
+      episode: this.mediaType === 'tv' ? this.selectedEpisode : undefined,
+      title: this.title,
+    });
+  }
+
+  private broadcastWatchPartyEvent(
+    event: 'play' | 'pause' | 'seeked',
+    time: number
+  ): void {
+    if (Date.now() < this.ignorePartyBroadcastUntil) {
+      return;
+    }
+    if (this.watchPartyService.isApplyingRemote) {
+      return;
+    }
+    this.watchPartyService.broadcastPlayerEvent(event, time ?? this.currentTime);
+  }
+
+  toggleWatchPartyPanel(): void {
+    this.showWatchPartyPanel = !this.showWatchPartyPanel;
+  }
+
+  async startWatchParty(): Promise<void> {
+    try {
+      this.syncWatchPartyMedia();
+      await this.watchPartyService.createParty(this.watchPartyName || 'Host');
+      this.showWatchPartyPanel = true;
+    } catch (error) {
+      console.error('Failed to start watch party:', error);
+    }
+  }
+
+  async joinWatchParty(): Promise<void> {
+    try {
+      await this.watchPartyService.joinParty(
+        this.joinRoomCode,
+        this.watchPartyName.trim() || 'Guest'
+      );
+      this.showJoinInviteModal = false;
+      this.showWatchPartyPanel = true;
+      this.syncWatchPartyMedia();
+    } catch (error) {
+      console.error('Failed to join watch party:', error);
+    }
+  }
+
+  leaveWatchParty(): void {
+    this.watchPartyService.leaveParty();
+    this.watchPartyCopied = false;
+    this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { party: null },
+      queryParamsHandling: 'merge',
+      replaceUrl: true,
+    });
+  }
+
+  /** Push your current time/play state to everyone (fixes drift). */
+  syncWatchParty(): void {
+    if (!this.watchParty.connected) {
+      return;
+    }
+    this.watchPartyService.broadcastSync(this.currentTime, this.isPlaying);
+  }
+
+  async copyPartyInvite(): Promise<void> {
+    const invite = this.watchParty.inviteUrl;
+    if (!invite) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(invite);
+      this.watchPartyCopied = true;
+      setTimeout(() => {
+        this.watchPartyCopied = false;
+      }, 2000);
+    } catch (error) {
+      console.error('Failed to copy invite link:', error);
+    }
+  }
+
+  private applyWatchPartyCommand(command: WatchPartyCommand): void {
+    if (command.media) {
+      this.ensureWatchPartyMedia(command.media);
+    }
+
+    if (command.action === 'media' || command.action === 'hello') {
+      return;
+    }
+
+    const time = command.time ?? this.currentTime;
+
+    this.watchPartyService.runAsRemote(() => {
+      this.ignorePartyBroadcastUntil = Date.now() + 800;
+
+      switch (command.action) {
+        case 'play':
+          this.postPlayerCommand({ command: 'seek', time });
+          this.postPlayerCommand({ command: 'play', time });
+          this.isPlaying = true;
+          this.currentTime = time;
+          break;
+        case 'pause':
+          this.postPlayerCommand({ command: 'seek', time });
+          this.postPlayerCommand({ command: 'pause', time });
+          this.isPlaying = false;
+          this.currentTime = time;
+          break;
+        case 'seek':
+          this.seekTo(time);
+          break;
+        case 'sync':
+          this.postPlayerCommand({ command: 'seek', time });
+          this.postPlayerCommand({
+            command: command.playing ? 'play' : 'pause',
+            time,
+          });
+          this.isPlaying = !!command.playing;
+          this.currentTime = time;
+          break;
+      }
+    });
+  }
+
+  private ensureWatchPartyMedia(media: {
+    mediaType: string;
+    id: string;
+    season?: number;
+    episode?: number;
+  }): void {
+    const sameTitle =
+      media.mediaType === this.mediaType && media.id === this.id;
+
+    if (sameTitle && media.mediaType === 'tv') {
+      if (
+        media.season != null &&
+        media.season !== this.selectedSeason
+      ) {
+        this.selectedSeason = media.season;
+        this.fetchEpisodes(media.season).add(() => {
+          if (media.episode != null) {
+            this.selectEpisode(media.episode);
+          }
+        });
+        return;
+      }
+
+      if (
+        media.episode != null &&
+        media.episode !== this.selectedEpisode
+      ) {
+        this.selectEpisode(media.episode);
+      }
+      return;
+    }
+
+    if (sameTitle) {
+      return;
+    }
+
+    // Different title — navigate and keep party code in the URL for rejoin
+    const queryParams = this.watchParty.roomCode
+      ? { party: this.watchParty.roomCode }
+      : {};
+
+    if (media.mediaType === 'tv' && media.season && media.episode) {
+      this.router.navigate(
+        ['/frame', media.mediaType, media.id, media.season, media.episode],
+        { queryParams }
+      );
+    } else {
+      this.router.navigate(['/frame', media.mediaType, media.id], { queryParams });
     }
   }
 

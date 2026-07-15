@@ -1,4 +1,68 @@
 <section class="min-h-screen text-white relative overflow-hidden">
+  <!-- Watch Party invite modal (from shared ?party= link) -->
+  <div
+    *ngIf="showJoinInviteModal && !watchParty.connected"
+    class="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+    (click)="closeJoinInviteModal()"
+  >
+    <div
+      class="w-full max-w-md rounded-xl border border-white/15 bg-netflix-black shadow-2xl p-5 sm:p-6 space-y-4"
+      (click)="$event.stopPropagation()"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="join-party-title"
+    >
+      <div class="space-y-1">
+        <h2 id="join-party-title" class="text-lg sm:text-xl font-semibold text-white">
+          Join Watch Party
+        </h2>
+        <p class="text-sm text-gray-400">
+          You’ve been invited to watch together. Enter your name to join.
+        </p>
+      </div>
+
+      <div class="rounded-lg bg-white/5 border border-white/10 px-3 py-2.5 flex items-center justify-between gap-3">
+        <span class="text-xs text-gray-400">Room code</span>
+        <code class="text-sm font-semibold tracking-[0.2em] text-white">{{ joinRoomCode }}</code>
+      </div>
+
+      <div class="space-y-2">
+        <label for="invite-party-name" class="block text-xs text-gray-400">Your name</label>
+        <input
+          id="invite-party-name"
+          type="text"
+          [(ngModel)]="watchPartyName"
+          (keyup.enter)="joinWatchParty()"
+          placeholder="e.g. Kean"
+          autofocus
+          class="w-full px-3 py-2.5 text-sm bg-transparent border border-white/20 rounded-md focus:outline-none focus:border-red-600"
+        />
+      </div>
+
+      <p *ngIf="watchParty.error" class="text-xs text-red-400">
+        {{ watchParty.error }}
+      </p>
+
+      <div class="flex flex-col sm:flex-row gap-2 pt-1">
+        <button
+          type="button"
+          (click)="joinWatchParty()"
+          [disabled]="watchParty.connecting || !joinRoomCode"
+          class="flex-1 px-3 py-2.5 rounded-md bg-red-600 hover:bg-red-500 disabled:opacity-50 text-sm font-medium transition"
+        >
+          {{ watchParty.connecting ? 'Joining…' : 'Join party' }}
+        </button>
+        <button
+          type="button"
+          (click)="closeJoinInviteModal()"
+          class="px-3 py-2.5 rounded-md border border-white/20 hover:bg-white/10 text-sm transition"
+        >
+          Not now
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- Background Image -->
   <div
     class="absolute inset-0 bg-cover bg-center z-0"
@@ -45,9 +109,9 @@
             class="bg-black/80 border border-white/10 px-3 py-2.5 space-y-2"
             [ngClass]="isFullscreen ? 'border-0 rounded-none shrink-0' : 'border-t-0 rounded-b-lg'"
           >
-            <!-- Seek bar -->
-            <div class="flex items-center gap-3">
-              <span class="text-xs text-gray-400 tabular-nums w-12 text-right">{{ formatTime(currentTime) }}</span>
+            <!-- Seek / time bar (always visible; fullscreen adds a controls toggle) -->
+            <div class="flex items-center gap-2 sm:gap-3">
+              <span class="text-xs text-gray-400 tabular-nums w-12 text-right shrink-0">{{ formatTime(currentTime) }}</span>
               <input
                 type="range"
                 min="0"
@@ -59,12 +123,58 @@
                 class="flex-1 h-1.5 accent-red-600 cursor-pointer"
                 [attr.aria-label]="'Seek'"
               />
-              <span class="text-xs text-gray-400 tabular-nums w-12">{{ formatTime(duration) }}</span>
+              <span class="text-xs text-gray-400 tabular-nums w-12 shrink-0">{{ formatTime(duration) }}</span>
+
+              <button
+                *ngIf="isFullscreen"
+                type="button"
+                (click)="toggleFullscreenControls()"
+                class="p-1.5 rounded-full text-white hover:bg-white/10 transition shrink-0"
+                [attr.aria-label]="showFullscreenControls ? 'Hide controls' : 'Show controls'"
+                [title]="showFullscreenControls ? 'Hide controls' : 'Show controls'"
+              >
+                <!-- Chevron up = show more / down = hide -->
+                <svg *ngIf="!showFullscreenControls" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M18 15l-6-6-6 6" />
+                </svg>
+                <svg *ngIf="showFullscreenControls" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M6 9l6 6 6-6" />
+                </svg>
+              </button>
             </div>
 
-            <!-- Control buttons -->
-            <div class="flex items-center justify-between gap-2">
-              <div class="flex items-center gap-1 sm:gap-2">
+            <!-- Control buttons (hidden in fullscreen until chevron is tapped) -->
+            <div *ngIf="showPlayerButtons" class="grid grid-cols-3 items-center gap-1">
+              <!-- Left: episode nav (balances the right side) -->
+              <div class="flex items-center justify-start gap-0.5 sm:gap-1 min-h-[40px]">
+                <button
+                  *ngIf="mediaType === 'tv'"
+                  type="button"
+                  (click)="prevEpisode()"
+                  class="p-2 rounded-full text-white hover:bg-white/10 transition"
+                  aria-label="Previous episode"
+                  title="Previous episode"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z" />
+                  </svg>
+                </button>
+                <button
+                  *ngIf="mediaType === 'tv'"
+                  type="button"
+                  (click)="nextEpisode()"
+                  class="p-2 rounded-full text-white hover:bg-white/10 transition"
+                  aria-label="Next episode"
+                  title="Next episode"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M16 18h2V6h-2zm-11 0 8.5-6L5 6z" />
+                  </svg>
+                </button>
+              </div>
+
+              <!-- Center: skip + play -->
+              <div class="flex items-center justify-center gap-1 sm:gap-2">
                 <button
                   type="button"
                   (click)="skipBy(-10)"
@@ -82,12 +192,10 @@
                   [attr.aria-label]="isPlaying ? 'Pause' : 'Play'"
                   [title]="isPlaying ? 'Pause' : 'Play'"
                 >
-                  <!-- Pause -->
                   <svg *ngIf="isPlaying" xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
                     <rect x="6" y="4" width="4" height="16" rx="1" />
                     <rect x="14" y="4" width="4" height="16" rx="1" />
                   </svg>
-                  <!-- Play -->
                   <svg *ngIf="!isPlaying" xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M8 5v14l11-7z" />
                   </svg>
@@ -102,69 +210,24 @@
                 >
                   +10s
                 </button>
-
-                <button
-                  *ngIf="mediaType === 'tv'"
-                  type="button"
-                  (click)="prevEpisode()"
-                  class="p-2 rounded-full text-white hover:bg-white/10 transition hidden sm:inline-flex"
-                  aria-label="Previous episode"
-                  title="Previous episode"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z" />
-                  </svg>
-                </button>
-
-                <button
-                  *ngIf="mediaType === 'tv'"
-                  type="button"
-                  (click)="nextEpisode()"
-                  class="p-2 rounded-full text-white hover:bg-white/10 transition hidden sm:inline-flex"
-                  aria-label="Next episode"
-                  title="Next episode"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M16 18h2V6h-2zm-11 0 8.5-6L5 6z" />
-                  </svg>
-                </button>
               </div>
 
-              <div class="flex items-center gap-2 min-w-0">
+              <!-- Right: sync + fullscreen -->
+              <div class="flex items-center justify-end gap-0.5 sm:gap-1">
                 <button
+                  *ngIf="watchParty.connected"
                   type="button"
-                  (click)="toggleMute()"
-                  class="p-2 rounded-full text-white hover:bg-white/10 transition shrink-0"
-                  [attr.aria-label]="isMuted || volume === 0 ? 'Unmute' : 'Mute'"
-                  [title]="isMuted || volume === 0 ? 'Unmute' : 'Mute'"
+                  (click)="syncWatchParty()"
+                  class="px-2.5 py-1.5 rounded-full text-xs font-medium text-emerald-300 border border-emerald-500/40 hover:bg-emerald-600/20 transition"
+                  title="Sync everyone to your current time"
                 >
-                  <svg *ngIf="!isMuted && volume > 0" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-                    <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-                  </svg>
-                  <svg *ngIf="isMuted || volume === 0" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-                    <line x1="23" y1="9" x2="17" y2="15" />
-                    <line x1="17" y1="9" x2="23" y2="15" />
-                  </svg>
+                  Sync
                 </button>
-
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  [value]="isMuted ? 0 : volume"
-                  (input)="onVolumeInput($event)"
-                  class="w-16 sm:w-24 h-1.5 accent-red-600 cursor-pointer"
-                  aria-label="Volume"
-                />
 
                 <button
                   type="button"
                   (click)="toggleFullscreen()"
-                  class="p-2 rounded-full text-white hover:bg-white/10 transition shrink-0"
+                  class="p-2 rounded-full text-white hover:bg-white/10 transition"
                   [attr.aria-label]="isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'"
                   [title]="isFullscreen ? 'Exit fullscreen' : 'Fullscreen'"
                 >
@@ -188,6 +251,182 @@
       
         <div *ngIf="!embedUrl" class="text-gray-500 text-center mt-8 mb-8">
           Unable to load the video.
+        </div>
+
+        <!-- Watch Party -->
+        <div class="mt-4 mb-2">
+          <button
+            type="button"
+            (click)="toggleWatchPartyPanel()"
+            class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm border border-white/15 bg-black/40 hover:bg-white/10 transition"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M16 17h6" />
+              <path d="M19 14v6" />
+              <path d="M12 15v2" />
+              <path d="M6 15v2" />
+              <circle cx="12" cy="9" r="3" />
+              <circle cx="6" cy="9" r="2" />
+              <circle cx="18" cy="9" r="2" />
+            </svg>
+            Watch Party
+            <span
+              *ngIf="watchParty.connected"
+              class="text-xs px-1.5 py-0.5 rounded-full bg-red-600/80"
+            >
+              {{ watchParty.role === 'host' ? 'Hosting' : 'Joined' }} · {{ watchParty.members.length }}
+            </span>
+          </button>
+
+          <div
+            *ngIf="showWatchPartyPanel"
+            class="mt-3 rounded-lg border border-white/10 bg-black/70 p-4 space-y-3"
+          >
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <h3 class="text-sm font-semibold text-white">Watch together</h3>
+                <p class="text-xs text-gray-400 mt-1">
+                  Anyone can control playback. Reload keeps you in the same room.
+                </p>
+              </div>
+              <button
+                type="button"
+                (click)="toggleWatchPartyPanel()"
+                class="text-gray-400 hover:text-white text-sm"
+                aria-label="Close watch party panel"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div *ngIf="!watchParty.connected" class="space-y-3">
+              <div class="flex rounded-md overflow-hidden border border-white/15">
+                <button
+                  type="button"
+                  (click)="watchPartyMode = 'create'"
+                  class="flex-1 px-3 py-1.5 text-xs font-medium transition"
+                  [ngClass]="watchPartyMode === 'create' ? 'bg-red-600 text-white' : 'bg-transparent text-gray-300 hover:bg-white/5'"
+                >
+                  Create
+                </button>
+                <button
+                  type="button"
+                  (click)="watchPartyMode = 'join'"
+                  class="flex-1 px-3 py-1.5 text-xs font-medium transition"
+                  [ngClass]="watchPartyMode === 'join' ? 'bg-red-600 text-white' : 'bg-transparent text-gray-300 hover:bg-white/5'"
+                >
+                  Join
+                </button>
+              </div>
+
+              <input
+                type="text"
+                [(ngModel)]="watchPartyName"
+                placeholder="Your name"
+                class="w-full px-3 py-2 text-sm bg-transparent border border-white/20 rounded-md focus:outline-none focus:border-red-600"
+              />
+
+              <div *ngIf="watchPartyMode === 'create'" class="space-y-2">
+                <p class="text-xs text-gray-400">
+                  Start a party, then share the room code with friends.
+                </p>
+                <button
+                  type="button"
+                  (click)="startWatchParty()"
+                  [disabled]="watchParty.connecting"
+                  class="w-full px-3 py-2 rounded-md bg-red-600 hover:bg-red-500 disabled:opacity-50 text-sm font-medium transition"
+                >
+                  {{ watchParty.connecting ? 'Starting…' : 'Start party' }}
+                </button>
+              </div>
+
+              <div *ngIf="watchPartyMode === 'join'" class="space-y-2">
+                <p class="text-xs text-gray-400">
+                  Enter the host’s room code (or paste the invite link).
+                </p>
+                <input
+                  type="text"
+                  [(ngModel)]="joinRoomCode"
+                  (keyup.enter)="joinWatchParty()"
+                  placeholder="e.g. A3K9MP"
+                  class="w-full px-3 py-2 text-sm bg-transparent border border-white/20 rounded-md uppercase tracking-wider focus:outline-none focus:border-red-600"
+                />
+                <button
+                  type="button"
+                  (click)="joinWatchParty()"
+                  [disabled]="watchParty.connecting || !joinRoomCode"
+                  class="w-full px-3 py-2 rounded-md bg-red-600 hover:bg-red-500 disabled:opacity-50 text-sm font-medium transition"
+                >
+                  {{ watchParty.connecting ? 'Joining…' : 'Join party' }}
+                </button>
+              </div>
+            </div>
+
+            <div *ngIf="watchParty.connected" class="space-y-3">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="text-xs text-gray-400">Room</span>
+                <code class="px-2 py-1 rounded bg-white/10 text-sm tracking-[0.2em] font-semibold">
+                  {{ watchParty.roomCode }}
+                </code>
+                <span
+                  class="text-xs px-2 py-0.5 rounded-full"
+                  [ngClass]="watchParty.role === 'host'
+                    ? 'bg-emerald-600/30 text-emerald-300'
+                    : 'bg-sky-600/30 text-sky-300'"
+                >
+                  {{ watchParty.role === 'host' ? 'You are host' : 'You are guest' }}
+                </span>
+              </div>
+
+              <div class="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  (click)="syncWatchParty()"
+                  class="px-3 py-1.5 rounded-md border border-emerald-500/40 text-emerald-300 hover:bg-emerald-600/20 text-xs transition"
+                  title="Send your current time to everyone"
+                >
+                  Sync everyone to me
+                </button>
+                <button
+                  type="button"
+                  (click)="copyPartyInvite()"
+                  class="px-3 py-1.5 rounded-md border border-white/20 hover:bg-white/10 text-xs transition"
+                >
+                  {{ watchPartyCopied ? 'Copied!' : 'Copy invite link' }}
+                </button>
+                <button
+                  type="button"
+                  (click)="leaveWatchParty()"
+                  class="px-3 py-1.5 rounded-md border border-red-500/40 text-red-300 hover:bg-red-600/20 text-xs transition"
+                >
+                  Leave party
+                </button>
+              </div>
+
+              <div>
+                <p class="text-xs text-gray-400 mb-1">People ({{ watchParty.members.length }})</p>
+                <ul class="space-y-1">
+                  <li
+                    *ngFor="let member of watchParty.members"
+                    class="text-sm text-gray-200 flex items-center gap-2"
+                  >
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                    {{ member.displayName }}
+                    <span *ngIf="member.isHost" class="text-[10px] uppercase tracking-wide text-gray-400">host</span>
+                  </li>
+                </ul>
+              </div>
+
+              <p class="text-xs text-gray-400">
+                Anyone can play, pause, or seek. Use Sync if playback drifts apart.
+                Reloading the page will try to reconnect you to the same room.
+              </p>
+            </div>
+
+            <p *ngIf="watchParty.error" class="text-xs text-red-400">
+              {{ watchParty.error }}
+            </p>
+          </div>
         </div>
       </div>
 

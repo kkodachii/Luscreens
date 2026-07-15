@@ -1,0 +1,794 @@
+import { Injectable, OnDestroy } from '@angular/core';
+import { BehaviorSubject, Subject } from 'rxjs';
+import Peer, { DataConnection, PeerError } from 'peerjs';
+
+export type WatchPartyRole = 'host' | 'guest' | null;
+
+export interface WatchPartyMediaState {
+  mediaType: 'movie' | 'tv' | string;
+  id: string;
+  season?: number;
+  episode?: number;
+  title?: string;
+}
+
+export interface WatchPartyCommand {
+  action: 'play' | 'pause' | 'seek' | 'sync' | 'hello' | 'media';
+  time?: number;
+  playing?: boolean;
+  media?: WatchPartyMediaState;
+  displayName?: string;
+  sentAt?: number;
+}
+
+export interface WatchPartyMember {
+  peerId: string;
+  displayName: string;
+  isHost: boolean;
+}
+
+export interface WatchPartySession {
+  role: 'host' | 'guest';
+  roomCode: string;
+  displayName: string;
+  mediaType?: string;
+  id?: string;
+  season?: number;
+  episode?: number;
+  savedAt: number;
+}
+
+export interface WatchPartyState {
+  role: WatchPartyRole;
+  roomCode: string | null;
+  connected: boolean;
+  connecting: boolean;
+  members: WatchPartyMember[];
+  error: string | null;
+  inviteUrl: string | null;
+}
+
+const INITIAL_STATE: WatchPartyState = {
+  role: null,
+  roomCode: null,
+  connected: false,
+  connecting: false,
+  members: [],
+  error: null,
+  inviteUrl: null,
+};
+
+@Injectable({
+  providedIn: 'root',
+})
+export class WatchPartyService implements OnDestroy {
+  /** Alphanumeric-only peer ids (PeerJS is picky about id format). */
+  private static readonly PEER_PREFIX = 'lsparty';
+  private static readonly CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  private static readonly SESSION_KEY = 'luscreensWatchParty';
+  private static readonly SESSION_MAX_AGE_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+  private peer: Peer | null = null;
+  private connections = new Map<string, DataConnection>();
+  private displayName = 'Guest';
+  private mediaState: WatchPartyMediaState | null = null;
+  private lastBroadcastAt = 0;
+  private applyingRemote = false;
+
+  private readonly stateSubject = new BehaviorSubject<WatchPartyState>(INITIAL_STATE);
+  readonly state$ = this.stateSubject.asObservable();
+
+  private readonly remoteCommandSubject = new Subject<WatchPartyCommand>();
+  readonly remoteCommands$ = this.remoteCommandSubject.asObservable();
+
+  /** Host-only: fired when a guest connects and needs a playback snapshot. */
+  private readonly syncRequestedSubject = new Subject<void>();
+  readonly syncRequested$ = this.syncRequestedSubject.asObservable();
+
+  get snapshot(): WatchPartyState {
+    return this.stateSubject.value;
+  }
+
+  get isInParty(): boolean {
+    return this.snapshot.role !== null && this.snapshot.connected;
+  }
+
+  get isHost(): boolean {
+    return this.snapshot.role === 'host';
+  }
+
+  get isGuest(): boolean {
+    return this.snapshot.role === 'guest';
+  }
+
+  get isApplyingRemote(): boolean {
+    return this.applyingRemote;
+  }
+
+  setDisplayName(name: string): void {
+    const trimmed = name.trim();
+    this.displayName = trimmed || 'Guest';
+  }
+
+  setMediaState(media: WatchPartyMediaState): void {
+    this.mediaState = media;
+    if (this.isInParty) {
+      this.broadcast({
+        action: 'media',
+        media,
+        displayName: this.displayName,
+        sentAt: Date.now(),
+      });
+      // Refresh persisted media so reload lands on the same title/episode
+      const role = this.snapshot.role;
+      const roomCode = this.snapshot.roomCode;
+      if ((role === 'host' || role === 'guest') && roomCode) {
+        this.persistSession(role, roomCode);
+      }
+    }
+  }
+
+  async createParty(displayName?: string, existingRoomCode?: string): Promise<string> {
+    if (displayName) {
+      this.setDisplayName(displayName);
+    }
+
+    await this.resetPeer();
+    this.patchState({ connecting: true, error: null, role: 'host', roomCode: null });
+
+    const roomCode = existingRoomCode
+      ? this.normalizeRoomCode(existingRoomCode)
+      : this.generateRoomCode();
+    if (!roomCode) {
+      throw new Error('Invalid room code');
+    }
+    const peerId = this.toPeerId(roomCode);
+
+    try {
+      // After reload the old PeerJS id can linger briefly — retry a few times
+      await this.openPeerWithRetry(peerId);
+
+      if (this.peer?.id !== peerId) {
+        throw new Error('Room id mismatch from signaling server. Please try again.');
+      }
+
+      this.peer.on('connection', (conn) => this.handleIncomingConnection(conn));
+      this.peer.on('error', (err) => this.onPeerError(err));
+
+      this.patchState({
+        role: 'host',
+        roomCode,
+        connected: true,
+        connecting: false,
+        members: [
+          {
+            peerId,
+            displayName: this.displayName || 'Host',
+            isHost: true,
+          },
+        ],
+        inviteUrl: this.buildInviteUrl(roomCode),
+        error: null,
+      });
+
+      this.persistSession('host', roomCode);
+      return roomCode;
+    } catch (error) {
+      await this.resetPeer();
+      this.patchState({
+        ...INITIAL_STATE,
+        error: this.toErrorMessage(error, 'Failed to create watch party'),
+      });
+      throw error;
+    }
+  }
+
+  async joinParty(roomCode: string, displayName?: string): Promise<void> {
+    if (displayName) {
+      this.setDisplayName(displayName);
+    }
+
+    const normalized = this.normalizeRoomCode(roomCode);
+    if (!normalized) {
+      throw new Error('Enter a valid room code');
+    }
+
+    await this.resetPeer();
+    this.patchState({
+      connecting: true,
+      error: null,
+      role: 'guest',
+      roomCode: normalized,
+      connected: false,
+      members: [],
+      inviteUrl: null,
+    });
+
+    try {
+      await this.openPeer();
+      this.peer!.on('error', (err) => this.onPeerError(err));
+
+      const hostPeerId = this.toPeerId(normalized);
+      const conn = this.peer!.connect(hostPeerId, { reliable: true });
+
+      if (!conn) {
+        throw new Error('Could not start connection to host');
+      }
+
+      await this.waitForConnection(conn);
+      this.registerConnection(conn, false);
+
+      this.send(conn, {
+        action: 'hello',
+        displayName: this.displayName,
+        sentAt: Date.now(),
+      });
+
+      this.patchState({
+        role: 'guest',
+        roomCode: normalized,
+        connected: true,
+        connecting: false,
+        inviteUrl: this.buildInviteUrl(normalized),
+        members: [
+          { peerId: hostPeerId, displayName: 'Host', isHost: true },
+          {
+            peerId: this.peer!.id,
+            displayName: this.displayName,
+            isHost: false,
+          },
+        ],
+        error: null,
+      });
+
+      this.persistSession('guest', normalized);
+    } catch (error) {
+      await this.resetPeer();
+      this.patchState({
+        ...INITIAL_STATE,
+        error: this.toErrorMessage(error, 'Failed to join watch party'),
+      });
+      throw error;
+    }
+  }
+
+  /** Restore a party after page reload. Returns true if reconnect was attempted. */
+  async restoreSession(): Promise<boolean> {
+    const session = this.readSession();
+    if (!session) {
+      return false;
+    }
+
+    this.setDisplayName(session.displayName);
+
+    try {
+      if (session.role === 'host') {
+        await this.createParty(session.displayName, session.roomCode);
+      } else {
+        await this.joinParty(session.roomCode, session.displayName);
+      }
+      return true;
+    } catch (error) {
+      // Guest may fail if host is briefly offline during reload — keep session for retry
+      if (session.role === 'guest') {
+        this.patchState({
+          ...INITIAL_STATE,
+          error:
+            'Could not rejoin yet. Make sure the host is still in the party, then try Join again.',
+        });
+        return false;
+      }
+      this.clearSession();
+      throw error;
+    }
+  }
+
+  getSavedSession(): WatchPartySession | null {
+    return this.readSession();
+  }
+
+  leaveParty(): void {
+    void this.resetPeer();
+    this.applyingRemote = false;
+    this.clearSession();
+    this.stateSubject.next({ ...INITIAL_STATE });
+  }
+
+  /** Tear down the peer without clearing the saved session (used on page unload). */
+  disconnectKeepingSession(): void {
+    void this.resetPeer();
+    this.applyingRemote = false;
+    // Keep role/room in UI state cleared, but sessionStorage stays for reload restore
+    this.stateSubject.next({ ...INITIAL_STATE });
+  }
+
+  /** Anyone in the party can broadcast play/pause/seek. */
+  broadcastPlayerEvent(event: 'play' | 'pause' | 'seeked', time: number): void {
+    if (!this.isInParty) {
+      return;
+    }
+
+    const now = Date.now();
+    if (now - this.lastBroadcastAt < 80) {
+      return;
+    }
+    this.lastBroadcastAt = now;
+
+    const action = event === 'seeked' ? 'seek' : event;
+    this.broadcast({
+      action,
+      time,
+      playing: action === 'play',
+      media: this.mediaState ?? undefined,
+      displayName: this.displayName,
+      sentAt: now,
+    });
+  }
+
+  /** Push your current playback state so everyone can catch up. */
+  broadcastSync(time: number, playing: boolean): void {
+    if (!this.isInParty) {
+      return;
+    }
+
+    this.broadcast({
+      action: 'sync',
+      time,
+      playing,
+      media: this.mediaState ?? undefined,
+      displayName: this.displayName,
+      sentAt: Date.now(),
+    });
+  }
+
+  runAsRemote(action: () => void): void {
+    this.applyingRemote = true;
+    try {
+      action();
+    } finally {
+      setTimeout(() => {
+        this.applyingRemote = false;
+      }, 400);
+    }
+  }
+
+  ngOnDestroy(): void {
+    this.disconnectKeepingSession();
+    this.remoteCommandSubject.complete();
+    this.syncRequestedSubject.complete();
+    this.stateSubject.complete();
+  }
+
+  private async openPeer(peerId?: string): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      const peer = peerId
+        ? new Peer(peerId, { debug: 1 })
+        : new Peer({ debug: 1 });
+      this.peer = peer;
+
+      let settled = false;
+
+      const onOpen = (id: string): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        if (peerId && id !== peerId) {
+          reject(new Error('Signaling server assigned a different room id'));
+          return;
+        }
+        resolve();
+      };
+
+      const onError = (err: PeerError<string>): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        reject(err);
+      };
+
+      const cleanup = (): void => {
+        peer.off('open', onOpen);
+        peer.off('error', onError);
+      };
+
+      peer.on('open', onOpen);
+      peer.on('error', onError);
+    });
+  }
+
+  private async openPeerWithRetry(peerId: string, attempts = 4): Promise<void> {
+    let lastError: unknown;
+    for (let i = 0; i < attempts; i++) {
+      try {
+        if (i > 0) {
+          await this.resetPeer();
+          await new Promise((r) => setTimeout(r, 500 * i));
+        }
+        await this.openPeer(peerId);
+        return;
+      } catch (error) {
+        lastError = error;
+        const type =
+          error && typeof error === 'object' && 'type' in error
+            ? String((error as { type: string }).type)
+            : '';
+        // Only retry when the previous host session still holds the id
+        if (type !== 'unavailable-id' && i === 0) {
+          // first failure might still be unavailable-id under a generic Error
+        }
+      }
+    }
+    throw lastError instanceof Error
+      ? lastError
+      : new Error('Could not reclaim watch party room after reload');
+  }
+
+  private persistSession(role: 'host' | 'guest', roomCode: string): void {
+    try {
+      const session: WatchPartySession = {
+        role,
+        roomCode,
+        displayName: this.displayName,
+        mediaType: this.mediaState?.mediaType,
+        id: this.mediaState?.id,
+        season: this.mediaState?.season,
+        episode: this.mediaState?.episode,
+        savedAt: Date.now(),
+      };
+      sessionStorage.setItem(
+        WatchPartyService.SESSION_KEY,
+        JSON.stringify(session)
+      );
+    } catch {
+      // ignore quota / private mode
+    }
+  }
+
+  private readSession(): WatchPartySession | null {
+    try {
+      const raw = sessionStorage.getItem(WatchPartyService.SESSION_KEY);
+      if (!raw) {
+        return null;
+      }
+      const session = JSON.parse(raw) as WatchPartySession;
+      if (
+        !session?.roomCode ||
+        !session?.role ||
+        Date.now() - (session.savedAt || 0) > WatchPartyService.SESSION_MAX_AGE_MS
+      ) {
+        this.clearSession();
+        return null;
+      }
+      return session;
+    } catch {
+      return null;
+    }
+  }
+
+  private clearSession(): void {
+    try {
+      sessionStorage.removeItem(WatchPartyService.SESSION_KEY);
+    } catch {
+      // ignore
+    }
+  }
+
+  /**
+   * PeerJS often emits peer-unavailable on the Peer, not the DataConnection.
+   * Listen to both so join fails fast instead of hanging / acting weird.
+   */
+  private waitForConnection(conn: DataConnection): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const peer = this.peer;
+      if (!peer) {
+        reject(new Error('Peer not ready'));
+        return;
+      }
+
+      let settled = false;
+
+      const timeout = setTimeout(() => {
+        finish(() =>
+          reject(
+            new Error(
+              'Timed out connecting to host. Make sure the host party is still open and the code is correct.'
+            )
+          )
+        );
+      }, 12000);
+
+      const onOpen = (): void => {
+        finish(() => resolve());
+      };
+
+      const onConnError = (err: Error): void => {
+        finish(() => reject(err));
+      };
+
+      const onPeerError = (err: PeerError<string>): void => {
+        const type = (err as PeerError<string> & { type?: string }).type;
+        if (type === 'peer-unavailable') {
+          finish(() =>
+            reject(
+              new Error(
+                'Room not found. Ask the host to start the party again and use the new code.'
+              )
+            )
+          );
+          return;
+        }
+        finish(() => reject(err));
+      };
+
+      const finish = (cb: () => void): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeout);
+        conn.off('open', onOpen);
+        conn.off('error', onConnError);
+        peer.off('error', onPeerError);
+        cb();
+      };
+
+      conn.on('open', onOpen);
+      conn.on('error', onConnError);
+      peer.on('error', onPeerError);
+    });
+  }
+
+  private onPeerError(err: PeerError<string>): void {
+    const type = (err as PeerError<string> & { type?: string }).type;
+    if (type === 'peer-unavailable') {
+      return;
+    }
+    if (type === 'network' || type === 'server-error' || type === 'socket-error') {
+      this.patchState({
+        error: this.toErrorMessage(err, 'Watch party connection error'),
+        connected: false,
+      });
+    }
+  }
+
+  private handleIncomingConnection(conn: DataConnection): void {
+    conn.on('open', () => {
+      this.registerConnection(conn, true);
+
+      this.send(conn, {
+        action: 'hello',
+        displayName: this.displayName || 'Host',
+        media: this.mediaState ?? undefined,
+        sentAt: Date.now(),
+      });
+
+      if (this.mediaState) {
+        this.send(conn, {
+          action: 'media',
+          media: this.mediaState,
+          sentAt: Date.now(),
+        });
+      }
+
+      this.syncRequestedSubject.next();
+    });
+  }
+
+  private registerConnection(conn: DataConnection, fromHostSide: boolean): void {
+    this.connections.set(conn.peer, conn);
+
+    conn.on('data', (data) => this.onConnectionData(conn, data, fromHostSide));
+    conn.on('close', () => this.onConnectionClosed(conn.peer));
+    conn.on('error', () => this.onConnectionClosed(conn.peer));
+
+    this.refreshMembers();
+  }
+
+  private onConnectionData(
+    conn: DataConnection,
+    data: unknown,
+    fromHostSide: boolean
+  ): void {
+    const command = data as WatchPartyCommand;
+    if (!command?.action) {
+      return;
+    }
+
+    if (command.action === 'hello') {
+      const members = [...this.snapshot.members];
+      const existing = members.find((m) => m.peerId === conn.peer);
+      if (existing) {
+        existing.displayName = command.displayName || existing.displayName;
+      } else {
+        members.push({
+          peerId: conn.peer,
+          displayName: command.displayName || (fromHostSide ? 'Guest' : 'Host'),
+          isHost: !fromHostSide,
+        });
+      }
+      this.patchState({ members });
+      return;
+    }
+
+    // Apply remote playback/media for everyone (host and guests)
+    this.remoteCommandSubject.next(command);
+
+    // Star topology: host relays guest controls to the other guests
+    if (
+      this.isHost &&
+      (command.action === 'play' ||
+        command.action === 'pause' ||
+        command.action === 'seek' ||
+        command.action === 'sync' ||
+        command.action === 'media')
+    ) {
+      this.relayExcept(conn.peer, command);
+    }
+  }
+
+  private relayExcept(excludePeerId: string, command: WatchPartyCommand): void {
+    for (const [peerId, conn] of this.connections) {
+      if (peerId !== excludePeerId) {
+        this.send(conn, command);
+      }
+    }
+  }
+
+  private onConnectionClosed(peerId: string): void {
+    this.connections.delete(peerId);
+    this.refreshMembers();
+
+    if (this.isGuest && this.connections.size === 0) {
+      this.patchState({
+        connected: false,
+        error: 'Disconnected from host',
+      });
+    }
+  }
+
+  private refreshMembers(): void {
+    const members: WatchPartyMember[] = [];
+
+    if (this.isHost && this.peer) {
+      members.push({
+        peerId: this.peer.id,
+        displayName: this.displayName || 'Host',
+        isHost: true,
+      });
+      for (const [peerId] of this.connections) {
+        const existing = this.snapshot.members.find((m) => m.peerId === peerId);
+        members.push({
+          peerId,
+          displayName: existing?.displayName || 'Guest',
+          isHost: false,
+        });
+      }
+    } else if (this.isGuest && this.peer) {
+      const host = this.snapshot.members.find((m) => m.isHost);
+      if (host) {
+        members.push(host);
+      }
+      members.push({
+        peerId: this.peer.id,
+        displayName: this.displayName,
+        isHost: false,
+      });
+      for (const [peerId] of this.connections) {
+        if (!members.some((m) => m.peerId === peerId)) {
+          members.push({
+            peerId,
+            displayName: 'Host',
+            isHost: true,
+          });
+        }
+      }
+    }
+
+    this.patchState({ members });
+  }
+
+  private broadcast(command: WatchPartyCommand): void {
+    for (const conn of this.connections.values()) {
+      this.send(conn, command);
+    }
+  }
+
+  private send(conn: DataConnection, command: WatchPartyCommand): void {
+    if (conn.open) {
+      conn.send(command);
+    }
+  }
+
+  private async resetPeer(): Promise<void> {
+    for (const conn of this.connections.values()) {
+      try {
+        conn.close();
+      } catch {
+        // ignore
+      }
+    }
+    this.connections.clear();
+
+    if (this.peer) {
+      const peer = this.peer;
+      this.peer = null;
+      try {
+        peer.destroy();
+      } catch {
+        // ignore
+      }
+      // Give the broker a moment to release the previous id
+      await new Promise((r) => setTimeout(r, 150));
+    }
+  }
+
+  private generateRoomCode(length = 6): string {
+    let code = '';
+    const alphabet = WatchPartyService.CODE_ALPHABET;
+    const values = crypto.getRandomValues(new Uint32Array(length));
+    for (let i = 0; i < length; i++) {
+      code += alphabet[values[i] % alphabet.length];
+    }
+    return code;
+  }
+
+  /** Accept raw codes or full invite URLs containing ?party=CODE */
+  private normalizeRoomCode(input: string): string {
+    const raw = (input || '').trim();
+    if (!raw) {
+      return '';
+    }
+
+    try {
+      if (raw.includes('party=')) {
+        const url = new URL(raw, typeof window !== 'undefined' ? window.location.origin : undefined);
+        const fromQuery = url.searchParams.get('party');
+        if (fromQuery) {
+          return fromQuery.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+        }
+      }
+    } catch {
+      // not a URL — fall through
+    }
+
+    return raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  }
+
+  private toPeerId(roomCode: string): string {
+    return `${WatchPartyService.PEER_PREFIX}${roomCode.trim().toUpperCase()}`;
+  }
+
+  private buildInviteUrl(roomCode: string): string {
+    if (typeof window === 'undefined') {
+      return '';
+    }
+
+    const url = new URL(window.location.href);
+    url.searchParams.set('party', roomCode);
+    return url.toString();
+  }
+
+  private patchState(partial: Partial<WatchPartyState>): void {
+    this.stateSubject.next({ ...this.stateSubject.value, ...partial });
+  }
+
+  private toErrorMessage(error: unknown, fallback: string): string {
+    if (error && typeof error === 'object' && 'type' in error) {
+      const type = String((error as { type: string }).type);
+      if (type === 'peer-unavailable') {
+        return 'Room not found. Check the code or ask the host to restart the party.';
+      }
+      if (type === 'unavailable-id') {
+        return 'That room code is busy. Start a new party.';
+      }
+    }
+    if (error instanceof Error && error.message) {
+      return error.message;
+    }
+    return fallback;
+  }
+}
