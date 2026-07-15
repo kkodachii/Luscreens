@@ -6,6 +6,7 @@ import { TmdbService } from '../../services/tmdb.service';
 import { FormsModule } from '@angular/forms';
 import { HttpClient, HttpHeaders,HttpClientModule } from '@angular/common/http';
 import { inject } from '@vercel/analytics';
+import { environment } from '../../../environments/environment';
 
 @Component({
   selector: 'app-frame',
@@ -266,9 +267,7 @@ export class FrameComponent implements OnInit {
         this.details = data.overview || 'No details available.';
         this.isLoading = false; // Mark loading as complete
 
-        this.embedUrl = this.sanitizer.bypassSecurityTrustResourceUrl(
-          `https://vidfast.pro/movie/${this.id}?autoPlay=true&theme=red&title=false`
-        );
+        this.embedUrl = this.buildEmbedUrl(`movie/${this.id}`);
 
         // Fetch initial content after loading is complete
         this.fetchContent('plot');
@@ -350,10 +349,16 @@ export class FrameComponent implements OnInit {
 
   updateEmbedUrl(): void {
     if (this.mediaType === 'tv') {
-      this.embedUrl = this.sanitizer.bypassSecurityTrustResourceUrl(
-        `https://vidfast.pro/tv/${this.id}/${this.selectedSeason}/${this.selectedEpisode}?autoPlay=true&theme=red&title=false`
+      this.embedUrl = this.buildEmbedUrl(
+        `tv/${this.id}/${this.selectedSeason}/${this.selectedEpisode}`
       );
     }
+  }
+
+  private buildEmbedUrl(path: string): SafeResourceUrl {
+    const server = environment.streamServer || 'vEdge';
+    const url = `https://vidfast.vc/${path}?autoPlay=true&theme=red&title=false&server=${server}`;
+    return this.sanitizer.bypassSecurityTrustResourceUrl(url);
   }
 
   prevEpisode(): void {
