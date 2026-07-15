@@ -158,8 +158,8 @@
             [ngClass]="isFullscreen ? 'border-0 rounded-none shrink-0' : 'border-t-0 rounded-b-lg'"
           >
             <!-- Seek / time bar (always visible; fullscreen adds a controls toggle) -->
-            <div class="flex items-center gap-2 sm:gap-3">
-              <span class="text-xs text-gray-400 tabular-nums w-12 text-right shrink-0">{{ formatTime(currentTime) }}</span>
+            <div class="flex items-center gap-1.5 sm:gap-3">
+              <span class="text-[11px] sm:text-xs text-gray-400 tabular-nums w-10 sm:w-12 text-right shrink-0">{{ formatTime(currentTime) }}</span>
               <input
                 type="range"
                 min="0"
@@ -168,10 +168,10 @@
                 [value]="currentTime"
                 (input)="onSeekInput($event)"
                 (change)="onSeekChange($event)"
-                class="flex-1 h-1.5 accent-red-600 cursor-pointer"
+                class="flex-1 min-w-0 h-1.5 accent-red-600 cursor-pointer"
                 [attr.aria-label]="'Seek'"
               />
-              <span class="text-xs text-gray-400 tabular-nums w-12 shrink-0">{{ formatTime(duration) }}</span>
+              <span class="text-[11px] sm:text-xs text-gray-400 tabular-nums w-10 sm:w-12 shrink-0">{{ formatTime(duration) }}</span>
 
               <div *ngIf="isFullscreen" class="flex items-center gap-0.5 shrink-0">
                 <button
@@ -211,9 +211,13 @@
             </div>
 
             <!-- Control buttons (hidden in fullscreen until chevron is tapped) -->
-            <div *ngIf="showPlayerButtons" class="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1">
-              <!-- Left: episode nav (balances the right side) -->
-              <div class="flex items-center justify-start gap-0.5 sm:gap-1 min-h-[40px]">
+            <!-- Mobile: stacked rows (playback, then utilities). sm+: balanced 3-column grid. -->
+            <div
+              *ngIf="showPlayerButtons"
+              class="flex flex-col items-stretch gap-2 sm:grid sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center sm:gap-1"
+            >
+              <!-- Left: episode nav on sm+ (balances the right side) -->
+              <div class="hidden sm:flex items-center justify-start gap-1 min-h-[40px]">
                 <button
                   *ngIf="mediaType === 'tv'"
                   type="button"
@@ -240,8 +244,21 @@
                 </button>
               </div>
 
-              <!-- Center: skip + play -->
-              <div class="flex items-center justify-center gap-1 sm:gap-2">
+              <!-- Center: skip + play (+ episode nav on mobile) -->
+              <div class="flex items-center justify-center gap-1 sm:gap-2 min-h-[40px]">
+                <button
+                  *ngIf="mediaType === 'tv'"
+                  type="button"
+                  (click)="prevEpisode()"
+                  class="p-2 rounded-full text-white hover:bg-white/10 transition sm:hidden"
+                  aria-label="Previous episode"
+                  title="Previous episode"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z" />
+                  </svg>
+                </button>
+
                 <button
                   type="button"
                   (click)="skipBy(-10)"
@@ -277,12 +294,25 @@
                 >
                   +10s
                 </button>
+
+                <button
+                  *ngIf="mediaType === 'tv'"
+                  type="button"
+                  (click)="nextEpisode()"
+                  class="p-2 rounded-full text-white hover:bg-white/10 transition sm:hidden"
+                  aria-label="Next episode"
+                  title="Next episode"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M16 18h2V6h-2zm-11 0 8.5-6L5 6z" />
+                  </svg>
+                </button>
               </div>
 
-              <!-- Right: cc + server + sync + fullscreen -->
-              <div class="flex items-center justify-end gap-1 flex-wrap">
+              <!-- Right / mobile row 2: cc + server + sync + fullscreen -->
+              <div class="flex items-center justify-center sm:justify-end gap-1 flex-wrap">
                 <!-- CC / subtitles -->
-                <div class="relative">
+                <div class="relative shrink-0">
                   <button
                     type="button"
                     (click)="toggleCcMenu()"
@@ -313,7 +343,7 @@
                 </div>
 
                 <!-- Server -->
-                <div class="relative">
+                <div class="relative shrink-0">
                   <button
                     type="button"
                     (click)="toggleServerMenu()"
@@ -347,7 +377,7 @@
                   *ngIf="watchParty.connected"
                   type="button"
                   (click)="syncWatchParty()"
-                  class="px-2.5 py-1.5 rounded-full text-xs font-medium text-emerald-300 border border-emerald-500/40 hover:bg-emerald-600/20 transition"
+                  class="shrink-0 px-2.5 py-1.5 rounded-full text-xs font-medium text-emerald-300 border border-emerald-500/40 hover:bg-emerald-600/20 transition"
                   title="Sync everyone to your current time"
                 >
                   Sync
@@ -357,7 +387,7 @@
                   *ngIf="isFullscreen && watchParty.connected"
                   type="button"
                   (click)="toggleFloatingPartyChat()"
-                  class="relative p-2 rounded-full text-white hover:bg-white/10 transition"
+                  class="relative shrink-0 p-2 rounded-full text-white hover:bg-white/10 transition"
                   [class.text-red-400]="showFloatingPartyChat"
                   [attr.aria-label]="showFloatingPartyChat ? 'Hide chat' : 'Show chat'"
                   [title]="showFloatingPartyChat ? 'Hide chat' : 'Party chat'"
@@ -376,7 +406,7 @@
                   *ngIf="supportsDocumentPip"
                   type="button"
                   (click)="togglePictureInPicture()"
-                  class="p-2 rounded-full text-white hover:bg-white/10 transition"
+                  class="shrink-0 p-2 rounded-full text-white hover:bg-white/10 transition"
                   [class.text-red-400]="isPictureInPicture"
                   [attr.aria-label]="isPictureInPicture ? 'Exit picture-in-picture' : 'Picture-in-picture'"
                   [title]="isPictureInPicture ? 'Exit picture-in-picture' : 'Picture-in-picture'"
@@ -392,7 +422,7 @@
                 <button
                   type="button"
                   (click)="toggleFullscreen()"
-                  class="p-2 rounded-full text-white hover:bg-white/10 transition"
+                  class="shrink-0 p-2 rounded-full text-white hover:bg-white/10 transition"
                   [attr.aria-label]="isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'"
                   [title]="isFullscreen ? 'Exit fullscreen' : 'Fullscreen'"
                 >
