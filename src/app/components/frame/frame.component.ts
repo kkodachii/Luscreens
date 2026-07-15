@@ -1,4 +1,4 @@
-import { Component, OnInit, ViewChild, ElementRef } from '@angular/core';
+import { Component, OnInit, OnDestroy, ViewChild, ElementRef } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { NgForOf, NgIf, CommonModule } from '@angular/common';
@@ -8,6 +8,43 @@ import { HttpClient, HttpHeaders,HttpClientModule } from '@angular/common/http';
 import { inject } from '@vercel/analytics';
 import { environment } from '../../../environments/environment';
 
+type PlayerEventName = 'play' | 'pause' | 'seeked' | 'ended' | 'timeupdate' | 'playerstatus';
+
+interface PlayerEventData {
+  event: PlayerEventName;
+  currentTime: number;
+  duration: number;
+  tmdbId: number;
+  mediaType: 'movie' | 'tv';
+  season?: number;
+  episode?: number;
+  playing: boolean;
+  muted: boolean;
+  volume: number;
+}
+
+interface VidFastProgressEntry {
+  id: number;
+  type: 'movie' | 'tv';
+  title?: string;
+  poster_path?: string;
+  backdrop_path?: string;
+  progress?: { watched: number; duration: number };
+  last_season_watched?: number;
+  last_episode_watched?: number;
+  show_progress?: {
+    [key: string]: {
+      season: number;
+      episode: number;
+      progress: { watched: number; duration: number };
+      last_updated?: number;
+    };
+  };
+  last_updated?: number;
+}
+
+type VidFastProgressMap = Record<string, VidFastProgressEntry>;
+
 @Component({
   selector: 'app-frame',
   templateUrl: './frame.component.html',
@@ -15,10 +52,26 @@ import { environment } from '../../../environments/environment';
   styleUrls: ['./frame.component.css'],
   standalone: true,
 })
-export class FrameComponent implements OnInit {
+export class FrameComponent implements OnInit, OnDestroy {
 
   private GEMINI_API_KEY = 'AIzaSyA9C9R2DDRprhiaigMjG0LuUJKrat8zZhk';
   private GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+
+  private readonly vidfastOrigins = [
+    'https://vidfast.pro',
+    'https://vidfast.in',
+    'https://vidfast.io',
+    'https://vidfast.me',
+    'https://vidfast.net',
+    'https://vidfast.pm',
+    'https://vidfast.xyz',
+    'https://vidfast.vc',
+    'https://vidfast.bz',
+  ];
+
+  private readonly onPlayerMessage = (event: MessageEvent): void => {
+    this.handleVidfastMessage(event);
+  };
 
   activeSection: string = 'plot'; 
   plot: string = ''; 
@@ -55,10 +108,25 @@ export class FrameComponent implements OnInit {
   aiResponse: string = ''; // Stores the AI-generated response
   isAIResponding: boolean = false; // Tracks whether the AI is processing a request
   chatHistory: { sender: 'user' | 'ai'; text: string }[] = [];
+
+  // Custom player state (driven by VidFast PLAYER_EVENT)
+  isPlaying = false;
+  isMuted = false;
+  volume = 1;
+  currentTime = 0;
+  duration = 0;
+  isSeeking = false;
+  isFullscreen = false;
+
+  private readonly onFullscreenChange = (): void => {
+    this.isFullscreen = !!document.fullscreenElement;
+  };
   
 
   @ViewChild('seasonScroll') seasonScroll!: ElementRef;
   @ViewChild('episodeScroll') episodeScroll!: ElementRef;
+  @ViewChild('playerIframe') playerIframe!: ElementRef<HTMLIFrameElement>;
+  @ViewChild('playerContainer') playerContainer!: ElementRef<HTMLDivElement>;
 
   constructor(
     private route: ActivatedRoute,
@@ -71,6 +139,9 @@ export class FrameComponent implements OnInit {
   ngOnInit(): void {
     // Initialize Vercel Analytics
     inject();
+
+    window.addEventListener('message', this.onPlayerMessage);
+    document.addEventListener('fullscreenchange', this.onFullscreenChange);
 
     this.mediaType = this.route.snapshot.paramMap.get('media_type') || '';
     this.id = this.route.snapshot.paramMap.get('id') || '';
@@ -88,6 +159,11 @@ export class FrameComponent implements OnInit {
       console.error('Missing required route parameters.');
     }
     this.fetchContent('plot');
+  }
+
+  ngOnDestroy(): void {
+    window.removeEventListener('message', this.onPlayerMessage);
+    document.removeEventListener('fullscreenchange', this.onFullscreenChange);
   }
 
   
@@ -349,6 +425,7 @@ export class FrameComponent implements OnInit {
 
   updateEmbedUrl(): void {
     if (this.mediaType === 'tv') {
+      this.resetPlayerState();
       this.embedUrl = this.buildEmbedUrl(
         `tv/${this.id}/${this.selectedSeason}/${this.selectedEpisode}`
       );
@@ -357,8 +434,217 @@ export class FrameComponent implements OnInit {
 
   private buildEmbedUrl(path: string): SafeResourceUrl {
     const server = environment.streamServer || 'vEdge';
-    const url = `https://vidfast.vc/${path}?autoPlay=true&theme=red&title=false&server=${server}`;
+    const startAt = this.getSavedStartAt();
+    const params = new URLSearchParams({
+      autoPlay: 'true',
+      theme: 'red',
+      title: 'false',
+      server,
+      // Reduce embed chrome so users rely on our custom controls instead
+      hideServer: 'true',
+      fullscreenButton: 'false',
+      chromecast: 'false',
+    });
+
+    if (startAt > 0) {
+      params.set('startAt', String(Math.floor(startAt)));
+    }
+
+    if (this.mediaType === 'tv') {
+      params.set('nextButton', 'true');
+      params.set('autoNext', 'true');
+    }
+
+    const url = `https://vidfast.vc/${path}?${params.toString()}`;
     return this.sanitizer.bypassSecurityTrustResourceUrl(url);
+  }
+
+  private resetPlayerState(): void {
+    this.isPlaying = false;
+    this.currentTime = 0;
+    this.duration = 0;
+    this.isSeeking = false;
+  }
+
+  private handleVidfastMessage(event: MessageEvent): void {
+    if (!this.vidfastOrigins.includes(event.origin) || !event.data) {
+      return;
+    }
+
+    const { type, data } = event.data;
+
+    if (type === 'PLAYER_EVENT' && data) {
+      this.onPlayerEvent(data as PlayerEventData);
+      return;
+    }
+
+    if (type === 'MEDIA_DATA' && data) {
+      this.saveVidFastProgress(data as VidFastProgressMap);
+    }
+  }
+
+  private onPlayerEvent(data: PlayerEventData): void {
+    if (!this.isSeeking || data.event === 'seeked') {
+      this.currentTime = data.currentTime ?? this.currentTime;
+    }
+
+    this.duration = data.duration ?? this.duration;
+    this.isPlaying = data.playing ?? this.isPlaying;
+    this.isMuted = data.muted ?? this.isMuted;
+    this.volume = data.volume ?? this.volume;
+
+    switch (data.event) {
+      case 'play':
+        this.isPlaying = true;
+        break;
+      case 'pause':
+        this.isPlaying = false;
+        break;
+      case 'ended':
+        this.isPlaying = false;
+        break;
+      case 'seeked':
+        this.isSeeking = false;
+        break;
+      case 'timeupdate':
+      case 'playerstatus':
+        break;
+    }
+  }
+
+  private saveVidFastProgress(progressMap: VidFastProgressMap): void {
+    try {
+      localStorage.setItem('vidFastProgress', JSON.stringify(progressMap));
+    } catch (error) {
+      console.error('Failed to save VidFast progress:', error);
+    }
+  }
+
+  private getVidFastProgress(): VidFastProgressMap {
+    try {
+      const raw = localStorage.getItem('vidFastProgress');
+      return raw ? (JSON.parse(raw) as VidFastProgressMap) : {};
+    } catch {
+      return {};
+    }
+  }
+
+  private getProgressKey(): string {
+    const prefix = this.mediaType === 'tv' ? 't' : 'm';
+    return `${prefix}${this.id}`;
+  }
+
+  private getSavedStartAt(): number {
+    const entry = this.getVidFastProgress()[this.getProgressKey()];
+    if (!entry) {
+      return 0;
+    }
+
+    let watched = 0;
+    let total = 0;
+
+    if (this.mediaType === 'tv') {
+      const episodeKey = `s${this.selectedSeason}e${this.selectedEpisode}`;
+      const episodeProgress = entry.show_progress?.[episodeKey]?.progress;
+      watched = episodeProgress?.watched ?? 0;
+      total = episodeProgress?.duration ?? 0;
+    } else {
+      watched = entry.progress?.watched ?? 0;
+      total = entry.progress?.duration ?? 0;
+    }
+
+    // Don't resume near the very start or end
+    if (watched < 30 || (total > 0 && watched / total > 0.95)) {
+      return 0;
+    }
+
+    return watched;
+  }
+
+  private postPlayerCommand(command: Record<string, unknown>): void {
+    const contentWindow = this.playerIframe?.nativeElement?.contentWindow;
+    if (!contentWindow) {
+      return;
+    }
+
+    contentWindow.postMessage(command, '*');
+  }
+
+  togglePlayPause(): void {
+    this.postPlayerCommand({ command: this.isPlaying ? 'pause' : 'play' });
+  }
+
+  seekTo(time: number): void {
+    const clamped = Math.max(0, Math.min(time, this.duration || time));
+    this.isSeeking = true;
+    this.currentTime = clamped;
+    this.postPlayerCommand({ command: 'seek', time: clamped });
+  }
+
+  onSeekInput(event: Event): void {
+    const value = Number((event.target as HTMLInputElement).value);
+    this.isSeeking = true;
+    this.currentTime = value;
+  }
+
+  onSeekChange(event: Event): void {
+    const value = Number((event.target as HTMLInputElement).value);
+    this.seekTo(value);
+  }
+
+  skipBy(seconds: number): void {
+    this.seekTo(this.currentTime + seconds);
+  }
+
+  toggleMute(): void {
+    const nextMuted = !this.isMuted;
+    this.isMuted = nextMuted;
+    this.postPlayerCommand({ command: 'mute', muted: nextMuted });
+  }
+
+  onVolumeInput(event: Event): void {
+    const level = Number((event.target as HTMLInputElement).value);
+    this.volume = level;
+    this.isMuted = level === 0;
+    this.postPlayerCommand({ command: 'volume', level });
+  }
+
+  requestPlayerStatus(): void {
+    this.postPlayerCommand({ command: 'getStatus' });
+  }
+
+  async toggleFullscreen(): Promise<void> {
+    const container = this.playerContainer?.nativeElement;
+    if (!container) {
+      return;
+    }
+
+    try {
+      if (!document.fullscreenElement) {
+        await container.requestFullscreen();
+      } else {
+        await document.exitFullscreen();
+      }
+    } catch (error) {
+      console.error('Fullscreen toggle failed:', error);
+    }
+  }
+
+  formatTime(seconds: number): string {
+    if (!Number.isFinite(seconds) || seconds < 0) {
+      return '0:00';
+    }
+
+    const totalSeconds = Math.floor(seconds);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const secs = totalSeconds % 60;
+
+    if (hours > 0) {
+      return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
+
+    return `${minutes}:${secs.toString().padStart(2, '0')}`;
   }
 
   prevEpisode(): void {
