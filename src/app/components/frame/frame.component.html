@@ -211,9 +211,12 @@
             </div>
 
             <!-- Control buttons (hidden in fullscreen until chevron is tapped) -->
-            <div *ngIf="showPlayerButtons" class="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1">
+            <div *ngIf="showPlayerButtons" class="flex flex-col gap-2 sm:grid sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center sm:gap-1">
               <!-- Left: episode nav (balances the right side) -->
-              <div class="flex items-center justify-start gap-0.5 sm:gap-1 min-h-[40px]">
+              <div
+                class="items-center justify-center sm:justify-start gap-0.5 sm:gap-1 sm:min-h-[40px]"
+                [ngClass]="mediaType === 'tv' ? 'flex' : 'hidden sm:flex'"
+              >
                 <button
                   *ngIf="mediaType === 'tv'"
                   type="button"
@@ -280,7 +283,7 @@
               </div>
 
               <!-- Right: cc + server + sync + fullscreen -->
-              <div class="flex items-center justify-end gap-1 flex-wrap">
+              <div class="flex items-center justify-center sm:justify-end gap-1 flex-wrap">
                 <!-- CC / subtitles -->
                 <div class="relative">
                   <button
