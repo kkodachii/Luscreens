@@ -5,6 +5,7 @@
   "description": "Public/private watch party lobby registry for Luscreens (PeerJS still handles sync)",
   "main": "src/index.js",
   "scripts": {
+    "build": "echo \"party-api: no compile step\"",
     "start": "node src/index.js",
     "dev": "node --watch src/index.js"
   },

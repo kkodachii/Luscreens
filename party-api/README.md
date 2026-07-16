@@ -20,7 +20,7 @@ Health: `http://localhost:8787/health`
 3. Settings:
    - **Language:** Node
    - **Root Directory:** `party-api`
-   - **Build Command:** `npm install`
+   - **Build Command:** `npm install` (or leave default — `build` is a no-op)
    - **Start Command:** `npm start`
    - **Instance:** Free
    - **Region:** Singapore (or closest)
