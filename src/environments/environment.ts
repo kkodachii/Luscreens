@@ -7,6 +7,6 @@ export const environment = {
   openRouterApiKey: '',
   openRouterModel: 'google/gemma-4-26b-a4b-it:free',
   /** Watch party lobby API (Render). Empty = lobby disabled; PeerJS still works. */
-  partyApiUrl: 'http://localhost:8787',
+  partyApiUrl: 'https://luscreens.onrender.com',
 };
   
