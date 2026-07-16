@@ -15,6 +15,7 @@ export class HeaderComponent {
   isHomeRouteActive: boolean = false;
   isBrowseRouteActive: boolean = false;
   isAIRouteActive: boolean = false;
+  isPartiesRouteActive: boolean = false;
 
   constructor(private router: Router) {
     
@@ -24,6 +25,7 @@ export class HeaderComponent {
         this.isBrowseRouteActive = event.url.startsWith('/browse');
         this.isHomeRouteActive = event.url === '/';
         this.isAIRouteActive = event.url === '/ai';
+        this.isPartiesRouteActive = event.url.startsWith('/parties');
 
         
         this.closeAllDropdowns();
