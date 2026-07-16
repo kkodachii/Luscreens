@@ -1000,6 +1000,16 @@ export class FrameComponent implements OnInit, OnDestroy {
     await this.joinWatchParty();
   }
 
+  partyPosterUrl(room: PublicPartyRoom): string | null {
+    if (!room.posterPath) {
+      return null;
+    }
+    if (room.posterPath.startsWith('http')) {
+      return room.posterPath;
+    }
+    return `https://image.tmdb.org/t/p/w92${room.posterPath}`;
+  }
+
   refreshPublicRooms(): void {
     if (!this.partyLobby.enabled) {
       this.publicPartyRooms = [];

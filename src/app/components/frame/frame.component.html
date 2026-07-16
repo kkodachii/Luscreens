@@ -690,14 +690,29 @@
                   type="button"
                   (click)="joinPublicRoom(room)"
                   [disabled]="watchParty.connecting"
-                  class="w-full text-left px-3 py-2 rounded-md border border-white/10 hover:border-white/25 hover:bg-white/5 transition disabled:opacity-50"
+                  class="w-full text-left px-2 py-2 rounded-md border border-white/10 hover:border-white/25 hover:bg-white/5 transition disabled:opacity-50"
                 >
-                  <div class="flex items-center justify-between gap-2">
-                    <code class="text-sm tracking-widest font-semibold">{{ room.code }}</code>
-                    <span class="text-[10px] text-gray-400">{{ room.memberCount }} watching</span>
-                  </div>
-                  <div class="text-xs text-gray-300 mt-0.5 truncate">
-                    {{ room.title || 'Untitled' }} · {{ room.hostName }}
+                  <div class="flex items-center gap-2.5">
+                    <img
+                      *ngIf="partyPosterUrl(room) as src"
+                      [src]="src"
+                      [alt]="room.title || room.code"
+                      class="w-9 h-[54px] rounded object-cover shrink-0 bg-white/10"
+                      loading="lazy"
+                    />
+                    <div
+                      *ngIf="!partyPosterUrl(room)"
+                      class="w-9 h-[54px] rounded shrink-0 bg-white/10"
+                    ></div>
+                    <div class="min-w-0 flex-1">
+                      <div class="flex items-center justify-between gap-2">
+                        <code class="text-sm tracking-widest font-semibold">{{ room.code }}</code>
+                        <span class="text-[10px] text-gray-400">{{ room.memberCount }} watching</span>
+                      </div>
+                      <div class="text-xs text-gray-300 mt-0.5 truncate">
+                        {{ room.title || 'Untitled' }} · {{ room.hostName }}
+                      </div>
+                    </div>
                   </div>
                 </button>
               </div>
