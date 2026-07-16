@@ -1,16 +1,15 @@
-const fs = require('fs');
-const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { connectMongo } = require('./db');
+const store = require('./store');
 
 const app = express();
 const PORT = process.env.PORT || 8788;
 const JWT_SECRET = process.env.JWT_SECRET || 'luscreens-dev-secret-change-me';
 const JWT_EXPIRES = process.env.JWT_EXPIRES || '7d';
-const DATA_DIR = path.join(__dirname, '..', 'data');
-const USERS_FILE = path.join(DATA_DIR, 'users.json');
+const MONGODB_URI = process.env.MONGODB_URI || '';
 /** Comma-separated admin emails (default: kean@gmail.com) */
 const ADMIN_EMAILS = String(process.env.ADMIN_EMAILS || 'kean@gmail.com')
   .split(',')
@@ -19,81 +18,6 @@ const ADMIN_EMAILS = String(process.env.ADMIN_EMAILS || 'kean@gmail.com')
 
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: '2mb' }));
-
-const LIBRARY_FILE = path.join(DATA_DIR, 'library.json');
-
-function ensureStore() {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
-  if (!fs.existsSync(USERS_FILE)) {
-    fs.writeFileSync(USERS_FILE, '[]', 'utf8');
-  }
-  if (!fs.existsSync(LIBRARY_FILE)) {
-    fs.writeFileSync(LIBRARY_FILE, '{}', 'utf8');
-  }
-}
-
-function readLibrary() {
-  ensureStore();
-  try {
-    const raw = fs.readFileSync(LIBRARY_FILE, 'utf8');
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function writeLibrary(library) {
-  ensureStore();
-  fs.writeFileSync(LIBRARY_FILE, JSON.stringify(library), 'utf8');
-}
-
-function getUserLibrary(userId) {
-  const library = readLibrary();
-  const entry = library[userId] || {};
-  return {
-    progress: entry.progress && typeof entry.progress === 'object' ? entry.progress : {},
-    watchlist: entry.watchlist && typeof entry.watchlist === 'object' ? entry.watchlist : {},
-    updatedAt: entry.updatedAt || null,
-  };
-}
-
-function setUserLibrary(userId, patch) {
-  const library = readLibrary();
-  const current = library[userId] || {};
-  const next = {
-    progress:
-      patch.progress && typeof patch.progress === 'object'
-        ? patch.progress
-        : current.progress || {},
-    watchlist:
-      patch.watchlist && typeof patch.watchlist === 'object'
-        ? patch.watchlist
-        : current.watchlist || {},
-    updatedAt: Date.now(),
-  };
-  library[userId] = next;
-  writeLibrary(library);
-  return next;
-}
-
-function readUsers() {
-  ensureStore();
-  try {
-    const raw = fs.readFileSync(USERS_FILE, 'utf8');
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeUsers(users) {
-  ensureStore();
-  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), 'utf8');
-}
 
 function publicUser(user) {
   return {
@@ -126,6 +50,12 @@ function authMiddleware(req, res, next) {
   }
 }
 
+function normalizeEmail(email) {
+  return String(email || '')
+    .trim()
+    .toLowerCase();
+}
+
 function isAdminEmail(email) {
   return ADMIN_EMAILS.includes(normalizeEmail(email));
 }
@@ -137,12 +67,6 @@ function adminMiddleware(req, res, next) {
   next();
 }
 
-function normalizeEmail(email) {
-  return String(email || '')
-    .trim()
-    .toLowerCase();
-}
-
 function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
@@ -152,6 +76,7 @@ app.get('/', (_req, res) => {
     ok: true,
     service: 'luscreens-auth-api',
     message: 'This is the auth API, not the Luscreens website.',
+    storage: store.storageMode(),
     health: '/health',
     endpoints: [
       'POST /auth/register',
@@ -165,7 +90,12 @@ app.get('/', (_req, res) => {
 });
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'auth-api', ts: Date.now() });
+  res.json({
+    ok: true,
+    service: 'auth-api',
+    storage: store.storageMode(),
+    ts: Date.now(),
+  });
 });
 
 app.post('/auth/register', async (req, res) => {
@@ -182,8 +112,8 @@ app.post('/auth/register', async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 6 characters' });
     }
 
-    const users = readUsers();
-    if (users.some((u) => u.email === email)) {
+    const existing = await store.findUserByEmail(email);
+    if (existing) {
       return res.status(409).json({ error: 'An account with that email already exists' });
     }
 
@@ -195,12 +125,14 @@ app.post('/auth/register', async (req, res) => {
       passwordHash,
       createdAt: Date.now(),
     };
-    users.push(user);
-    writeUsers(users);
+    await store.createUser(user);
 
     const token = signToken(user);
     res.status(201).json({ token, user: publicUser(user) });
   } catch (err) {
+    if (err && err.code === 11000) {
+      return res.status(409).json({ error: 'An account with that email already exists' });
+    }
     console.error('register failed', err);
     res.status(500).json({ error: 'Could not create account' });
   }
@@ -216,8 +148,7 @@ app.post('/auth/login', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
-    const users = readUsers();
-    const user = users.find((u) => u.email === email);
+    const user = await store.findUserByEmail(email);
     if (!user) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
@@ -235,43 +166,77 @@ app.post('/auth/login', async (req, res) => {
   }
 });
 
-app.get('/auth/me', authMiddleware, (req, res) => {
-  const users = readUsers();
-  const user = users.find((u) => u.id === req.auth.sub);
-  if (!user) {
-    return res.status(401).json({ error: 'User not found' });
+app.get('/auth/me', authMiddleware, async (req, res) => {
+  try {
+    const user = await store.findUserById(req.auth.sub);
+    if (!user) {
+      return res.status(401).json({ error: 'User not found' });
+    }
+    res.json({
+      user: {
+        ...publicUser(user),
+        isAdmin: isAdminEmail(user.email),
+      },
+    });
+  } catch (err) {
+    console.error('me failed', err);
+    res.status(500).json({ error: 'Could not load profile' });
   }
-  res.json({
-    user: {
-      ...publicUser(user),
-      isAdmin: isAdminEmail(user.email),
-    },
-  });
 });
 
 /** Admin only: list all registered users (no password hashes) */
-app.get('/auth/admin/users', authMiddleware, adminMiddleware, (req, res) => {
-  const users = readUsers()
-    .map((u) => publicUser(u))
-    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-  res.json({ users, total: users.length });
+app.get('/auth/admin/users', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const users = await store.listUsers();
+    res.json({ users, total: users.length });
+  } catch (err) {
+    console.error('admin users failed', err);
+    res.status(500).json({ error: 'Could not load users' });
+  }
 });
 
 /** Per-user history / recently played / watchlist */
-app.get('/me/library', authMiddleware, (req, res) => {
-  res.json({ library: getUserLibrary(req.auth.sub) });
+app.get('/me/library', authMiddleware, async (req, res) => {
+  try {
+    const library = await store.getUserLibrary(req.auth.sub);
+    res.json({ library });
+  } catch (err) {
+    console.error('get library failed', err);
+    res.status(500).json({ error: 'Could not load library' });
+  }
 });
 
-app.put('/me/library', authMiddleware, (req, res) => {
-  const body = req.body || {};
-  const saved = setUserLibrary(req.auth.sub, {
-    progress: body.progress,
-    watchlist: body.watchlist,
+app.put('/me/library', authMiddleware, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const saved = await store.setUserLibrary(req.auth.sub, {
+      progress: body.progress,
+      watchlist: body.watchlist,
+    });
+    res.json({ library: saved });
+  } catch (err) {
+    console.error('put library failed', err);
+    res.status(500).json({ error: 'Could not save library' });
+  }
+});
+
+async function start() {
+  if (MONGODB_URI) {
+    await connectMongo(MONGODB_URI);
+    console.log('Connected to MongoDB');
+  } else {
+    store.ensureFileStore();
+    console.warn(
+      'MONGODB_URI not set — using local JSON files (accounts will not survive redeploy).'
+    );
+  }
+
+  app.listen(PORT, () => {
+    console.log(`Luscreens auth-api listening on :${PORT} (storage: ${store.storageMode()})`);
   });
-  res.json({ library: saved });
-});
+}
 
-ensureStore();
-app.listen(PORT, () => {
-  console.log(`Luscreens auth-api listening on :${PORT}`);
+start().catch((err) => {
+  console.error('Failed to start auth-api', err);
+  process.exit(1);
 });
