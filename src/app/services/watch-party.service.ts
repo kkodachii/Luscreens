@@ -1,6 +1,7 @@
 import { Injectable, NgZone, OnDestroy } from '@angular/core';
 import { BehaviorSubject, Subject, firstValueFrom } from 'rxjs';
 import Peer, { DataConnection, PeerError, PeerJSOption } from 'peerjs';
+import { environment } from '../../environments/environment';
 import {
   PartyLobbyService,
   PartyVisibility,
@@ -257,14 +258,33 @@ export class WatchPartyService implements OnDestroy {
       inviteUrl: null,
     });
 
+    // Hard stop so mobile UI never spins forever if PeerJS hangs
+    let watchdogFired = false;
+    const watchdog = setTimeout(() => {
+      watchdogFired = true;
+      void this.resetPeer();
+      this.patchState({
+        ...INITIAL_STATE,
+        connecting: false,
+        error:
+          'Could not connect from this device. Try Wi‑Fi, or ask the host to restart the party, then join again.',
+      });
+    }, 25000);
+
     try {
       await this.openPeer();
+      if (watchdogFired) {
+        return;
+      }
       this.peer!.on('error', (err) =>
         this.ngZone.run(() => this.onPeerError(err))
       );
 
       const hostPeerId = this.toPeerId(normalized);
       const conn = await this.connectToHostWithRetry(hostPeerId);
+      if (watchdogFired) {
+        return;
+      }
       this.registerConnection(conn, false);
 
       this.send(conn, {
@@ -292,6 +312,9 @@ export class WatchPartyService implements OnDestroy {
 
       this.persistSession('guest', normalized);
     } catch (error) {
+      if (watchdogFired) {
+        return;
+      }
       await this.resetPeer();
       this.patchState({
         ...INITIAL_STATE,
@@ -299,6 +322,8 @@ export class WatchPartyService implements OnDestroy {
         error: this.toErrorMessage(error, 'Failed to join watch party'),
       });
       throw error;
+    } finally {
+      clearTimeout(watchdog);
     }
   }
 
@@ -473,43 +498,83 @@ export class WatchPartyService implements OnDestroy {
   }
 
   private peerOptions(): PeerJSOption {
-    return {
+    const isMobile =
+      typeof navigator !== 'undefined' &&
+      /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+
+    const iceServers: RTCIceServer[] = [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:openrelay.metered.ca:80' },
+      // TURN / TURNS — critical for mobile carrier NATs
+      {
+        urls: 'turn:openrelay.metered.ca:80',
+        username: 'openrelayproject',
+        credential: 'openrelayproject',
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443',
+        username: 'openrelayproject',
+        credential: 'openrelayproject',
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+        username: 'openrelayproject',
+        credential: 'openrelayproject',
+      },
+      {
+        urls: 'turns:openrelay.metered.ca:443?transport=tcp',
+        username: 'openrelayproject',
+        credential: 'openrelayproject',
+      },
+    ];
+
+    const options: PeerJSOption = {
       debug: 1,
-      // Explicit cloud broker — more reliable on mobile browsers than defaults
-      host: '0.peerjs.com',
-      secure: true,
-      port: 443,
-      path: '/',
       config: {
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-          // Free public TURN — required for many mobile carrier NATs
-          {
-            urls: 'turn:openrelay.metered.ca:80',
-            username: 'openrelayproject',
-            credential: 'openrelayproject',
-          },
-          {
-            urls: 'turn:openrelay.metered.ca:443',
-            username: 'openrelayproject',
-            credential: 'openrelayproject',
-          },
-          {
-            urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-            username: 'openrelayproject',
-            credential: 'openrelayproject',
-          },
-        ],
+        iceServers,
+        // Mobile carriers often block peer-to-peer; force relay via TURN
+        ...(isMobile ? { iceTransportPolicy: 'relay' as const } : {}),
       },
     };
+
+    // Prefer our Render PeerJS broker (same host as lobby) over public 0.peerjs.com
+    const apiUrl = (environment.partyApiUrl || '').trim().replace(/\/$/, '');
+    if (apiUrl) {
+      try {
+        const url = new URL(apiUrl);
+        options.host = url.hostname;
+        options.port = url.port
+          ? Number(url.port)
+          : url.protocol === 'https:'
+            ? 443
+            : 80;
+        options.path = '/peerjs';
+        options.secure = url.protocol === 'https:';
+        return options;
+      } catch {
+        // fall through to cloud
+      }
+    }
+
+    options.host = '0.peerjs.com';
+    options.port = 443;
+    options.path = '/';
+    options.secure = true;
+    return options;
   }
 
   private async openPeer(peerId?: string): Promise<void> {
     await new Promise<void>((resolve, reject) => {
-      const peer = peerId
-        ? new Peer(peerId, this.peerOptions())
-        : new Peer(this.peerOptions());
+      let peer: Peer;
+      try {
+        peer = peerId
+          ? new Peer(peerId, this.peerOptions())
+          : new Peer(this.peerOptions());
+      } catch (err) {
+        reject(err instanceof Error ? err : new Error('Failed to create peer'));
+        return;
+      }
       this.peer = peer;
 
       let settled = false;
@@ -526,14 +591,22 @@ export class WatchPartyService implements OnDestroy {
       };
 
       const timer = setTimeout(() => {
-        finish(() =>
+        finish(() => {
+          try {
+            peer.destroy();
+          } catch {
+            // ignore
+          }
+          if (this.peer === peer) {
+            this.peer = null;
+          }
           reject(
             new Error(
-              'Could not reach the watch-party network. Check your connection and try again.'
+              'Could not reach the watch-party network. Wait a few seconds (server may be waking up) and try again.'
             )
-          )
-        );
-      }, 15000);
+          );
+        });
+      }, 18000);
 
       const onOpen = (id: string): void => {
         finish(() => {

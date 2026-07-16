@@ -1,7 +1,10 @@
+const http = require('http');
 const express = require('express');
 const cors = require('cors');
+const { ExpressPeerServer } = require('peer');
 
 const app = express();
+const server = http.createServer(app);
 const PORT = process.env.PORT || 8787;
 const ROOM_TTL_MS = 2 * 60 * 1000; // drop if no heartbeat for 2 minutes
 
@@ -10,6 +13,15 @@ const rooms = new Map();
 
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: '32kb' }));
+
+// PeerJS signaling on the same Render service (more reliable than 0.peerjs.com on mobile)
+const peerServer = ExpressPeerServer(server, {
+  path: '/',
+  allow_discovery: false,
+  proxied: true,
+  debug: false,
+});
+app.use('/peerjs', peerServer);
 
 function now() {
   return Date.now();
@@ -44,7 +56,7 @@ function cleanupExpired() {
 setInterval(cleanupExpired, 30_000).unref?.();
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, rooms: rooms.size, ts: now() });
+  res.json({ ok: true, rooms: rooms.size, peer: true, ts: now() });
 });
 
 /** List public rooms only */
@@ -159,6 +171,6 @@ app.delete('/rooms/:code', (req, res) => {
   res.status(204).end();
 });
 
-app.listen(PORT, () => {
-  console.log(`Luscreens party-api listening on :${PORT}`);
+server.listen(PORT, () => {
+  console.log(`Luscreens party-api + PeerJS listening on :${PORT}`);
 });

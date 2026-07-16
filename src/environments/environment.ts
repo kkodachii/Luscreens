@@ -6,7 +6,7 @@ export const environment = {
   streamServers: ['vEdge', 'Beta', 'Bravo', 'vFast', 'Cobra', 'Charlie'],
   openRouterApiKey: '',
   openRouterModel: 'google/gemma-4-26b-a4b-it:free',
-  /** Watch party lobby API (Render). Empty = lobby disabled; PeerJS still works. */
+  /** Watch party lobby + PeerJS signaling on Render */
   partyApiUrl: 'https://luscreens.onrender.com',
 };
   
