@@ -14,11 +14,6 @@ import {
   WatchPartyService,
   WatchPartyState,
 } from '../../services/watch-party.service';
-import {
-  PartyLobbyService,
-  PartyVisibility,
-  PublicPartyRoom,
-} from '../../services/party-lobby.service';
 
 /** Chromium Document Picture-in-Picture (not on Window by default in TS libs). */
 interface DocumentPictureInPicture {
@@ -137,16 +132,12 @@ export class FrameComponent implements OnInit, OnDestroy {
     members: [],
     error: null,
     inviteUrl: null,
-    visibility: 'private',
   };
   showWatchPartyPanel = false;
   showJoinInviteModal = false;
-  watchPartyMode: 'create' | 'join' | 'browse' = 'create';
+  watchPartyMode: 'create' | 'join' = 'create';
   watchPartyName = '';
   joinRoomCode = '';
-  partyVisibility: PartyVisibility = 'private';
-  publicPartyRooms: PublicPartyRoom[] = [];
-  publicRoomsLoading = false;
   watchPartyCopied = false;
   partyChatMessages: WatchPartyChatMessage[] = [];
   partyChatDraft = '';
@@ -182,7 +173,6 @@ export class FrameComponent implements OnInit, OnDestroy {
     private sanitizer: DomSanitizer,
     private tmdbService: TmdbService,
     private watchPartyService: WatchPartyService,
-    public partyLobby: PartyLobbyService,
     private watchProgress: WatchProgressService,
     private cdr: ChangeDetectorRef,
   ) {}
@@ -228,7 +218,6 @@ export class FrameComponent implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     this.persistLocalProgress(true);
     this.stopProgressTimer();
-    this.stopPublicRoomsPoll();
     window.removeEventListener('message', this.onPlayerMessage);
     document.removeEventListener('fullscreenchange', this.onFullscreenChange);
     window.removeEventListener('beforeunload', this.onBeforeUnload);
@@ -839,14 +828,11 @@ export class FrameComponent implements OnInit, OnDestroy {
       if (saved?.displayName) {
         this.watchPartyName = saved.displayName;
       }
-      if (live.visibility) {
-        this.partyVisibility = live.visibility;
-      }
       this.syncWatchPartyMedia();
       return;
     }
 
-    // Public list / invite link for a different room wins over a stale session
+    // Invite link for a different room wins over a stale session
     if (
       inviteCode &&
       saved &&
@@ -861,9 +847,6 @@ export class FrameComponent implements OnInit, OnDestroy {
       this.watchPartyName = saved.displayName || '';
       this.joinRoomCode = saved.roomCode;
       this.watchPartyMode = saved.role === 'host' ? 'create' : 'join';
-      if (saved.visibility) {
-        this.partyVisibility = saved.visibility;
-      }
 
       try {
         const restored = await this.watchPartyService.restoreSession();
@@ -914,7 +897,6 @@ export class FrameComponent implements OnInit, OnDestroy {
   }
 
   private syncWatchPartyMedia(): void {
-    // Skip until TMDB title is ready so we don't wipe lobby metadata
     if (!this.title?.trim() || !this.id || !this.mediaType) {
       return;
     }
@@ -951,11 +933,7 @@ export class FrameComponent implements OnInit, OnDestroy {
   async startWatchParty(): Promise<void> {
     try {
       this.syncWatchPartyMedia();
-      await this.watchPartyService.createParty(
-        this.watchPartyName || 'Host',
-        undefined,
-        this.partyVisibility
-      );
+      await this.watchPartyService.createParty(this.watchPartyName || 'Host');
       this.showWatchPartyPanel = true;
     } catch (error) {
       console.error('Failed to start watch party:', error);
@@ -977,73 +955,6 @@ export class FrameComponent implements OnInit, OnDestroy {
       this.showJoinInviteModal = true;
     } finally {
       this.cdr.detectChanges();
-    }
-  }
-
-  private publicRoomsPoll: ReturnType<typeof setInterval> | null = null;
-
-  async joinPublicRoom(room: PublicPartyRoom): Promise<void> {
-    this.joinRoomCode = room.code;
-    this.watchPartyMode = 'join';
-
-    // Navigate to the listed title so guests land on the right player
-    if (room.mediaType && room.mediaId) {
-      const queryParams = { party: room.code };
-      if (room.mediaType === 'tv' && room.season && room.episode) {
-        await this.router.navigate(
-          ['/frame', room.mediaType, room.mediaId, room.season, room.episode],
-          { queryParams }
-        );
-      } else {
-        await this.router.navigate(['/frame', room.mediaType, room.mediaId], {
-          queryParams,
-        });
-      }
-      return;
-    }
-
-    await this.joinWatchParty();
-  }
-
-  partyPosterUrl(room: PublicPartyRoom): string | null {
-    if (!room.posterPath) {
-      return null;
-    }
-    if (room.posterPath.startsWith('http')) {
-      return room.posterPath;
-    }
-    return `https://image.tmdb.org/t/p/w92${room.posterPath}`;
-  }
-
-  refreshPublicRooms(): void {
-    if (!this.partyLobby.enabled) {
-      this.publicPartyRooms = [];
-      this.publicRoomsLoading = false;
-      return;
-    }
-    this.publicRoomsLoading = true;
-    this.watchPartySubs.add(
-      this.partyLobby.listPublicRooms().subscribe((rooms) => {
-        this.publicPartyRooms = rooms;
-        this.publicRoomsLoading = false;
-        this.cdr.markForCheck();
-      })
-    );
-  }
-
-  setWatchPartyMode(mode: 'create' | 'join' | 'browse'): void {
-    this.watchPartyMode = mode;
-    this.stopPublicRoomsPoll();
-    if (mode === 'browse') {
-      this.refreshPublicRooms();
-      this.publicRoomsPoll = setInterval(() => this.refreshPublicRooms(), 12_000);
-    }
-  }
-
-  private stopPublicRoomsPoll(): void {
-    if (this.publicRoomsPoll) {
-      clearInterval(this.publicRoomsPoll);
-      this.publicRoomsPoll = null;
     }
   }
 

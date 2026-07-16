@@ -1,11 +1,6 @@
 import { Injectable, NgZone, OnDestroy } from '@angular/core';
-import { BehaviorSubject, Subject, firstValueFrom } from 'rxjs';
+import { BehaviorSubject, Subject } from 'rxjs';
 import Peer, { DataConnection, PeerError, PeerJSOption } from 'peerjs';
-import { environment } from '../../environments/environment';
-import {
-  PartyLobbyService,
-  PartyVisibility,
-} from './party-lobby.service';
 
 export type WatchPartyRole = 'host' | 'guest' | null;
 
@@ -48,7 +43,6 @@ export interface WatchPartySession {
   role: 'host' | 'guest';
   roomCode: string;
   displayName: string;
-  visibility?: PartyVisibility;
   mediaType?: string;
   id?: string;
   season?: number;
@@ -65,7 +59,6 @@ export interface WatchPartyState {
   members: WatchPartyMember[];
   error: string | null;
   inviteUrl: string | null;
-  visibility: PartyVisibility;
 }
 
 const INITIAL_STATE: WatchPartyState = {
@@ -76,7 +69,6 @@ const INITIAL_STATE: WatchPartyState = {
   members: [],
   error: null,
   inviteUrl: null,
-  visibility: 'private',
 };
 
 @Injectable({
@@ -110,13 +102,8 @@ export class WatchPartyService implements OnDestroy {
   readonly chatMessages$ = this.chatSubject.asObservable();
 
   private static readonly MAX_CHAT_LENGTH = 500;
-  private lobbyVisibility: PartyVisibility = 'private';
-  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(
-    private partyLobby: PartyLobbyService,
-    private ngZone: NgZone
-  ) {}
+  constructor(private ngZone: NgZone) {}
 
   get snapshot(): WatchPartyState {
     return this.stateSubject.value;
@@ -158,21 +145,13 @@ export class WatchPartyService implements OnDestroy {
       if ((role === 'host' || role === 'guest') && roomCode) {
         this.persistSession(role, roomCode);
       }
-      if (role === 'host' && roomCode) {
-        this.syncLobbyRoom();
-      }
     }
   }
 
-  async createParty(
-    displayName?: string,
-    existingRoomCode?: string,
-    visibility: PartyVisibility = 'private'
-  ): Promise<string> {
+  async createParty(displayName?: string, existingRoomCode?: string): Promise<string> {
     if (displayName) {
       this.setDisplayName(displayName);
     }
-    this.lobbyVisibility = visibility === 'public' ? 'public' : 'private';
 
     await this.resetPeer();
     this.patchState({
@@ -180,7 +159,6 @@ export class WatchPartyService implements OnDestroy {
       error: null,
       role: 'host',
       roomCode: null,
-      visibility: this.lobbyVisibility,
     });
 
     const roomCode = existingRoomCode
@@ -211,7 +189,6 @@ export class WatchPartyService implements OnDestroy {
         roomCode,
         connected: true,
         connecting: false,
-        visibility: this.lobbyVisibility,
         members: [
           {
             peerId,
@@ -224,8 +201,6 @@ export class WatchPartyService implements OnDestroy {
       });
 
       this.persistSession('host', roomCode);
-      await this.registerLobbyRoom(roomCode);
-      this.startLobbyHeartbeat();
       return roomCode;
     } catch (error) {
       await this.resetPeer();
@@ -344,21 +319,12 @@ export class WatchPartyService implements OnDestroy {
       this.snapshot.roomCode === session.roomCode &&
       this.snapshot.role === session.role
     ) {
-      if (session.role === 'host') {
-        this.lobbyVisibility =
-          session.visibility === 'public' ? 'public' : 'private';
-        this.startLobbyHeartbeat();
-      }
       return true;
     }
 
     try {
       if (session.role === 'host') {
-        await this.createParty(
-          session.displayName,
-          session.roomCode,
-          session.visibility === 'public' ? 'public' : 'private'
-        );
+        await this.createParty(session.displayName, session.roomCode);
       } else {
         await this.joinParty(session.roomCode, session.displayName);
       }
@@ -383,11 +349,6 @@ export class WatchPartyService implements OnDestroy {
   }
 
   leaveParty(): void {
-    this.stopLobbyHeartbeat();
-    const code = this.snapshot.roomCode;
-    if (this.isHost && code) {
-      void firstValueFrom(this.partyLobby.unregisterRoom(code));
-    }
     void this.resetPeer();
     this.applyingRemote = false;
     this.clearSession();
@@ -396,9 +357,6 @@ export class WatchPartyService implements OnDestroy {
 
   /** Tear down the peer without clearing the saved session (used on page unload / SPA nav). */
   disconnectKeepingSession(): void {
-    // Do NOT unregister from the lobby — host may be navigating to another title.
-    // Heartbeat restarts on restore; room TTL is 2 minutes.
-    this.stopLobbyHeartbeat();
     void this.resetPeer();
     this.applyingRemote = false;
     // Keep role/room in UI state cleared, but sessionStorage stays for reload restore
@@ -536,31 +494,12 @@ export class WatchPartyService implements OnDestroy {
         // Mobile carriers often block peer-to-peer; force relay via TURN
         ...(isMobile ? { iceTransportPolicy: 'relay' as const } : {}),
       },
+      host: '0.peerjs.com',
+      port: 443,
+      path: '/',
+      secure: true,
     };
 
-    // Prefer our Render PeerJS broker (same host as lobby) over public 0.peerjs.com
-    const apiUrl = (environment.partyApiUrl || '').trim().replace(/\/$/, '');
-    if (apiUrl) {
-      try {
-        const url = new URL(apiUrl);
-        options.host = url.hostname;
-        options.port = url.port
-          ? Number(url.port)
-          : url.protocol === 'https:'
-            ? 443
-            : 80;
-        options.path = '/peerjs';
-        options.secure = url.protocol === 'https:';
-        return options;
-      } catch {
-        // fall through to cloud
-      }
-    }
-
-    options.host = '0.peerjs.com';
-    options.port = 443;
-    options.path = '/';
-    options.secure = true;
     return options;
   }
 
@@ -660,7 +599,6 @@ export class WatchPartyService implements OnDestroy {
         role,
         roomCode,
         displayName: this.displayName,
-        visibility: role === 'host' ? this.lobbyVisibility : undefined,
         mediaType: this.mediaState?.mediaType,
         id: this.mediaState?.id,
         season: this.mediaState?.season,
@@ -996,92 +934,6 @@ export class WatchPartyService implements OnDestroy {
     }
 
     this.patchState({ members });
-    if (this.isHost && this.snapshot.roomCode) {
-      this.syncLobbyRoom();
-    }
-  }
-
-  private async registerLobbyRoom(roomCode: string): Promise<void> {
-    if (!this.partyLobby.enabled) {
-      return;
-    }
-    const media = this.mediaState;
-    const title = media?.title?.trim();
-    await firstValueFrom(
-      this.partyLobby.registerRoom({
-        code: roomCode,
-        visibility: this.lobbyVisibility,
-        hostName: this.displayName || 'Host',
-        title: title || undefined,
-        mediaType: media?.mediaType,
-        mediaId: media?.id != null ? String(media.id) : undefined,
-        posterPath: media?.posterPath || undefined,
-        season: media?.season,
-        episode: media?.episode,
-        memberCount: Math.max(1, this.snapshot.members.length),
-      })
-    );
-  }
-
-  private syncLobbyRoom(): void {
-    const code = this.snapshot.roomCode;
-    if (!this.isHost || !code || !this.partyLobby.enabled) {
-      return;
-    }
-    const media = this.mediaState;
-    const title = media?.title?.trim();
-    const patch: Parameters<PartyLobbyService['updateRoom']>[1] = {
-      visibility: this.lobbyVisibility,
-      hostName: this.displayName || 'Host',
-      memberCount: Math.max(1, this.snapshot.members.length),
-    };
-    // Never push empty title — that clears the lobby listing to "Untitled"
-    if (title) {
-      patch.title = title;
-    }
-    if (media?.mediaType) {
-      patch.mediaType = media.mediaType;
-    }
-    if (media?.id != null && media.id !== '') {
-      patch.mediaId = String(media.id);
-    }
-    if (media?.posterPath) {
-      patch.posterPath = media.posterPath;
-    }
-    if (media?.season != null) {
-      patch.season = media.season;
-    }
-    if (media?.episode != null) {
-      patch.episode = media.episode;
-    }
-    void firstValueFrom(this.partyLobby.updateRoom(code, patch));
-  }
-
-  private startLobbyHeartbeat(): void {
-    this.stopLobbyHeartbeat();
-    if (!this.partyLobby.enabled || !this.isHost) {
-      return;
-    }
-    this.heartbeatTimer = setInterval(() => {
-      const code = this.snapshot.roomCode;
-      if (!code || !this.isHost) {
-        return;
-      }
-      void firstValueFrom(
-        this.partyLobby.heartbeat(
-          code,
-          Math.max(1, this.snapshot.members.length),
-          this.mediaState?.title
-        )
-      );
-    }, 30_000);
-  }
-
-  private stopLobbyHeartbeat(): void {
-    if (this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer);
-      this.heartbeatTimer = null;
-    }
   }
 
   private broadcast(command: WatchPartyCommand): void {

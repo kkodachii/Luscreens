@@ -203,34 +203,6 @@
           <path d="M20.2 20.2l1.8 1.8" />
         </svg>
       </button>
-      <a
-        routerLink="/parties"
-        routerLinkActive="active-link"
-        [routerLinkActiveOptions]="{ exact: true }"
-        [class]="
-          isPartiesRouteActive
-            ? 'flex items-center space-x-2 text-white transition duration-300'
-            : 'flex items-center space-x-2 text-white hover:text-red-500 transition duration-300'
-        "
-      >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="24"
-          height="24"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          class="w-6 h-6 sm:inline-block hidden"
-        >
-          <path stroke="none" d="M0 0h24v24H0z" fill="none" />
-          <path d="M15 10l4.553 -2.276a1 1 0 0 1 1.447 .894v6.764a1 1 0 0 1 -1.447 .894l-4.553 -2.276v-4z" />
-          <path d="M3 6m0 2a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-8a2 2 0 0 1 -2 -2z" />
-        </svg>
-        <span class="text-sm font-medium">Parties</span>
-      </a>
     </div>
 
     <a href="/" class="hidden sm:flex items-center justify-center">
@@ -341,28 +313,6 @@
         <path d="M9 22V12h6v10" />
       </svg>
       <span class="text-sm font-medium">Home</span>
-    </a>
-    <a
-      routerLink="/parties"
-      class="flex items-center px-4 py-3 text-white hover:bg-red-600 transition duration-300 border-b border-gray-700"
-    >
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        width="20"
-        height="20"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        class="w-6 h-6 mr-3"
-      >
-        <path stroke="none" d="M0 0h24v24H0z" fill="none" />
-        <path d="M15 10l4.553 -2.276a1 1 0 0 1 1.447 .894v6.764a1 1 0 0 1 -1.447 .894l-4.553 -2.276v-4z" />
-        <path d="M3 6m0 2a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-8a2 2 0 0 1 -2 -2z" />
-      </svg>
-      <span class="text-sm font-medium">Parties</span>
     </a>
     <a
       routerLink="/history"

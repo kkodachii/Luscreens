@@ -5,7 +5,5 @@ export const environment = {
   streamServers: ['vEdge', 'Beta', 'Bravo', 'vFast', 'Cobra', 'Charlie'],
   openRouterApiKey: '',
   openRouterModel: 'google/gemma-4-26b-a4b-it:free',
-  /** Watch party lobby on Render */
-  partyApiUrl: 'https://luscreens.onrender.com',
 };
   
