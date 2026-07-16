@@ -254,13 +254,7 @@ export class WatchPartyService implements OnDestroy {
       this.peer!.on('error', (err) => this.onPeerError(err));
 
       const hostPeerId = this.toPeerId(normalized);
-      const conn = this.peer!.connect(hostPeerId, { reliable: true });
-
-      if (!conn) {
-        throw new Error('Could not start connection to host');
-      }
-
-      await this.waitForConnection(conn);
+      const conn = await this.connectToHostWithRetry(hostPeerId);
       this.registerConnection(conn, false);
 
       this.send(conn, {
@@ -305,6 +299,22 @@ export class WatchPartyService implements OnDestroy {
     }
 
     this.setDisplayName(session.displayName);
+
+    // Peer survived SPA navigation — do not destroy/recreate (that drops guests)
+    if (
+      this.peer &&
+      !this.peer.destroyed &&
+      this.snapshot.connected &&
+      this.snapshot.roomCode === session.roomCode &&
+      this.snapshot.role === session.role
+    ) {
+      if (session.role === 'host') {
+        this.lobbyVisibility =
+          session.visibility === 'public' ? 'public' : 'private';
+        this.startLobbyHeartbeat();
+      }
+      return true;
+    }
 
     try {
       if (session.role === 'host') {
@@ -453,9 +463,19 @@ export class WatchPartyService implements OnDestroy {
 
   private async openPeer(peerId?: string): Promise<void> {
     await new Promise<void>((resolve, reject) => {
+      const peerOptions = {
+        debug: 1 as const,
+        config: {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun.cloudflare.com:3478' },
+          ],
+        },
+      };
       const peer = peerId
-        ? new Peer(peerId, { debug: 1 })
-        : new Peer({ debug: 1 });
+        ? new Peer(peerId, peerOptions)
+        : new Peer(peerOptions);
       this.peer = peer;
 
       let settled = false;
@@ -575,7 +595,7 @@ export class WatchPartyService implements OnDestroy {
    * PeerJS often emits peer-unavailable on the Peer, not the DataConnection.
    * Listen to both so join fails fast instead of hanging / acting weird.
    */
-  private waitForConnection(conn: DataConnection): Promise<void> {
+  private waitForConnection(conn: DataConnection, timeoutMs = 20000): Promise<void> {
     return new Promise((resolve, reject) => {
       const peer = this.peer;
       if (!peer) {
@@ -593,7 +613,7 @@ export class WatchPartyService implements OnDestroy {
             )
           )
         );
-      }, 12000);
+      }, timeoutMs);
 
       const onOpen = (): void => {
         finish(() => resolve());
@@ -630,10 +650,51 @@ export class WatchPartyService implements OnDestroy {
         cb();
       };
 
+      // Already open (rare but possible)
+      if (conn.open) {
+        finish(() => resolve());
+        return;
+      }
+
       conn.on('open', onOpen);
       conn.on('error', onConnError);
       peer.on('error', onPeerError);
     });
+  }
+
+  /** Retry guest→host connect; PeerJS cloud / ICE is often flaky on the first try. */
+  private async connectToHostWithRetry(
+    hostPeerId: string,
+    attempts = 3
+  ): Promise<DataConnection> {
+    let lastError: unknown;
+    for (let i = 0; i < attempts; i++) {
+      if (!this.peer || this.peer.destroyed) {
+        throw new Error('Peer not ready');
+      }
+      if (i > 0) {
+        await new Promise((r) => setTimeout(r, 700 * i));
+      }
+      try {
+        const conn = this.peer.connect(hostPeerId, { reliable: true });
+        if (!conn) {
+          throw new Error('Could not start connection to host');
+        }
+        await this.waitForConnection(conn, 18000);
+        return conn;
+      } catch (error) {
+        lastError = error;
+        const message =
+          error instanceof Error ? error.message : String(error ?? '');
+        // Don't burn retries if the room truly doesn't exist
+        if (message.includes('Room not found')) {
+          break;
+        }
+      }
+    }
+    throw lastError instanceof Error
+      ? lastError
+      : new Error('Timed out connecting to host');
   }
 
   private onPeerError(err: PeerError<string>): void {

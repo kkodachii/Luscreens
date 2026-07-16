@@ -233,12 +233,14 @@ export class FrameComponent implements OnInit, OnDestroy {
     window.removeEventListener('beforeunload', this.onBeforeUnload);
     this.closePictureInPicture();
     this.watchPartySubs.unsubscribe();
-    // Keep session so a full page reload can rejoin the same party
-    this.watchPartyService.disconnectKeepingSession();
+    // Do NOT tear down PeerJS here — WatchPartyService is root-scoped and must
+    // stay alive when the host changes titles. leaveParty() / beforeunload handle cleanup.
   }
 
   private readonly onBeforeUnload = (): void => {
     this.persistLocalProgress(true);
+    // Release the PeerJS id so a reload can reclaim the same room code quickly
+    this.watchPartyService.disconnectKeepingSession();
   };
 
   private startProgressTimer(): void {
@@ -822,6 +824,23 @@ export class FrameComponent implements OnInit, OnDestroy {
     const saved = this.watchPartyService.getSavedSession();
     const partyFromUrl = this.route.snapshot.queryParamMap.get('party');
     const inviteCode = partyFromUrl?.trim().toUpperCase() || '';
+
+    // Already connected from a previous frame (SPA navigation) — keep peer, just sync media
+    if (this.watchPartyService.isInParty) {
+      this.showWatchPartyPanel = true;
+      const live = this.watchPartyService.snapshot;
+      if (live.roomCode) {
+        this.joinRoomCode = live.roomCode;
+      }
+      if (saved?.displayName) {
+        this.watchPartyName = saved.displayName;
+      }
+      if (live.visibility) {
+        this.partyVisibility = live.visibility;
+      }
+      this.syncWatchPartyMedia();
+      return;
+    }
 
     // Public list / invite link for a different room wins over a stale session
     if (
