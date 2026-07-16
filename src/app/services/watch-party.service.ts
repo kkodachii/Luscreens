@@ -46,10 +46,12 @@ export interface WatchPartySession {
   role: 'host' | 'guest';
   roomCode: string;
   displayName: string;
+  visibility?: PartyVisibility;
   mediaType?: string;
   id?: string;
   season?: number;
   episode?: number;
+  title?: string;
   savedAt: number;
 }
 
@@ -306,7 +308,11 @@ export class WatchPartyService implements OnDestroy {
 
     try {
       if (session.role === 'host') {
-        await this.createParty(session.displayName, session.roomCode);
+        await this.createParty(
+          session.displayName,
+          session.roomCode,
+          session.visibility === 'public' ? 'public' : 'private'
+        );
       } else {
         await this.joinParty(session.roomCode, session.displayName);
       }
@@ -342,14 +348,11 @@ export class WatchPartyService implements OnDestroy {
     this.stateSubject.next({ ...INITIAL_STATE });
   }
 
-  /** Tear down the peer without clearing the saved session (used on page unload). */
+  /** Tear down the peer without clearing the saved session (used on page unload / SPA nav). */
   disconnectKeepingSession(): void {
+    // Do NOT unregister from the lobby — host may be navigating to another title.
+    // Heartbeat restarts on restore; room TTL is 2 minutes.
     this.stopLobbyHeartbeat();
-    const code = this.snapshot.roomCode;
-    if (this.isHost && code) {
-      // Best-effort; page may be unloading
-      void firstValueFrom(this.partyLobby.unregisterRoom(code));
-    }
     void this.resetPeer();
     this.applyingRemote = false;
     // Keep role/room in UI state cleared, but sessionStorage stays for reload restore
@@ -522,10 +525,12 @@ export class WatchPartyService implements OnDestroy {
         role,
         roomCode,
         displayName: this.displayName,
+        visibility: role === 'host' ? this.lobbyVisibility : undefined,
         mediaType: this.mediaState?.mediaType,
         id: this.mediaState?.id,
         season: this.mediaState?.season,
         episode: this.mediaState?.episode,
+        title: this.mediaState?.title,
         savedAt: Date.now(),
       };
       sessionStorage.setItem(
@@ -808,12 +813,13 @@ export class WatchPartyService implements OnDestroy {
       return;
     }
     const media = this.mediaState;
+    const title = media?.title?.trim();
     await firstValueFrom(
       this.partyLobby.registerRoom({
         code: roomCode,
         visibility: this.lobbyVisibility,
         hostName: this.displayName || 'Host',
-        title: media?.title,
+        title: title || undefined,
         mediaType: media?.mediaType,
         mediaId: media?.id != null ? String(media.id) : undefined,
         season: media?.season,
@@ -829,18 +835,29 @@ export class WatchPartyService implements OnDestroy {
       return;
     }
     const media = this.mediaState;
-    void firstValueFrom(
-      this.partyLobby.updateRoom(code, {
-        visibility: this.lobbyVisibility,
-        hostName: this.displayName || 'Host',
-        title: media?.title ?? null,
-        mediaType: media?.mediaType ?? null,
-        mediaId: media?.id != null ? String(media.id) : null,
-        season: media?.season ?? null,
-        episode: media?.episode ?? null,
-        memberCount: Math.max(1, this.snapshot.members.length),
-      })
-    );
+    const title = media?.title?.trim();
+    const patch: Parameters<PartyLobbyService['updateRoom']>[1] = {
+      visibility: this.lobbyVisibility,
+      hostName: this.displayName || 'Host',
+      memberCount: Math.max(1, this.snapshot.members.length),
+    };
+    // Never push empty title — that clears the lobby listing to "Untitled"
+    if (title) {
+      patch.title = title;
+    }
+    if (media?.mediaType) {
+      patch.mediaType = media.mediaType;
+    }
+    if (media?.id != null && media.id !== '') {
+      patch.mediaId = String(media.id);
+    }
+    if (media?.season != null) {
+      patch.season = media.season;
+    }
+    if (media?.episode != null) {
+      patch.episode = media.episode;
+    }
+    void firstValueFrom(this.partyLobby.updateRoom(code, patch));
   }
 
   private startLobbyHeartbeat(): void {
@@ -860,7 +877,7 @@ export class WatchPartyService implements OnDestroy {
           this.mediaState?.title
         )
       );
-    }, 45_000);
+    }, 30_000);
   }
 
   private stopLobbyHeartbeat(): void {

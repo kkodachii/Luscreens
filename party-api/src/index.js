@@ -105,7 +105,10 @@ app.patch('/rooms/:code', (req, res) => {
     room.visibility = body.visibility;
   }
   if (body.hostName) room.hostName = String(body.hostName).slice(0, 40);
-  if (body.title !== undefined) room.title = body.title ? String(body.title).slice(0, 120) : null;
+  if (body.title !== undefined) {
+    // Ignore empty strings so early client syncs don't wipe the title
+    if (body.title) room.title = String(body.title).slice(0, 120);
+  }
   if (body.mediaType !== undefined) room.mediaType = body.mediaType;
   if (body.mediaId !== undefined) room.mediaId = body.mediaId;
   if (body.season !== undefined) room.season = body.season;
