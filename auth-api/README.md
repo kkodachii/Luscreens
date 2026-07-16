@@ -52,8 +52,20 @@ Health: `http://localhost:8788/health`
 
 - Cluster created (free M0 is fine)
 - DB user username/password
-- Network Access includes Render (use `0.0.0.0/0` if unsure)
-- URI database name set (e.g. `/luscreens` before `?`)
+- **Network Access → Add IP Address → Allow Access from Anywhere (`0.0.0.0/0`)** — required for Render
+- URI can end with `/` — the app adds `/luscreens` automatically
+- Special characters in the password (like `!`) are auto-encoded
+
+### Render deploy fails with TLS / SSL error?
+
+Almost always Atlas Network Access. Fix:
+
+1. MongoDB Atlas → **Network Access** → **Add IP Address**
+2. Choose **Allow Access from Anywhere** (`0.0.0.0/0`)
+3. Confirm / wait ~1 minute
+4. Redeploy `auth-api` on Render
+
+Also verify `MONGODB_URI` is set (no quotes around the value in Render).
 
 ## Endpoints
 

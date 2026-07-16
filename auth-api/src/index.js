@@ -222,8 +222,19 @@ app.put('/me/library', authMiddleware, async (req, res) => {
 
 async function start() {
   if (MONGODB_URI) {
-    await connectMongo(MONGODB_URI);
-    console.log('Connected to MongoDB');
+    try {
+      await connectMongo(MONGODB_URI);
+      console.log('Connected to MongoDB');
+    } catch (err) {
+      // Keep the API alive on Render while Atlas access is fixed
+      console.error(err && err.message ? err.message : err);
+      console.error(
+        'Falling back to JSON file storage. Fix Atlas Network Access (allow 0.0.0.0/0), then redeploy.'
+      );
+      // Clear URI for this process so store.useMongo() is false
+      delete process.env.MONGODB_URI;
+      store.ensureFileStore();
+    }
   } else {
     store.ensureFileStore();
     console.warn(
