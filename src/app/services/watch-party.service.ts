@@ -1,6 +1,6 @@
-import { Injectable, OnDestroy } from '@angular/core';
+import { Injectable, NgZone, OnDestroy } from '@angular/core';
 import { BehaviorSubject, Subject, firstValueFrom } from 'rxjs';
-import Peer, { DataConnection, PeerError } from 'peerjs';
+import Peer, { DataConnection, PeerError, PeerJSOption } from 'peerjs';
 import {
   PartyLobbyService,
   PartyVisibility,
@@ -112,7 +112,10 @@ export class WatchPartyService implements OnDestroy {
   private lobbyVisibility: PartyVisibility = 'private';
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(private partyLobby: PartyLobbyService) {}
+  constructor(
+    private partyLobby: PartyLobbyService,
+    private ngZone: NgZone
+  ) {}
 
   get snapshot(): WatchPartyState {
     return this.stateSubject.value;
@@ -195,8 +198,12 @@ export class WatchPartyService implements OnDestroy {
         throw new Error('Room id mismatch from signaling server. Please try again.');
       }
 
-      this.peer.on('connection', (conn) => this.handleIncomingConnection(conn));
-      this.peer.on('error', (err) => this.onPeerError(err));
+      this.peer.on('connection', (conn) =>
+        this.ngZone.run(() => this.handleIncomingConnection(conn))
+      );
+      this.peer.on('error', (err) =>
+        this.ngZone.run(() => this.onPeerError(err))
+      );
 
       this.patchState({
         role: 'host',
@@ -252,7 +259,9 @@ export class WatchPartyService implements OnDestroy {
 
     try {
       await this.openPeer();
-      this.peer!.on('error', (err) => this.onPeerError(err));
+      this.peer!.on('error', (err) =>
+        this.ngZone.run(() => this.onPeerError(err))
+      );
 
       const hostPeerId = this.toPeerId(normalized);
       const conn = await this.connectToHostWithRetry(hostPeerId);
@@ -286,6 +295,7 @@ export class WatchPartyService implements OnDestroy {
       await this.resetPeer();
       this.patchState({
         ...INITIAL_STATE,
+        connecting: false,
         error: this.toErrorMessage(error, 'Failed to join watch party'),
       });
       throw error;
@@ -462,50 +472,81 @@ export class WatchPartyService implements OnDestroy {
     this.stateSubject.complete();
   }
 
+  private peerOptions(): PeerJSOption {
+    return {
+      debug: 1,
+      // Explicit cloud broker — more reliable on mobile browsers than defaults
+      host: '0.peerjs.com',
+      secure: true,
+      port: 443,
+      path: '/',
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          // Free public TURN — required for many mobile carrier NATs
+          {
+            urls: 'turn:openrelay.metered.ca:80',
+            username: 'openrelayproject',
+            credential: 'openrelayproject',
+          },
+          {
+            urls: 'turn:openrelay.metered.ca:443',
+            username: 'openrelayproject',
+            credential: 'openrelayproject',
+          },
+          {
+            urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+            username: 'openrelayproject',
+            credential: 'openrelayproject',
+          },
+        ],
+      },
+    };
+  }
+
   private async openPeer(peerId?: string): Promise<void> {
     await new Promise<void>((resolve, reject) => {
-      const peerOptions = {
-        debug: 1 as const,
-        config: {
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-            { urls: 'stun:stun.cloudflare.com:3478' },
-          ],
-        },
-      };
       const peer = peerId
-        ? new Peer(peerId, peerOptions)
-        : new Peer(peerOptions);
+        ? new Peer(peerId, this.peerOptions())
+        : new Peer(this.peerOptions());
       this.peer = peer;
 
       let settled = false;
 
-      const onOpen = (id: string): void => {
+      const finish = (cb: () => void): void => {
         if (settled) {
           return;
         }
         settled = true;
-        cleanup();
-        if (peerId && id !== peerId) {
-          reject(new Error('Signaling server assigned a different room id'));
-          return;
-        }
-        resolve();
+        clearTimeout(timer);
+        peer.off('open', onOpen);
+        peer.off('error', onError);
+        this.ngZone.run(cb);
+      };
+
+      const timer = setTimeout(() => {
+        finish(() =>
+          reject(
+            new Error(
+              'Could not reach the watch-party network. Check your connection and try again.'
+            )
+          )
+        );
+      }, 15000);
+
+      const onOpen = (id: string): void => {
+        finish(() => {
+          if (peerId && id !== peerId) {
+            reject(new Error('Signaling server assigned a different room id'));
+            return;
+          }
+          resolve();
+        });
       };
 
       const onError = (err: PeerError<string>): void => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        cleanup();
-        reject(err);
-      };
-
-      const cleanup = (): void => {
-        peer.off('open', onOpen);
-        peer.off('error', onError);
+        finish(() => reject(err));
       };
 
       peer.on('open', onOpen);
@@ -596,7 +637,7 @@ export class WatchPartyService implements OnDestroy {
    * PeerJS often emits peer-unavailable on the Peer, not the DataConnection.
    * Listen to both so join fails fast instead of hanging / acting weird.
    */
-  private waitForConnection(conn: DataConnection, timeoutMs = 20000): Promise<void> {
+  private waitForConnection(conn: DataConnection, timeoutMs = 15000): Promise<void> {
     return new Promise((resolve, reject) => {
       const peer = this.peer;
       if (!peer) {
@@ -606,11 +647,28 @@ export class WatchPartyService implements OnDestroy {
 
       let settled = false;
 
+      const finish = (cb: () => void): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeout);
+        conn.off('open', onOpen);
+        conn.off('error', onConnError);
+        peer.off('error', onPeerError);
+        this.ngZone.run(cb);
+      };
+
       const timeout = setTimeout(() => {
+        try {
+          conn.close();
+        } catch {
+          // ignore
+        }
         finish(() =>
           reject(
             new Error(
-              'Timed out connecting to host. Make sure the host party is still open and the code is correct.'
+              'Timed out connecting to host. On mobile, try Wi‑Fi — some carrier networks block peer connections. Make sure the host party is still open.'
             )
           )
         );
@@ -636,19 +694,7 @@ export class WatchPartyService implements OnDestroy {
           );
           return;
         }
-        finish(() => reject(err));
-      };
-
-      const finish = (cb: () => void): void => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        clearTimeout(timeout);
-        conn.off('open', onOpen);
-        conn.off('error', onConnError);
-        peer.off('error', onPeerError);
-        cb();
+        // Ignore other peer errors during connect wait (network blips)
       };
 
       // Already open (rare but possible)
@@ -666,7 +712,7 @@ export class WatchPartyService implements OnDestroy {
   /** Retry guest→host connect; PeerJS cloud / ICE is often flaky on the first try. */
   private async connectToHostWithRetry(
     hostPeerId: string,
-    attempts = 3
+    attempts = 2
   ): Promise<DataConnection> {
     let lastError: unknown;
     for (let i = 0; i < attempts; i++) {
@@ -674,14 +720,18 @@ export class WatchPartyService implements OnDestroy {
         throw new Error('Peer not ready');
       }
       if (i > 0) {
-        await new Promise((r) => setTimeout(r, 700 * i));
+        await new Promise((r) => setTimeout(r, 500 * i));
       }
       try {
-        const conn = this.peer.connect(hostPeerId, { reliable: true });
+        // json serialization is more reliable on iOS Safari than binary
+        const conn = this.peer.connect(hostPeerId, {
+          reliable: true,
+          serialization: 'json',
+        });
         if (!conn) {
           throw new Error('Could not start connection to host');
         }
-        await this.waitForConnection(conn, 18000);
+        await this.waitForConnection(conn, 12000);
         return conn;
       } catch (error) {
         lastError = error;
@@ -713,33 +763,41 @@ export class WatchPartyService implements OnDestroy {
 
   private handleIncomingConnection(conn: DataConnection): void {
     conn.on('open', () => {
-      this.registerConnection(conn, true);
+      this.ngZone.run(() => {
+        this.registerConnection(conn, true);
 
-      this.send(conn, {
-        action: 'hello',
-        displayName: this.displayName || 'Host',
-        media: this.mediaState ?? undefined,
-        sentAt: Date.now(),
-      });
-
-      if (this.mediaState) {
         this.send(conn, {
-          action: 'media',
-          media: this.mediaState,
+          action: 'hello',
+          displayName: this.displayName || 'Host',
+          media: this.mediaState ?? undefined,
           sentAt: Date.now(),
         });
-      }
 
-      this.syncRequestedSubject.next();
+        if (this.mediaState) {
+          this.send(conn, {
+            action: 'media',
+            media: this.mediaState,
+            sentAt: Date.now(),
+          });
+        }
+
+        this.syncRequestedSubject.next();
+      });
     });
   }
 
   private registerConnection(conn: DataConnection, fromHostSide: boolean): void {
     this.connections.set(conn.peer, conn);
 
-    conn.on('data', (data) => this.onConnectionData(conn, data, fromHostSide));
-    conn.on('close', () => this.onConnectionClosed(conn.peer));
-    conn.on('error', () => this.onConnectionClosed(conn.peer));
+    conn.on('data', (data) =>
+      this.ngZone.run(() => this.onConnectionData(conn, data, fromHostSide))
+    );
+    conn.on('close', () =>
+      this.ngZone.run(() => this.onConnectionClosed(conn.peer))
+    );
+    conn.on('error', () =>
+      this.ngZone.run(() => this.onConnectionClosed(conn.peer))
+    );
 
     this.refreshMembers();
   }
@@ -1035,7 +1093,12 @@ export class WatchPartyService implements OnDestroy {
   }
 
   private patchState(partial: Partial<WatchPartyState>): void {
-    this.stateSubject.next({ ...this.stateSubject.value, ...partial });
+    const next = { ...this.stateSubject.value, ...partial };
+    if (NgZone.isInAngularZone()) {
+      this.stateSubject.next(next);
+    } else {
+      this.ngZone.run(() => this.stateSubject.next(next));
+    }
   }
 
   private toErrorMessage(error: unknown, fallback: string): string {

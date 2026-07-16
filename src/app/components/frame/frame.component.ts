@@ -796,6 +796,7 @@ export class FrameComponent implements OnInit, OnDestroy {
           this.partyChatUnread = 0;
           this.showFloatingPartyChat = false;
         }
+        this.cdr.detectChanges();
       })
     );
 
@@ -972,6 +973,10 @@ export class FrameComponent implements OnInit, OnDestroy {
       this.syncWatchPartyMedia();
     } catch (error) {
       console.error('Failed to join watch party:', error);
+      // Keep invite modal open so the error + retry are visible on mobile
+      this.showJoinInviteModal = true;
+    } finally {
+      this.cdr.detectChanges();
     }
   }
 
