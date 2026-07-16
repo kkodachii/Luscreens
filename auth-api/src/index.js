@@ -147,6 +147,23 @@ function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
+app.get('/', (_req, res) => {
+  res.json({
+    ok: true,
+    service: 'luscreens-auth-api',
+    message: 'This is the auth API, not the Luscreens website.',
+    health: '/health',
+    endpoints: [
+      'POST /auth/register',
+      'POST /auth/login',
+      'GET /auth/me',
+      'GET /auth/admin/users',
+      'GET /me/library',
+      'PUT /me/library',
+    ],
+  });
+});
+
 app.get('/health', (_req, res) => {
   res.json({ ok: true, service: 'auth-api', ts: Date.now() });
 });
