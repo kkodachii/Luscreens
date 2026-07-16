@@ -15,7 +15,8 @@ interface UserLibrary {
 
 /**
  * Guest (logged out): recently played / history / watchlist stay in localStorage only.
- * Logged in: those lists live on Render for that account (with a per-user local mirror).
+ * Logged in: server (Mongo via Render) is source of truth; localStorage is only a mirror
+ * after the first successful pull for that account.
  */
 @Injectable({
   providedIn: 'root',
@@ -32,6 +33,8 @@ export class UserLibraryService {
   private syncTimer: ReturnType<typeof setTimeout> | null = null;
   private ready = false;
   private pulling = false;
+  /** True only after a successful server pull (logged-in) or for guests. */
+  private libraryHydrated = false;
 
   constructor() {
     queueMicrotask(() => {
@@ -56,21 +59,27 @@ export class UserLibraryService {
     this.lastUserId = userId;
 
     this.clearSyncTimer();
+    this.libraryHydrated = false;
 
     if (wasLoggedIn && !userId) {
       this.watchParty.leaveParty();
     }
 
-    // Guest → cache only. Logged-in → user-scoped storage + Render.
+    const shouldPull = !!userId && this.canSyncToRender();
+
+    // Block pushes before bindToUser emits (bind used to schedule a push of stale cache)
+    this.pulling = shouldPull;
+
     this.progress.bindToUser(userId);
     this.watchlist.bindToUser(userId);
     this.watchParty.bindToUser(userId);
 
-    if (userId && this.canSyncToRender()) {
+    if (shouldPull) {
       this.pullFromServer();
-    } else if (!initial && !userId) {
-      // Explicitly ensure we are not talking to Render while logged out
+    } else {
+      // Guest: local cache only
       this.pulling = false;
+      this.libraryHydrated = true;
     }
   }
 
@@ -98,35 +107,51 @@ export class UserLibraryService {
   private pullFromServer(): void {
     const headers = this.authHeaders();
     if (!headers || !this.lastUserId) {
+      this.pulling = false;
       return;
     }
 
     this.pulling = true;
+    this.libraryHydrated = false;
+    this.clearSyncTimer();
+
     this.http
       .get<{ library: UserLibrary }>(`${this.baseUrl}/me/library`, { headers })
       .pipe(
-        timeout(30000),
+        timeout(45000),
         catchError(() => of(null))
       )
       .subscribe((res) => {
         try {
-          if (!res?.library || !this.canSyncToRender() || this.auth.user()?.id !== this.lastUserId) {
+          if (!this.canSyncToRender() || this.auth.user()?.id !== this.lastUserId) {
             return;
           }
+
+          if (!res?.library) {
+            // Keep showing local mirror but never push until a real pull succeeds
+            this.libraryHydrated = false;
+            console.warn('Library pull failed — not pushing local cache to server');
+            return;
+          }
+
           // Server is source of truth while logged in
           this.progress.replaceMap(res.library.progress || {}, { persistLocal: true });
           this.watchlist.replaceMap(res.library.watchlist || {}, { persistLocal: true });
+          this.libraryHydrated = true;
         } finally {
-          setTimeout(() => {
-            this.pulling = false;
-          }, 50);
+          this.pulling = false;
         }
       });
   }
 
   private schedulePush(): void {
-    // Never push guest/cache data to Render
-    if (!this.ready || !this.canSyncToRender() || this.pulling) {
+    // Never push until the account library has been loaded from Mongo/Render
+    if (
+      !this.ready ||
+      !this.canSyncToRender() ||
+      this.pulling ||
+      !this.libraryHydrated
+    ) {
       return;
     }
     this.clearSyncTimer();
@@ -134,6 +159,10 @@ export class UserLibraryService {
   }
 
   private pushToServer(): void {
+    if (this.pulling || !this.libraryHydrated) {
+      return;
+    }
+
     const headers = this.authHeaders();
     if (!headers || !this.lastUserId || !this.canSyncToRender()) {
       return;
