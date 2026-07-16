@@ -49,10 +49,28 @@
           type="button"
           (click)="joinRoom(room)"
           [disabled]="joiningCode === room.code"
-          class="w-full text-left rounded-xl border border-white/10 bg-black/40 hover:border-white/25 hover:bg-white/5 px-4 py-4 transition disabled:opacity-50"
+          class="w-full text-left rounded-xl border border-white/10 bg-black/40 hover:border-white/25 hover:bg-white/5 px-3 py-3 sm:px-4 sm:py-4 transition disabled:opacity-50"
         >
-          <div class="flex items-start justify-between gap-3">
-            <div class="min-w-0">
+          <div class="flex items-center gap-3 sm:gap-4">
+            <div
+              class="shrink-0 w-14 sm:w-16 aspect-[2/3] rounded-md overflow-hidden bg-white/10 border border-white/10"
+            >
+              <img
+                *ngIf="posterUrl(room) as src"
+                [src]="src"
+                [alt]="room.title || room.code"
+                class="w-full h-full object-cover"
+                loading="lazy"
+              />
+              <div
+                *ngIf="!posterUrl(room)"
+                class="w-full h-full flex items-center justify-center text-[10px] text-gray-500"
+              >
+                No art
+              </div>
+            </div>
+
+            <div class="min-w-0 flex-1">
               <div class="flex flex-wrap items-center gap-2">
                 <code class="text-sm tracking-[0.2em] font-semibold text-white">
                   {{ room.code }}
@@ -69,6 +87,7 @@
                 {{ room.memberCount }} watching
               </p>
             </div>
+
             <span class="shrink-0 text-sm font-medium text-red-400">
               {{ joiningCode === room.code ? 'Joining…' : 'Join' }}
             </span>

@@ -12,6 +12,7 @@ export interface PublicPartyRoom {
   title: string | null;
   mediaType: string | null;
   mediaId: string | null;
+  posterPath: string | null;
   season: number | null;
   episode: number | null;
   memberCount: number;
@@ -52,6 +53,7 @@ export class PartyLobbyService {
     title?: string;
     mediaType?: string;
     mediaId?: string;
+    posterPath?: string;
     season?: number;
     episode?: number;
     memberCount?: number;
@@ -79,6 +81,7 @@ export class PartyLobbyService {
       title: string | null;
       mediaType: string | null;
       mediaId: string | null;
+      posterPath: string | null;
       season: number | null;
       episode: number | null;
       memberCount: number;

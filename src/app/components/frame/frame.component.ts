@@ -73,6 +73,7 @@ export class FrameComponent implements OnInit, OnDestroy {
   selectedSeason: number = 1;
   selectedEpisode: number = 1;
   backdropPath: string | null = null;
+  posterPath: string | null = null;
   item: { logo_path: string | null } = {
     logo_path: null,
   };
@@ -294,6 +295,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.tmdbService.getMovieDetails(+this.id).subscribe(
       (data: any) => {
         this.backdropPath = data.backdrop_path;
+        this.posterPath = data.poster_path ?? null;
         this.title = data.title || 'Unknown Movie'; // Set the title with a fallback
         this.rating = data.vote_average || 0;
         this.releaseDate = data.release_date || 'Unknown Release Date';
@@ -321,6 +323,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.tmdbService.getTvDetails(+this.id).subscribe(
       (data: any) => {
         this.backdropPath = data.backdrop_path;
+        this.posterPath = data.poster_path ?? null;
         this.title = data.name || 'Unknown TV Show'; // Set the title with a fallback
         this.rating = data.vote_average || 0;
         this.releaseDate = data.first_air_date || 'Unknown Release Date';
@@ -920,6 +923,7 @@ export class FrameComponent implements OnInit, OnDestroy {
       season: this.mediaType === 'tv' ? this.selectedSeason : undefined,
       episode: this.mediaType === 'tv' ? this.selectedEpisode : undefined,
       title: this.title,
+      posterPath: this.posterPath,
     });
   }
 

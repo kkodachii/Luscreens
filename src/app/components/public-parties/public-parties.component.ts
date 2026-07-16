@@ -83,4 +83,14 @@ export class PublicPartiesComponent implements OnInit, OnDestroy {
     }
     return room.mediaType === 'movie' ? 'Movie' : 'Watch party';
   }
+
+  posterUrl(room: PublicPartyRoom): string | null {
+    if (!room.posterPath) {
+      return null;
+    }
+    if (room.posterPath.startsWith('http')) {
+      return room.posterPath;
+    }
+    return `https://image.tmdb.org/t/p/w185${room.posterPath}`;
+  }
 }

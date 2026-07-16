@@ -23,6 +23,7 @@ function publicRoomView(room) {
     title: room.title || null,
     mediaType: room.mediaType || null,
     mediaId: room.mediaId || null,
+    posterPath: room.posterPath || null,
     season: room.season ?? null,
     episode: room.episode ?? null,
     memberCount: room.memberCount || 1,
@@ -78,6 +79,9 @@ app.post('/rooms', (req, res) => {
     title: body.title ? String(body.title).slice(0, 120) : existing?.title || null,
     mediaType: body.mediaType || existing?.mediaType || null,
     mediaId: body.mediaId || existing?.mediaId || null,
+    posterPath: body.posterPath
+      ? String(body.posterPath).slice(0, 200)
+      : existing?.posterPath || null,
     season: body.season ?? existing?.season ?? null,
     episode: body.episode ?? existing?.episode ?? null,
     memberCount: Math.max(1, Number(body.memberCount) || existing?.memberCount || 1),
@@ -111,6 +115,7 @@ app.patch('/rooms/:code', (req, res) => {
   }
   if (body.mediaType !== undefined) room.mediaType = body.mediaType;
   if (body.mediaId !== undefined) room.mediaId = body.mediaId;
+  if (body.posterPath) room.posterPath = String(body.posterPath).slice(0, 200);
   if (body.season !== undefined) room.season = body.season;
   if (body.episode !== undefined) room.episode = body.episode;
   if (body.memberCount !== undefined) {

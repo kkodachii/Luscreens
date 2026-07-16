@@ -14,6 +14,7 @@ export interface WatchPartyMediaState {
   season?: number;
   episode?: number;
   title?: string;
+  posterPath?: string | null;
 }
 
 export interface WatchPartyCommand {
@@ -883,6 +884,7 @@ export class WatchPartyService implements OnDestroy {
         title: title || undefined,
         mediaType: media?.mediaType,
         mediaId: media?.id != null ? String(media.id) : undefined,
+        posterPath: media?.posterPath || undefined,
         season: media?.season,
         episode: media?.episode,
         memberCount: Math.max(1, this.snapshot.members.length),
@@ -911,6 +913,9 @@ export class WatchPartyService implements OnDestroy {
     }
     if (media?.id != null && media.id !== '') {
       patch.mediaId = String(media.id);
+    }
+    if (media?.posterPath) {
+      patch.posterPath = media.posterPath;
     }
     if (media?.season != null) {
       patch.season = media.season;
