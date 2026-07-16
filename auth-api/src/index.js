@@ -11,6 +11,11 @@ const JWT_SECRET = process.env.JWT_SECRET || 'luscreens-dev-secret-change-me';
 const JWT_EXPIRES = process.env.JWT_EXPIRES || '7d';
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
+/** Comma-separated admin emails (default: kean@gmail.com) */
+const ADMIN_EMAILS = String(process.env.ADMIN_EMAILS || 'kean@gmail.com')
+  .split(',')
+  .map((e) => e.trim().toLowerCase())
+  .filter(Boolean);
 
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: '2mb' }));
@@ -121,6 +126,17 @@ function authMiddleware(req, res, next) {
   }
 }
 
+function isAdminEmail(email) {
+  return ADMIN_EMAILS.includes(normalizeEmail(email));
+}
+
+function adminMiddleware(req, res, next) {
+  if (!isAdminEmail(req.auth?.email)) {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  next();
+}
+
 function normalizeEmail(email) {
   return String(email || '')
     .trim()
@@ -208,7 +224,20 @@ app.get('/auth/me', authMiddleware, (req, res) => {
   if (!user) {
     return res.status(401).json({ error: 'User not found' });
   }
-  res.json({ user: publicUser(user) });
+  res.json({
+    user: {
+      ...publicUser(user),
+      isAdmin: isAdminEmail(user.email),
+    },
+  });
+});
+
+/** Admin only: list all registered users (no password hashes) */
+app.get('/auth/admin/users', authMiddleware, adminMiddleware, (req, res) => {
+  const users = readUsers()
+    .map((u) => publicUser(u))
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  res.json({ users, total: users.length });
 });
 
 /** Per-user history / recently played / watchlist */

@@ -8,7 +8,10 @@ export interface AuthUser {
   email: string;
   name: string;
   createdAt: number;
+  isAdmin?: boolean;
 }
+
+const ADMIN_EMAILS = ['kean@gmail.com'];
 
 interface AuthResponse {
   token: string;
@@ -29,6 +32,13 @@ export class AuthService {
 
   readonly user = this.userSignal.asReadonly();
   readonly isLoggedIn = computed(() => !!this.userSignal() && !!this.tokenSignal());
+  readonly isAdmin = computed(() => {
+    const email = (this.userSignal()?.email || '').trim().toLowerCase();
+    if (this.userSignal()?.isAdmin === true) {
+      return true;
+    }
+    return !!email && ADMIN_EMAILS.includes(email);
+  });
 
   private readonly authModalOpenSignal = signal(false);
   private readonly authModalModeSignal = signal<'login' | 'register'>('login');
@@ -132,6 +142,31 @@ export class AuthService {
           this.logout();
           return of(null);
         })
+      );
+  }
+
+  /** Admin only — list registered users. */
+  listUsers(): Observable<
+    { ok: true; users: AuthUser[]; total: number } | { ok: false; error: string }
+  > {
+    const token = this.tokenSignal();
+    if (!this.enabled || !token) {
+      return of({ ok: false, error: 'Not logged in' });
+    }
+    return this.http
+      .get<{ users: AuthUser[]; total: number }>(`${this.baseUrl}/auth/admin/users`, {
+        headers: new HttpHeaders({ Authorization: `Bearer ${token}` }),
+      })
+      .pipe(
+        timeout(30000),
+        map((res) => ({
+          ok: true as const,
+          users: res.users || [],
+          total: res.total ?? (res.users || []).length,
+        })),
+        catchError((err) =>
+          of({ ok: false as const, error: this.toError(err, 'Could not load users') })
+        )
       );
   }
 
