@@ -11,7 +11,10 @@ const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const LIBRARY_FILE = path.join(DATA_DIR, 'library.json');
 
 function useMongo() {
-  return !!process.env.MONGODB_URI;
+  return !!(
+    process.env.MONGODB_URI ||
+    (process.env.MONGODB_USER && process.env.MONGODB_PASSWORD && process.env.MONGODB_HOST)
+  );
 }
 
 function ensureFileStore() {

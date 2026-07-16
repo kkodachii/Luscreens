@@ -10,6 +10,10 @@ const PORT = process.env.PORT || 8788;
 const JWT_SECRET = process.env.JWT_SECRET || 'luscreens-dev-secret-change-me';
 const JWT_EXPIRES = process.env.JWT_EXPIRES || '7d';
 const MONGODB_URI = process.env.MONGODB_URI || '';
+const hasMongoConfig = !!(
+  MONGODB_URI ||
+  (process.env.MONGODB_USER && process.env.MONGODB_PASSWORD && process.env.MONGODB_HOST)
+);
 /** Comma-separated admin emails (default: kean@gmail.com) */
 const ADMIN_EMAILS = String(process.env.ADMIN_EMAILS || 'kean@gmail.com')
   .split(',')
@@ -221,9 +225,9 @@ app.put('/me/library', authMiddleware, async (req, res) => {
 });
 
 async function start() {
-  if (MONGODB_URI) {
+  if (hasMongoConfig) {
     try {
-      await connectMongo(MONGODB_URI);
+      await connectMongo(MONGODB_URI || 'mongodb+srv://from-parts');
       console.log('Connected to MongoDB');
     } catch (err) {
       // Keep the API alive on Render while Atlas access is fixed
@@ -233,6 +237,9 @@ async function start() {
       );
       // Clear URI for this process so store.useMongo() is false
       delete process.env.MONGODB_URI;
+      delete process.env.MONGODB_USER;
+      delete process.env.MONGODB_PASSWORD;
+      delete process.env.MONGODB_HOST;
       store.ensureFileStore();
     }
   } else {
