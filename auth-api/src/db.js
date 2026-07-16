@@ -1,4 +1,4 @@
-const { MongoClient } = require('mongodb');
+const { MongoClient, ServerApiVersion } = require('mongodb');
 
 let client = null;
 let db = null;
@@ -12,26 +12,28 @@ function safeDecode(value) {
 }
 
 /**
- * Build URI from parts (avoids Render mangling passwords with ! in a full URI).
- * Env: MONGODB_USER, MONGODB_PASSWORD, MONGODB_HOST (e.g. cluster0.zzf92lo.mongodb.net)
+ * Build URI from parts (avoids Render mangling passwords in a full URI).
+ * Env: MONGODB_USER, MONGODB_PASSWORD, MONGODB_HOST
  */
 function buildUriFromParts() {
   const user = process.env.MONGODB_USER;
   const password = process.env.MONGODB_PASSWORD;
-  const host = (process.env.MONGODB_HOST || '').replace(/^mongodb(\+srv)?:\/\//, '').replace(/\/$/, '');
-  const dbName = process.env.MONGODB_DB || 'luscreens';
+  const host = (process.env.MONGODB_HOST || '')
+    .replace(/^mongodb(\+srv)?:\/\//, '')
+    .replace(/\/$/, '')
+    .split('/')[0];
   if (!user || !password || !host) {
     return null;
   }
+  // Match Atlas sample style (db selected after connect)
   return (
     `mongodb+srv://${encodeURIComponent(user)}:${encodeURIComponent(password)}` +
-    `@${host}/${dbName}?retryWrites=true&w=majority&appName=Cluster0`
+    `@${host}/?appName=Cluster0`
   );
 }
 
 /**
- * Encode user/password in a Mongo URI so special chars like ! # @ work on Render.
- * Safe if the password is already percent-encoded.
+ * Encode user/password in a Mongo URI so special chars work on Render.
  */
 function normalizeMongoUri(uri) {
   const fromParts = buildUriFromParts();
@@ -45,20 +47,7 @@ function normalizeMongoUri(uri) {
   const decodedUser = safeDecode(user);
   const decodedPass = safeDecode(password);
 
-  // Ensure a database name exists (Atlas often copies URI ending with / only)
-  let hostAndPath = rest;
-  const [pathPart, queryPart] = rest.split('?');
-  const hostOnly = pathPart.replace(/\/$/, '');
-  const pathAfterHost = hostOnly.includes('/') ? hostOnly.slice(hostOnly.indexOf('/') + 1) : '';
-  if (!pathAfterHost) {
-    const host = hostOnly;
-    const qs = queryPart
-      ? `?${queryPart}`
-      : '?retryWrites=true&w=majority';
-    hostAndPath = `${host}/luscreens${qs.startsWith('?') ? qs : `?${qs}`}`;
-  }
-
-  return `${protocol}${encodeURIComponent(decodedUser)}:${encodeURIComponent(decodedPass)}@${hostAndPath}`;
+  return `${protocol}${encodeURIComponent(decodedUser)}:${encodeURIComponent(decodedPass)}@${rest}`;
 }
 
 function maskMongoUri(uri) {
@@ -73,29 +62,34 @@ async function connectMongo(uri) {
   const normalized = normalizeMongoUri(uri);
   console.log(`Connecting to MongoDB: ${maskMongoUri(normalized)}`);
 
+  // Same options as Atlas "Connect → Drivers → Node.js" sample
   client = new MongoClient(normalized, {
+    serverApi: {
+      version: ServerApiVersion.v1,
+      strict: true,
+      deprecationErrors: true,
+    },
     serverSelectionTimeoutMS: 20000,
     connectTimeoutMS: 20000,
-    // Render / some hosts break on IPv6 — force IPv4
-    family: 4,
-    autoSelectFamily: false,
   });
 
   try {
     await client.connect();
-    db = client.db();
-    await db.command({ ping: 1 });
+    await client.db('admin').command({ ping: 1 });
+    const dbName = process.env.MONGODB_DB || 'luscreens';
+    db = client.db(dbName);
     await db.collection('users').createIndex({ email: 1 }, { unique: true });
     await db.collection('users').createIndex({ id: 1 }, { unique: true });
     await db.collection('libraries').createIndex({ userId: 1 }, { unique: true });
+    console.log(`MongoDB ping ok — using database "${dbName}"`);
     return db;
   } catch (err) {
     await closeMongo().catch(() => {});
     const tip = [
       'MongoDB connection failed.',
-      '1) Atlas → Network Access → Add IP → Allow Access from Anywhere (0.0.0.0/0)',
-      '2) Atlas → Database Access → user/password are correct',
-      '3) MONGODB_URI password special chars are OK (app auto-encodes ! # etc.)',
+      '1) Atlas → Network Access → Add IP → Allow Access from Anywhere (0.0.0.0/0) — MUST be Active',
+      '2) Do this on the SAME project as this cluster (y9bxwea)',
+      '3) Database Access → user/password match Render env',
       '4) Cluster is not paused',
       `Error: ${err && err.message ? err.message : err}`,
     ].join('\n');
