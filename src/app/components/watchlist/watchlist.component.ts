@@ -1,8 +1,9 @@
-import { Component, OnDestroy, OnInit } from '@angular/core';
+import { Component, OnDestroy, OnInit, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
 import { Subscription } from 'rxjs';
 import { WatchlistItem, WatchlistService } from '../../services/watchlist.service';
+import { UserLibraryService } from '../../services/user-library.service';
 
 @Component({
   selector: 'app-watchlist',
@@ -13,8 +14,8 @@ import { WatchlistItem, WatchlistService } from '../../services/watchlist.servic
 export class WatchlistComponent implements OnInit, OnDestroy {
   items: WatchlistItem[] = [];
   private sub = new Subscription();
-
-  constructor(private watchlist: WatchlistService) {}
+  private readonly watchlist = inject(WatchlistService);
+  private readonly userLibrary = inject(UserLibraryService);
 
   ngOnInit(): void {
     this.refresh();
@@ -33,11 +34,13 @@ export class WatchlistComponent implements OnInit, OnDestroy {
     event.preventDefault();
     event.stopPropagation();
     this.watchlist.removeByKey(item.key);
+    this.userLibrary.flushToServer();
   }
 
   clearAll(): void {
     if (confirm('Clear your entire watchlist?')) {
       this.watchlist.clearAll();
+      this.userLibrary.flushToServer();
     }
   }
 

@@ -32,6 +32,22 @@ export class RecentlyPlayedComponent implements OnInit, OnDestroy {
     return this.watchProgress.formatTime(seconds);
   }
 
+  formatLastWatched(timestamp: number): string {
+    if (!timestamp) {
+      return '';
+    }
+    try {
+      return new Date(timestamp).toLocaleString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      });
+    } catch {
+      return '';
+    }
+  }
+
   private refresh(): void {
     this.items = this.watchProgress.getContinueWatching(12);
   }

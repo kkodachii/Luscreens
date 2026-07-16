@@ -41,6 +41,9 @@
               {{ formatTime(item.watched) }}
               <span *ngIf="item.duration"> / {{ formatTime(item.duration) }}</span>
             </p>
+            <p *ngIf="item.lastUpdated" class="text-[10px] text-gray-500">
+              {{ formatLastWatched(item.lastUpdated) }}
+            </p>
             <div class="h-1 rounded-full bg-white/15 overflow-hidden">
               <div class="h-full bg-red-600" [style.width.%]="item.percent"></div>
             </div>

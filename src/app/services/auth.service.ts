@@ -170,6 +170,54 @@ export class AuthService {
       );
   }
 
+  /** Admin only — read another user's watch history / watchlist. */
+  getUserLibraryAdmin(userId: string): Observable<
+    | {
+        ok: true;
+        user: AuthUser;
+        library: {
+          progress: Record<string, unknown>;
+          watchlist: Record<string, unknown>;
+          updatedAt?: number | null;
+        };
+      }
+    | { ok: false; error: string }
+  > {
+    const token = this.tokenSignal();
+    if (!this.enabled || !token) {
+      return of({ ok: false, error: 'Not logged in' });
+    }
+    const id = encodeURIComponent(String(userId || '').trim());
+    if (!id) {
+      return of({ ok: false, error: 'Missing user id' });
+    }
+    return this.http
+      .get<{
+        user: AuthUser;
+        library: {
+          progress: Record<string, unknown>;
+          watchlist: Record<string, unknown>;
+          updatedAt?: number | null;
+        };
+      }>(`${this.baseUrl}/auth/admin/users/${id}/library`, {
+        headers: new HttpHeaders({ Authorization: `Bearer ${token}` }),
+      })
+      .pipe(
+        timeout(30000),
+        map((res) => ({
+          ok: true as const,
+          user: res.user,
+          library: res.library || { progress: {}, watchlist: {}, updatedAt: null },
+        })),
+        catchError((err) =>
+          of({
+            ok: false as const,
+            error: this.toError(err, 'Could not load user history'),
+          })
+        )
+      );
+  }
+
   private persistSession(res: AuthResponse): void {
     this.tokenSignal.set(res.token);
     this.userSignal.set(res.user);

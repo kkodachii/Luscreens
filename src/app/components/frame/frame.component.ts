@@ -168,6 +168,11 @@ export class FrameComponent implements OnInit, OnDestroy {
   private watchPartySubs = new Subscription();
   private ignorePartyBroadcastUntil = 0;
   private lastLocalProgressSaveAt = 0;
+  private lastClearedRestartAt = 0;
+  /** Only auto-correct embed resume for cleared titles during this window. */
+  private clearedBootstrapUntil = 0;
+  /** True once playback was near 0 or the user scrubbed — stop fighting seeks. */
+  private clearedSessionReady = false;
   private progressTimer: ReturnType<typeof setInterval> | null = null;
 
   private readonly onFullscreenChange = (): void => {
@@ -228,6 +233,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
 
     if (this.mediaType && this.id) {
+      this.beginClearedBootstrapIfNeeded();
       if (this.mediaType === 'movie') {
         this.fetchMovieDetails();
       } else if (this.mediaType === 'tv') {
@@ -443,13 +449,15 @@ export class FrameComponent implements OnInit, OnDestroy {
       params.set('sub', this.selectedSubtitle);
     }
 
-    const startAt =
-      resumeAt != null && resumeAt > 0
+    const cleared = this.watchProgress.isSuppressed(this.mediaType, this.id);
+    const startAt = cleared
+      ? 0
+      : resumeAt != null && resumeAt > 0
         ? resumeAt
         : this.getSavedStartAt();
-    if (startAt > 0) {
-      params.set('startAt', String(Math.floor(startAt)));
-    }
+    // Always set startAt — omitting it lets VidFast resume from its own iframe cache
+    // (which brought back cleared history timestamps).
+    params.set('startAt', String(Math.max(0, Math.floor(startAt))));
 
     if (this.mediaType === 'tv') {
       params.set('nextButton', 'true');
@@ -489,6 +497,7 @@ export class FrameComponent implements OnInit, OnDestroy {
 
   onPlayerIframeLoad(): void {
     this.isPlayerReloading = false;
+    this.beginClearedBootstrapIfNeeded();
     this.requestPlayerStatus();
     this.armServerFailoverWatch();
   }
@@ -620,6 +629,18 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.currentTime = 0;
     this.duration = 0;
     this.isSeeking = false;
+    this.beginClearedBootstrapIfNeeded();
+  }
+
+  private beginClearedBootstrapIfNeeded(): void {
+    this.lastClearedRestartAt = 0;
+    if (this.id && this.watchProgress.isSuppressed(this.mediaType, this.id)) {
+      this.clearedBootstrapUntil = Date.now() + 10000;
+      this.clearedSessionReady = false;
+      return;
+    }
+    this.clearedBootstrapUntil = 0;
+    this.clearedSessionReady = true;
   }
 
   private handleVidfastMessage(event: MessageEvent): void {
@@ -644,8 +665,8 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
 
     if (type === 'MEDIA_DATA' && data) {
-      this.watchProgress.saveMap(data);
-      this.persistLocalProgress(true);
+      // Ignore VidFast's stored progress map — it re-imports cleared history/timestamps.
+      // Our PLAYER_EVENT upsertPlayback is the only progress source.
       return;
     }
 
@@ -680,6 +701,11 @@ export class FrameComponent implements OnInit, OnDestroy {
     const wasPlaying = this.isPlaying;
     if (typeof data.playing === 'boolean') {
       this.isPlaying = data.playing;
+    }
+
+    // Cleared titles: VidFast may ignore startAt=0 and jump to its own cached time
+    if (this.enforceClearedRestart()) {
+      return;
     }
 
     const eventName = String(data.event || '').toLowerCase();
@@ -729,6 +755,33 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
   }
 
+  /**
+   * Cleared titles only: once, briefly after load, snap embed-cache resume back to 0.
+   * Never runs after the user seeks or after we have seen a near-zero start.
+   */
+  private enforceClearedRestart(): boolean {
+    if (!this.id || !this.watchProgress.isSuppressed(this.mediaType, this.id)) {
+      return false;
+    }
+    if (this.currentTime <= 8) {
+      this.clearedSessionReady = true;
+      return false;
+    }
+    // User scrubbing / skip buttons / already past bootstrap — allow free seeking
+    if (this.isSeeking || this.clearedSessionReady || Date.now() > this.clearedBootstrapUntil) {
+      return false;
+    }
+    const now = Date.now();
+    if (now - this.lastClearedRestartAt < 1500) {
+      this.currentTime = 0;
+      return true;
+    }
+    this.lastClearedRestartAt = now;
+    this.currentTime = 0;
+    this.postPlayerCommand({ command: 'seek', time: 0 });
+    return true;
+  }
+
   private persistLocalProgress(force = false): void {
     const now = Date.now();
     if (!force && now - this.lastLocalProgressSaveAt < 3000) {
@@ -736,6 +789,16 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
     if (!this.id) {
       return;
+    }
+
+    if (this.watchProgress.isSuppressed(this.mediaType, this.id)) {
+      // Wait until we confirmed a fresh start (or user took control via seek)
+      if (!this.clearedSessionReady) {
+        return;
+      }
+      if (this.currentTime < 15) {
+        return;
+      }
     }
 
     // Prefer live player time; fall back to last saved resume point so we don't wipe history
@@ -845,6 +908,7 @@ export class FrameComponent implements OnInit, OnDestroy {
   seekTo(time: number): void {
     const clamped = Math.max(0, Math.min(time, this.duration || time));
     this.isSeeking = true;
+    this.clearedSessionReady = true; // user took control — never snap seek back to 0
     this.currentTime = clamped;
     this.postPlayerCommand({ command: 'seek', time: clamped });
   }
@@ -852,6 +916,7 @@ export class FrameComponent implements OnInit, OnDestroy {
   onSeekInput(event: Event): void {
     const value = Number((event.target as HTMLInputElement).value);
     this.isSeeking = true;
+    this.clearedSessionReady = true;
     this.currentTime = value;
   }
 

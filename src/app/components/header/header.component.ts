@@ -3,6 +3,11 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { RouterModule, Router, NavigationEnd } from '@angular/router';
 import { AuthService, AuthUser } from '../../services/auth.service';
+import {
+  ContinueWatchingItem,
+  WatchProgressMap,
+  WatchProgressService,
+} from '../../services/watch-progress.service';
 
 @Component({
   selector: 'app-header',
@@ -14,6 +19,7 @@ import { AuthService, AuthUser } from '../../services/auth.service';
 export class HeaderComponent {
   private readonly auth = inject(AuthService);
   private readonly router = inject(Router);
+  private readonly watchProgress = inject(WatchProgressService);
 
   isMenuOpen = false;
   isBrowseDropdownOpen = false;
@@ -33,6 +39,12 @@ export class HeaderComponent {
   adminUsersTotal = 0;
   adminUsersLoading = false;
   adminUsersError = '';
+
+  selectedAdminUser: AuthUser | null = null;
+  adminUserHistory: ContinueWatchingItem[] = [];
+  adminUserHistoryLoading = false;
+  adminUserHistoryError = '';
+  adminUserLibraryUpdatedAt: number | null = null;
 
   readonly user = this.auth.user;
   readonly isLoggedIn = this.auth.isLoggedIn;
@@ -153,6 +165,7 @@ export class HeaderComponent {
   closeUsersModal(): void {
     this.isUsersModalOpen = false;
     this.adminUsersError = '';
+    this.closeAdminUserHistory();
   }
 
   loadAdminUsers(): void {
@@ -171,6 +184,42 @@ export class HeaderComponent {
     });
   }
 
+  openAdminUserHistory(user: AuthUser, event?: Event): void {
+    event?.preventDefault();
+    event?.stopPropagation();
+    if (!this.isAdmin() || !user?.id) {
+      return;
+    }
+    this.selectedAdminUser = user;
+    this.adminUserHistory = [];
+    this.adminUserHistoryError = '';
+    this.adminUserLibraryUpdatedAt = null;
+    this.adminUserHistoryLoading = true;
+
+    this.auth.getUserLibraryAdmin(user.id).subscribe((result) => {
+      this.adminUserHistoryLoading = false;
+      if (!result.ok) {
+        this.adminUserHistoryError = result.error;
+        this.adminUserHistory = [];
+        return;
+      }
+      this.selectedAdminUser = result.user || user;
+      this.adminUserLibraryUpdatedAt = result.library.updatedAt ?? null;
+      this.adminUserHistory = this.watchProgress.getContinueWatchingFromMap(
+        (result.library.progress || {}) as WatchProgressMap,
+        100
+      );
+    });
+  }
+
+  closeAdminUserHistory(): void {
+    this.selectedAdminUser = null;
+    this.adminUserHistory = [];
+    this.adminUserHistoryLoading = false;
+    this.adminUserHistoryError = '';
+    this.adminUserLibraryUpdatedAt = null;
+  }
+
   formatJoinedDate(createdAt: number | undefined): string {
     if (!createdAt) {
       return '—';
@@ -183,6 +232,26 @@ export class HeaderComponent {
       });
     } catch {
       return '—';
+    }
+  }
+
+  formatHistoryTime(seconds: number): string {
+    return this.watchProgress.formatTime(seconds);
+  }
+
+  formatLastWatched(timestamp: number): string {
+    if (!timestamp) {
+      return '';
+    }
+    try {
+      return new Date(timestamp).toLocaleString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      });
+    } catch {
+      return '';
     }
   }
 }

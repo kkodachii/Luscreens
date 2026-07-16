@@ -35,6 +35,12 @@ export class UserLibraryService {
   private pulling = false;
   /** True only after a successful server pull (logged-in) or for guests. */
   private libraryHydrated = false;
+  /** Bumps to cancel in-flight pulls after clear/remove. */
+  private pullGeneration = 0;
+  /** While true, server pulls must not overwrite a fresh local clear. */
+  private blockPulls = false;
+  private flushRetries = 0;
+  private static readonly MAX_FLUSH_RETRIES = 5;
 
   constructor() {
     queueMicrotask(() => {
@@ -60,6 +66,9 @@ export class UserLibraryService {
 
     this.clearSyncTimer();
     this.libraryHydrated = false;
+    this.blockPulls = false;
+    this.flushRetries = 0;
+    this.pullGeneration += 1;
 
     if (wasLoggedIn && !userId) {
       this.watchParty.leaveParty();
@@ -111,6 +120,12 @@ export class UserLibraryService {
       return;
     }
 
+    if (this.blockPulls) {
+      this.pulling = false;
+      return;
+    }
+
+    const generation = ++this.pullGeneration;
     this.pulling = true;
     this.libraryHydrated = false;
     this.clearSyncTimer();
@@ -123,34 +138,45 @@ export class UserLibraryService {
       )
       .subscribe((res) => {
         try {
+          if (generation !== this.pullGeneration || this.blockPulls) {
+            return;
+          }
           if (!this.canSyncToRender() || this.auth.user()?.id !== this.lastUserId) {
             return;
           }
 
           if (!res?.library) {
-            // Keep showing local mirror but never push until a real pull succeeds
             this.libraryHydrated = false;
             console.warn('Library pull failed — not pushing local cache to server');
             return;
           }
 
-          // Server is source of truth while logged in
+          // Server is source of truth while logged in (suppressed keys still stripped)
           this.progress.replaceMap(res.library.progress || {}, { persistLocal: true });
           this.watchlist.replaceMap(res.library.watchlist || {}, { persistLocal: true });
           this.libraryHydrated = true;
+
+          // If suppressions emptied titles the server still has, push the cleaned map
+          const serverProgress = res.library.progress || {};
+          const localProgress = this.progress.getMap();
+          if (Object.keys(serverProgress).length > Object.keys(localProgress).length) {
+            this.flushToServer();
+          }
         } finally {
-          this.pulling = false;
+          if (generation === this.pullGeneration) {
+            this.pulling = false;
+          }
         }
       });
   }
 
   private schedulePush(): void {
-    // Never push until the account library has been loaded from Mongo/Render
     if (
       !this.ready ||
       !this.canSyncToRender() ||
       this.pulling ||
-      !this.libraryHydrated
+      !this.libraryHydrated ||
+      this.blockPulls
     ) {
       return;
     }
@@ -158,18 +184,20 @@ export class UserLibraryService {
     this.syncTimer = setTimeout(() => this.pushToServer(), 800);
   }
 
-  private pushToServer(): void {
+  private pushToServer(onDone?: (ok: boolean) => void): void {
     if (this.pulling || !this.libraryHydrated) {
+      onDone?.(false);
       return;
     }
 
     const headers = this.authHeaders();
     if (!headers || !this.lastUserId || !this.canSyncToRender()) {
+      onDone?.(false);
       return;
     }
 
     this.http
-      .put(
+      .put<{ library: UserLibrary }>(
         `${this.baseUrl}/me/library`,
         {
           progress: this.progress.getMap(),
@@ -181,6 +209,50 @@ export class UserLibraryService {
         timeout(30000),
         catchError(() => of(null))
       )
-      .subscribe();
+      .subscribe({
+        next: (res) => onDone?.(!!res?.library),
+        error: () => onDone?.(false),
+      });
+  }
+
+  /**
+   * Force an immediate sync after clear/remove so Mongo matches the UI.
+   * Blocks server pulls until the PUT succeeds (prevents cleared items coming back).
+   */
+  flushToServer(resetRetries = true): void {
+    if (!this.canSyncToRender()) {
+      return;
+    }
+
+    if (resetRetries) {
+      this.flushRetries = 0;
+    }
+
+    // Cancel any in-flight pull that could restore old Mongo data over the clear
+    this.pullGeneration += 1;
+    this.blockPulls = true;
+    this.pulling = false;
+    this.libraryHydrated = true;
+    this.clearSyncTimer();
+
+    this.pushToServer((ok) => {
+      if (ok) {
+        this.blockPulls = false;
+        this.flushRetries = 0;
+        return;
+      }
+      if (this.flushRetries >= UserLibraryService.MAX_FLUSH_RETRIES) {
+        // Local suppressions still strip restored titles on pull; don't block forever
+        this.blockPulls = false;
+        this.flushRetries = 0;
+        console.warn('Library flush failed — local clear kept via suppress list');
+        return;
+      }
+      this.flushRetries += 1;
+      window.setTimeout(
+        () => this.flushToServer(false),
+        1500 * this.flushRetries
+      );
+    });
   }
 }

@@ -87,6 +87,7 @@ app.get('/', (_req, res) => {
       'POST /auth/login',
       'GET /auth/me',
       'GET /auth/admin/users',
+      'GET /auth/admin/users/:userId/library',
       'GET /me/library',
       'PUT /me/library',
     ],
@@ -196,6 +197,25 @@ app.get('/auth/admin/users', authMiddleware, adminMiddleware, async (req, res) =
   } catch (err) {
     console.error('admin users failed', err);
     res.status(500).json({ error: 'Could not load users' });
+  }
+});
+
+/** Admin only: read another user's watch history / watchlist (read-only) */
+app.get('/auth/admin/users/:userId/library', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const userId = String(req.params.userId || '').trim();
+    if (!userId) {
+      return res.status(400).json({ error: 'Missing user id' });
+    }
+    const user = await store.findUserById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    const library = await store.getUserLibrary(userId);
+    res.json({ user: publicUser(user), library });
+  } catch (err) {
+    console.error('admin user library failed', err);
+    res.status(500).json({ error: 'Could not load user library' });
   }
 });
 

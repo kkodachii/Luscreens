@@ -1,4 +1,4 @@
-import { Component, OnDestroy, OnInit } from '@angular/core';
+import { Component, OnDestroy, OnInit, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
 import { Subscription } from 'rxjs';
@@ -6,6 +6,7 @@ import {
   ContinueWatchingItem,
   WatchProgressService,
 } from '../../services/watch-progress.service';
+import { UserLibraryService } from '../../services/user-library.service';
 
 @Component({
   selector: 'app-history',
@@ -16,8 +17,8 @@ import {
 export class HistoryComponent implements OnInit, OnDestroy {
   items: ContinueWatchingItem[] = [];
   private sub = new Subscription();
-
-  constructor(private watchProgress: WatchProgressService) {}
+  private readonly watchProgress = inject(WatchProgressService);
+  private readonly userLibrary = inject(UserLibraryService);
 
   ngOnInit(): void {
     this.refresh();
@@ -32,15 +33,33 @@ export class HistoryComponent implements OnInit, OnDestroy {
     return this.watchProgress.formatTime(seconds);
   }
 
+  formatLastWatched(timestamp: number): string {
+    if (!timestamp) {
+      return '';
+    }
+    try {
+      return new Date(timestamp).toLocaleString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      });
+    } catch {
+      return '';
+    }
+  }
+
   remove(item: ContinueWatchingItem, event: Event): void {
     event.preventDefault();
     event.stopPropagation();
     this.watchProgress.remove(item.key);
+    this.userLibrary.flushToServer();
   }
 
   clearAll(): void {
     if (confirm('Clear all watch history?')) {
       this.watchProgress.clearAll();
+      this.userLibrary.flushToServer();
     }
   }
 

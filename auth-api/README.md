@@ -75,6 +75,7 @@ Also verify `MONGODB_URI` is set (no quotes around the value in Render).
 - `POST /auth/login` `{ email, password }`
 - `GET /auth/me` `Authorization: Bearer <token>`
 - `GET /auth/admin/users` — admin only
+- `GET /auth/admin/users/:userId/library` — admin only, read another user's history/watchlist
 - `GET /me/library` — user history / watchlist
 - `PUT /me/library` `{ progress, watchlist }`
 

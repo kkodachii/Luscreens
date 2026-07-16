@@ -50,18 +50,23 @@ export interface ContinueWatchingItem {
 })
 export class WatchProgressService {
   private static readonly STORAGE_KEY = 'vidFastProgress';
+  private static readonly SUPPRESSED_KEY = 'vidFastProgress:suppressed';
   /** Minimum watched time before resume/startAt kicks in. */
   private static readonly MIN_RESUME_SECONDS = 15;
   private static readonly MAX_RESUME_RATIO = 0.95;
 
   private userId: string | null = null;
+  /** Keys removed by the user — block VidFast/rehydrate from bringing them back. */
+  private readonly suppressedKeys = new Set<string>();
   private readonly progressSubject = new BehaviorSubject<WatchProgressMap>(this.readMap());
   readonly progress$ = this.progressSubject.asObservable();
 
   /** Switch storage bucket when auth user changes. */
   bindToUser(userId: string | null): void {
     this.userId = userId;
-    this.progressSubject.next(this.readMap());
+    this.loadSuppressed();
+    const map = this.stripSuppressed(this.readMap());
+    this.writeMap(map);
   }
 
   /** Replace in-memory map (and optional local persist). */
@@ -69,12 +74,18 @@ export class WatchProgressService {
     map: WatchProgressMap,
     options: { persistLocal?: boolean } = {}
   ): void {
-    const next = map && typeof map === 'object' ? map : {};
+    const raw = map && typeof map === 'object' ? map : {};
+    const next = this.stripSuppressed(raw);
     if (options.persistLocal === false) {
       this.progressSubject.next({ ...next });
       return;
     }
     this.writeMap(next);
+  }
+
+  isSuppressed(mediaType: 'movie' | 'tv' | string, id: number | string): boolean {
+    const type = mediaType === 'tv' ? 'tv' : 'movie';
+    return this.suppressedKeys.has(this.toKey(type, id));
   }
 
   getMap(): WatchProgressMap {
@@ -83,13 +94,22 @@ export class WatchProgressService {
 
   /**
    * Accept either a full VidFast map (`{ m123: {...} }`) or a single entry (`{ id, type, ... }`).
+   * Multi-title dumps are ignored — use {@link applyMediaDataForTitle} from the player.
    */
   saveMap(payload: unknown): void {
     const asMap = this.normalizeIncoming(payload);
     if (!asMap) {
       return;
     }
-    this.writeMap(this.mergeEnrichment(asMap));
+    // VidFast often posts the entire browser progress map; never merge that wholesale
+    if (Object.keys(asMap).length > 1) {
+      return;
+    }
+    const filtered = this.stripSuppressed(asMap);
+    if (!Object.keys(filtered).length) {
+      return;
+    }
+    this.writeMap(this.mergeEnrichment(filtered));
   }
 
   /** Call when the user opens a title so it shows in Recently Played immediately. */
@@ -109,6 +129,11 @@ export class WatchProgressService {
     }
 
     const key = this.toKey(mediaType, id);
+    // Respect Clear/Remove — don't resurrect titles until real playback happens
+    if (this.suppressedKeys.has(key)) {
+      return;
+    }
+
     const map = { ...this.getMap() };
     const existing = map[key] ?? { id, type: mediaType };
     const now = Date.now();
@@ -153,6 +178,15 @@ export class WatchProgressService {
     }
 
     const key = this.toKey(mediaType, id);
+    // After clear/remove: frame only calls this after a confirmed fresh start / user seek
+    if (this.suppressedKeys.has(key)) {
+      if (input.watched < WatchProgressService.MIN_RESUME_SECONDS) {
+        return;
+      }
+      this.suppressedKeys.delete(key);
+      this.persistSuppressed();
+    }
+
     const map = { ...this.getMap() };
     const existing = map[key] ?? { id, type: mediaType };
     const now = Date.now();
@@ -204,7 +238,11 @@ export class WatchProgressService {
     episode?: number
   ): number {
     const type = mediaType === 'tv' ? 'tv' : 'movie';
-    const entry = this.getMap()[this.toKey(type, id)];
+    const key = this.toKey(type, id);
+    if (this.suppressedKeys.has(key)) {
+      return 0;
+    }
+    const entry = this.getMap()[key];
     if (!entry) {
       return 0;
     }
@@ -241,15 +279,15 @@ export class WatchProgressService {
     }
 
     const entry = this.getMap()[this.toKey('tv', numericId)];
-    const season = entry?.last_season_watched || 1;
-    const episode = entry?.last_episode_watched || 1;
-    return ['/frame', 'tv', numericId, season, episode];
+    return this.resumeRouteFromEntry(type, numericId, entry);
   }
 
-  getContinueWatching(limit = 24): ContinueWatchingItem[] {
+  /** Build continue-watching list from any progress map (e.g. admin viewing another user). */
+  getContinueWatchingFromMap(map: WatchProgressMap, limit = 100): ContinueWatchingItem[] {
     const items: ContinueWatchingItem[] = [];
+    const source = map && typeof map === 'object' ? map : {};
 
-    for (const [key, entry] of Object.entries(this.getMap())) {
+    for (const [key, entry] of Object.entries(source)) {
       if (!entry?.id || (entry.type !== 'movie' && entry.type !== 'tv')) {
         continue;
       }
@@ -276,7 +314,7 @@ export class WatchProgressService {
           entry.last_opened || 0,
           snapshot.lastUpdated || 0
         ),
-        frameLink: this.getResumeRoute(entry.type, entry.id),
+        frameLink: this.resumeRouteFromEntry(entry.type, entry.id, entry),
       });
     }
 
@@ -285,7 +323,26 @@ export class WatchProgressService {
       .slice(0, limit);
   }
 
+  getContinueWatching(limit = 24): ContinueWatchingItem[] {
+    return this.getContinueWatchingFromMap(this.getMap(), limit);
+  }
+
+  private resumeRouteFromEntry(
+    mediaType: 'movie' | 'tv',
+    id: number,
+    entry?: WatchProgressEntry
+  ): (string | number)[] {
+    if (mediaType === 'movie') {
+      return ['/frame', 'movie', id];
+    }
+    const season = entry?.last_season_watched || 1;
+    const episode = entry?.last_episode_watched || 1;
+    return ['/frame', 'tv', id, season, episode];
+  }
+
   remove(key: string): void {
+    this.suppressedKeys.add(key);
+    this.persistSuppressed();
     const map = { ...this.getMap() };
     delete map[key];
     this.writeMap(map);
@@ -302,6 +359,10 @@ export class WatchProgressService {
   }
 
   clearAll(): void {
+    for (const key of Object.keys(this.getMap())) {
+      this.suppressedKeys.add(key);
+    }
+    this.persistSuppressed();
     this.writeMap({});
   }
 
@@ -434,9 +495,12 @@ export class WatchProgressService {
 
   private mergeEnrichment(incoming: WatchProgressMap): WatchProgressMap {
     const current = this.getMap();
-    const merged: WatchProgressMap = { ...current, ...incoming };
+    const merged: WatchProgressMap = { ...current };
 
     for (const [key, entry] of Object.entries(incoming)) {
+      if (this.suppressedKeys.has(key)) {
+        continue;
+      }
       const prev = current[key];
       if (!prev) {
         merged[key] = {
@@ -467,6 +531,17 @@ export class WatchProgressService {
     return merged;
   }
 
+  private stripSuppressed(map: WatchProgressMap): WatchProgressMap {
+    if (!this.suppressedKeys.size) {
+      return { ...map };
+    }
+    const next: WatchProgressMap = { ...map };
+    for (const key of this.suppressedKeys) {
+      delete next[key];
+    }
+    return next;
+  }
+
   private toKey(mediaType: 'movie' | 'tv', id: number | string): string {
     return `${mediaType === 'tv' ? 't' : 'm'}${id}`;
   }
@@ -481,6 +556,44 @@ export class WatchProgressService {
       : WatchProgressService.STORAGE_KEY;
   }
 
+  private suppressedStorageKey(): string {
+    return this.userId
+      ? `${WatchProgressService.SUPPRESSED_KEY}:${this.userId}`
+      : WatchProgressService.SUPPRESSED_KEY;
+  }
+
+  private loadSuppressed(): void {
+    this.suppressedKeys.clear();
+    try {
+      const raw = localStorage.getItem(this.suppressedStorageKey());
+      if (!raw) {
+        return;
+      }
+      const keys = JSON.parse(raw) as unknown;
+      if (!Array.isArray(keys)) {
+        return;
+      }
+      for (const key of keys) {
+        if (typeof key === 'string' && key) {
+          this.suppressedKeys.add(key);
+        }
+      }
+    } catch {
+      // ignore corrupt suppress list
+    }
+  }
+
+  private persistSuppressed(): void {
+    try {
+      localStorage.setItem(
+        this.suppressedStorageKey(),
+        JSON.stringify([...this.suppressedKeys])
+      );
+    } catch (error) {
+      console.error('Failed to save suppressed progress keys:', error);
+    }
+  }
+
   private readMap(): WatchProgressMap {
     try {
       const raw = localStorage.getItem(this.storageKey());
@@ -492,8 +605,9 @@ export class WatchProgressService {
 
   private writeMap(map: WatchProgressMap): void {
     try {
-      localStorage.setItem(this.storageKey(), JSON.stringify(map));
-      this.progressSubject.next({ ...map });
+      const cleaned = this.stripSuppressed(map);
+      localStorage.setItem(this.storageKey(), JSON.stringify(cleaned));
+      this.progressSubject.next({ ...cleaned });
     } catch (error) {
       console.error('Failed to save watch progress:', error);
     }

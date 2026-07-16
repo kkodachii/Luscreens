@@ -34,6 +34,9 @@
             {{ formatTime(item.watched) }}
             <span *ngIf="item.duration"> / {{ formatTime(item.duration) }}</span>
           </p>
+          <p *ngIf="item.lastUpdated" class="text-[10px] text-gray-400 mt-0.5">
+            {{ formatLastWatched(item.lastUpdated) }}
+          </p>
           <div class="mt-2 h-1 rounded-full bg-white/20 overflow-hidden">
             <div class="h-full bg-red-600" [style.width.%]="item.percent"></div>
           </div>
