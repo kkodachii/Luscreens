@@ -4,6 +4,8 @@ import { TmdbService } from '../../services/tmdb.service';
 import { NgForOf, CommonModule, NgIf } from '@angular/common';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { HttpClient } from '@angular/common/http';
+import { WatchProgressService } from '../../services/watch-progress.service';
+import { WatchlistService } from '../../services/watchlist.service';
 
 @Component({
   selector: 'app-details',
@@ -22,19 +24,29 @@ export class DetailsComponent implements OnInit {
   torrents: any[] | null = null; // Store torrent information
   showTorrentList: boolean = false;
   loadingTorrents: boolean = false;
+  inWatchlist = false;
+
+  private mediaType = '';
+  private mediaId = '';
+
   constructor(
     private route: ActivatedRoute,
     private router: Router,
     private tmdbService: TmdbService,
-    private sanitizer: DomSanitizer, // Used to sanitize the URL
-    private http: HttpClient // For fetching torrents
+    private sanitizer: DomSanitizer,
+    private http: HttpClient,
+    private watchProgress: WatchProgressService,
+    private watchlist: WatchlistService,
   ) {}
 
   ngOnInit(): void {
-    const mediaType = this.route.snapshot.paramMap.get('media_type');
-    const id = this.route.snapshot.paramMap.get('id');
+    this.mediaType = this.route.snapshot.paramMap.get('media_type') || '';
+    this.mediaId = this.route.snapshot.paramMap.get('id') || '';
+    const mediaType = this.mediaType;
+    const id = this.mediaId;
   
     if (mediaType && id) {
+      this.inWatchlist = this.watchlist.isInWatchlist(mediaType, id);
       // Fetch details based on media_type
       if (mediaType === 'movie') {
         this.tmdbService.getMovieDetails(+id).subscribe(
@@ -146,13 +158,24 @@ export class DetailsComponent implements OnInit {
   playMedia(): void {
     const mediaType = this.route.snapshot.paramMap.get('media_type');
     const id = this.route.snapshot.paramMap.get('id');
-
-    if (mediaType === 'movie') {
-      this.router.navigate(['/frame', mediaType, id]);
-    } else if (mediaType === 'tv') {
-      // Default to the first season and episode
-      this.router.navigate(['/frame', mediaType, id, '1', '1']);
+    if (!mediaType || !id) {
+      return;
     }
+    this.router.navigate(this.watchProgress.getResumeRoute(mediaType, id));
+  }
+
+  toggleWatchlist(): void {
+    if (!this.mediaType || !this.mediaId) {
+      return;
+    }
+
+    this.inWatchlist = this.watchlist.toggle({
+      mediaType: this.mediaType,
+      id: this.mediaId,
+      title: this.item?.title || this.item?.name || undefined,
+      posterPath: this.item?.poster_path ?? null,
+      backdropPath: this.item?.backdrop_path ?? null,
+    });
   }
   async fetchTorrentInfo(): Promise<void> {
     this.loadingTorrents = true; // Start loading

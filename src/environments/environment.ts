@@ -4,5 +4,9 @@ export const environment = {
   streamServer: 'vEdge',
   /** VidFast `server=` query values shown in the custom Server picker */
   streamServers: ['vEdge', 'Beta', 'Bravo', 'vFast', 'Cobra', 'Charlie'],
+  openRouterApiKey: '',
+  openRouterModel: 'google/gemma-4-26b-a4b-it:free',
+  /** Watch party lobby API (Render). Empty = lobby disabled; PeerJS still works. */
+  partyApiUrl: 'http://localhost:8787',
 };
   

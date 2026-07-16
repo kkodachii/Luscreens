@@ -1,6 +1,10 @@
 import { Injectable, OnDestroy } from '@angular/core';
-import { BehaviorSubject, Subject } from 'rxjs';
+import { BehaviorSubject, Subject, firstValueFrom } from 'rxjs';
 import Peer, { DataConnection, PeerError } from 'peerjs';
+import {
+  PartyLobbyService,
+  PartyVisibility,
+} from './party-lobby.service';
 
 export type WatchPartyRole = 'host' | 'guest' | null;
 
@@ -57,6 +61,7 @@ export interface WatchPartyState {
   members: WatchPartyMember[];
   error: string | null;
   inviteUrl: string | null;
+  visibility: PartyVisibility;
 }
 
 const INITIAL_STATE: WatchPartyState = {
@@ -67,6 +72,7 @@ const INITIAL_STATE: WatchPartyState = {
   members: [],
   error: null,
   inviteUrl: null,
+  visibility: 'private',
 };
 
 @Injectable({
@@ -100,6 +106,10 @@ export class WatchPartyService implements OnDestroy {
   readonly chatMessages$ = this.chatSubject.asObservable();
 
   private static readonly MAX_CHAT_LENGTH = 500;
+  private lobbyVisibility: PartyVisibility = 'private';
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+
+  constructor(private partyLobby: PartyLobbyService) {}
 
   get snapshot(): WatchPartyState {
     return this.stateSubject.value;
@@ -141,16 +151,30 @@ export class WatchPartyService implements OnDestroy {
       if ((role === 'host' || role === 'guest') && roomCode) {
         this.persistSession(role, roomCode);
       }
+      if (role === 'host' && roomCode) {
+        this.syncLobbyRoom();
+      }
     }
   }
 
-  async createParty(displayName?: string, existingRoomCode?: string): Promise<string> {
+  async createParty(
+    displayName?: string,
+    existingRoomCode?: string,
+    visibility: PartyVisibility = 'private'
+  ): Promise<string> {
     if (displayName) {
       this.setDisplayName(displayName);
     }
+    this.lobbyVisibility = visibility === 'public' ? 'public' : 'private';
 
     await this.resetPeer();
-    this.patchState({ connecting: true, error: null, role: 'host', roomCode: null });
+    this.patchState({
+      connecting: true,
+      error: null,
+      role: 'host',
+      roomCode: null,
+      visibility: this.lobbyVisibility,
+    });
 
     const roomCode = existingRoomCode
       ? this.normalizeRoomCode(existingRoomCode)
@@ -176,6 +200,7 @@ export class WatchPartyService implements OnDestroy {
         roomCode,
         connected: true,
         connecting: false,
+        visibility: this.lobbyVisibility,
         members: [
           {
             peerId,
@@ -188,6 +213,8 @@ export class WatchPartyService implements OnDestroy {
       });
 
       this.persistSession('host', roomCode);
+      await this.registerLobbyRoom(roomCode);
+      this.startLobbyHeartbeat();
       return roomCode;
     } catch (error) {
       await this.resetPeer();
@@ -304,6 +331,11 @@ export class WatchPartyService implements OnDestroy {
   }
 
   leaveParty(): void {
+    this.stopLobbyHeartbeat();
+    const code = this.snapshot.roomCode;
+    if (this.isHost && code) {
+      void firstValueFrom(this.partyLobby.unregisterRoom(code));
+    }
     void this.resetPeer();
     this.applyingRemote = false;
     this.clearSession();
@@ -312,6 +344,12 @@ export class WatchPartyService implements OnDestroy {
 
   /** Tear down the peer without clearing the saved session (used on page unload). */
   disconnectKeepingSession(): void {
+    this.stopLobbyHeartbeat();
+    const code = this.snapshot.roomCode;
+    if (this.isHost && code) {
+      // Best-effort; page may be unloading
+      void firstValueFrom(this.partyLobby.unregisterRoom(code));
+    }
     void this.resetPeer();
     this.applyingRemote = false;
     // Keep role/room in UI state cleared, but sessionStorage stays for reload restore
@@ -760,6 +798,76 @@ export class WatchPartyService implements OnDestroy {
     }
 
     this.patchState({ members });
+    if (this.isHost && this.snapshot.roomCode) {
+      this.syncLobbyRoom();
+    }
+  }
+
+  private async registerLobbyRoom(roomCode: string): Promise<void> {
+    if (!this.partyLobby.enabled) {
+      return;
+    }
+    const media = this.mediaState;
+    await firstValueFrom(
+      this.partyLobby.registerRoom({
+        code: roomCode,
+        visibility: this.lobbyVisibility,
+        hostName: this.displayName || 'Host',
+        title: media?.title,
+        mediaType: media?.mediaType,
+        mediaId: media?.id != null ? String(media.id) : undefined,
+        season: media?.season,
+        episode: media?.episode,
+        memberCount: Math.max(1, this.snapshot.members.length),
+      })
+    );
+  }
+
+  private syncLobbyRoom(): void {
+    const code = this.snapshot.roomCode;
+    if (!this.isHost || !code || !this.partyLobby.enabled) {
+      return;
+    }
+    const media = this.mediaState;
+    void firstValueFrom(
+      this.partyLobby.updateRoom(code, {
+        visibility: this.lobbyVisibility,
+        hostName: this.displayName || 'Host',
+        title: media?.title ?? null,
+        mediaType: media?.mediaType ?? null,
+        mediaId: media?.id != null ? String(media.id) : null,
+        season: media?.season ?? null,
+        episode: media?.episode ?? null,
+        memberCount: Math.max(1, this.snapshot.members.length),
+      })
+    );
+  }
+
+  private startLobbyHeartbeat(): void {
+    this.stopLobbyHeartbeat();
+    if (!this.partyLobby.enabled || !this.isHost) {
+      return;
+    }
+    this.heartbeatTimer = setInterval(() => {
+      const code = this.snapshot.roomCode;
+      if (!code || !this.isHost) {
+        return;
+      }
+      void firstValueFrom(
+        this.partyLobby.heartbeat(
+          code,
+          Math.max(1, this.snapshot.members.length),
+          this.mediaState?.title
+        )
+      );
+    }, 45_000);
+  }
+
+  private stopLobbyHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
   }
 
   private broadcast(command: WatchPartyCommand): void {

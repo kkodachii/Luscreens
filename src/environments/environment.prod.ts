@@ -3,4 +3,9 @@ export const environment = {
   tmdbApiKey: 'c646ab9e5209d5c5c8d42ab3f653b61a',
   streamServer: 'vEdge',
   streamServers: ['vEdge', 'Beta', 'Bravo', 'vFast', 'Cobra', 'Charlie'],
-};  
+  openRouterApiKey: '',
+  openRouterModel: 'google/gemma-4-26b-a4b-it:free',
+  /** Set to your Render party-api URL after deploy, e.g. https://luscreens-party-api.onrender.com */
+  partyApiUrl: '',
+};
+  

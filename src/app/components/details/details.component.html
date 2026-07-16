@@ -109,7 +109,12 @@
           
               <!-- Add to Watchlist -->
               <button
-                class="px-4 py-2 rounded-full border-2 border-white text-white flex items-center justify-center space-x-2 transition-transform hover:scale-105"
+                type="button"
+                (click)="toggleWatchlist()"
+                class="px-4 py-2 rounded-full border-2 flex items-center justify-center space-x-2 transition-transform hover:scale-105"
+                [ngClass]="inWatchlist
+                  ? 'border-red-500 bg-red-600/20 text-red-300'
+                  : 'border-white text-white'"
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
@@ -122,10 +127,11 @@
                   stroke-linecap="round"
                   stroke-linejoin="round"
                   class="mr-1"
+                  [attr.fill]="inWatchlist ? 'currentColor' : 'none'"
                 >
                   <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path>
                 </svg>
-                <span class="text-sm">Add to Watchlist</span>
+                <span class="text-sm">{{ inWatchlist ? 'In Watchlist' : 'Add to Watchlist' }}</span>
               </button>
           
               <!-- Download Button -->

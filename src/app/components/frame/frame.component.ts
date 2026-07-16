@@ -4,16 +4,21 @@ import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { NgForOf, NgIf, CommonModule } from '@angular/common';
 import { TmdbService } from '../../services/tmdb.service';
 import { FormsModule } from '@angular/forms';
-import { HttpClient, HttpHeaders,HttpClientModule } from '@angular/common/http';
 import { Subscription } from 'rxjs';
 import { inject } from '@vercel/analytics';
 import { environment } from '../../../environments/environment';
+import { WatchProgressService } from '../../services/watch-progress.service';
 import {
   WatchPartyChatMessage,
   WatchPartyCommand,
   WatchPartyService,
   WatchPartyState,
 } from '../../services/watch-party.service';
+import {
+  PartyLobbyService,
+  PartyVisibility,
+  PublicPartyRoom,
+} from '../../services/party-lobby.service';
 
 /** Chromium Document Picture-in-Picture (not on Window by default in TS libs). */
 interface DocumentPictureInPicture {
@@ -35,28 +40,6 @@ interface PlayerEventData {
   volume: number;
 }
 
-interface VidFastProgressEntry {
-  id: number;
-  type: 'movie' | 'tv';
-  title?: string;
-  poster_path?: string;
-  backdrop_path?: string;
-  progress?: { watched: number; duration: number };
-  last_season_watched?: number;
-  last_episode_watched?: number;
-  show_progress?: {
-    [key: string]: {
-      season: number;
-      episode: number;
-      progress: { watched: number; duration: number };
-      last_updated?: number;
-    };
-  };
-  last_updated?: number;
-}
-
-type VidFastProgressMap = Record<string, VidFastProgressEntry>;
-
 @Component({
   selector: 'app-frame',
   templateUrl: './frame.component.html',
@@ -65,9 +48,6 @@ type VidFastProgressMap = Record<string, VidFastProgressEntry>;
   standalone: true,
 })
 export class FrameComponent implements OnInit, OnDestroy {
-
-  private GEMINI_API_KEY = 'AIzaSyA9C9R2DDRprhiaigMjG0LuUJKrat8zZhk';
-  private GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 
   private readonly vidfastOrigins = [
     'https://vidfast.pro',
@@ -84,18 +64,6 @@ export class FrameComponent implements OnInit, OnDestroy {
   private readonly onPlayerMessage = (event: MessageEvent): void => {
     this.handleVidfastMessage(event);
   };
-
-  activeSection: string = 'plot'; 
-  plot: string = ''; 
-  summary: string = ''; 
-  endingExplanation: string = ''; 
-  
-  
-  cachedContent: {
-    [season: number]: {
-      [episode: number]: { plot: string; summary: string; ending: string };
-    };
-  } = {};
 
   embedUrl: SafeResourceUrl | null = null;
   mediaType: string = '';
@@ -115,11 +83,6 @@ export class FrameComponent implements OnInit, OnDestroy {
   releaseDate: string = '';
   details: string = '';
   isLoading: boolean = true;
-  isSeasonEpisodeLoading: boolean = false;
-  userQuestion: string = ''; // Stores the user's question
-  aiResponse: string = ''; // Stores the AI-generated response
-  isAIResponding: boolean = false; // Tracks whether the AI is processing a request
-  chatHistory: { sender: 'user' | 'ai'; text: string }[] = [];
 
   // Custom player state (driven by VidFast PLAYER_EVENT)
   isPlaying = false;
@@ -173,12 +136,16 @@ export class FrameComponent implements OnInit, OnDestroy {
     members: [],
     error: null,
     inviteUrl: null,
+    visibility: 'private',
   };
   showWatchPartyPanel = false;
   showJoinInviteModal = false;
-  watchPartyMode: 'create' | 'join' = 'create';
+  watchPartyMode: 'create' | 'join' | 'browse' = 'create';
   watchPartyName = '';
   joinRoomCode = '';
+  partyVisibility: PartyVisibility = 'private';
+  publicPartyRooms: PublicPartyRoom[] = [];
+  publicRoomsLoading = false;
   watchPartyCopied = false;
   partyChatMessages: WatchPartyChatMessage[] = [];
   partyChatDraft = '';
@@ -189,6 +156,8 @@ export class FrameComponent implements OnInit, OnDestroy {
   partyChatUnread = 0;
   private watchPartySubs = new Subscription();
   private ignorePartyBroadcastUntil = 0;
+  private lastLocalProgressSaveAt = 0;
+  private progressTimer: ReturnType<typeof setInterval> | null = null;
 
   private readonly onFullscreenChange = (): void => {
     this.isFullscreen = !!document.fullscreenElement;
@@ -211,8 +180,9 @@ export class FrameComponent implements OnInit, OnDestroy {
     private router: Router,
     private sanitizer: DomSanitizer,
     private tmdbService: TmdbService,
-    private http: HttpClient,
     private watchPartyService: WatchPartyService,
+    public partyLobby: PartyLobbyService,
+    private watchProgress: WatchProgressService,
     private cdr: ChangeDetectorRef,
   ) {}
 
@@ -222,7 +192,9 @@ export class FrameComponent implements OnInit, OnDestroy {
 
     window.addEventListener('message', this.onPlayerMessage);
     document.addEventListener('fullscreenchange', this.onFullscreenChange);
+    window.addEventListener('beforeunload', this.onBeforeUnload);
     this.setupWatchParty();
+    this.startProgressTimer();
 
     this.mediaType = this.route.snapshot.paramMap.get('media_type') || '';
     this.id = this.route.snapshot.paramMap.get('id') || '';
@@ -248,154 +220,40 @@ export class FrameComponent implements OnInit, OnDestroy {
     } else {
       console.error('Missing required route parameters.');
     }
-    this.fetchContent('plot');
 
     void this.tryRestoreWatchParty();
   }
 
   ngOnDestroy(): void {
+    this.persistLocalProgress(true);
+    this.stopProgressTimer();
     window.removeEventListener('message', this.onPlayerMessage);
     document.removeEventListener('fullscreenchange', this.onFullscreenChange);
+    window.removeEventListener('beforeunload', this.onBeforeUnload);
     this.closePictureInPicture();
     this.watchPartySubs.unsubscribe();
     // Keep session so a full page reload can rejoin the same party
     this.watchPartyService.disconnectKeepingSession();
   }
 
-  
-  setActiveSection(section: string): void {
-    this.activeSection = section;
+  private readonly onBeforeUnload = (): void => {
+    this.persistLocalProgress(true);
+  };
 
-    // Fetch content only if it hasn't been cached yet
-    if (
-      (section === 'plot' && !this.plot) ||
-      (section === 'summary' && !this.summary) ||
-      (section === 'ending' && !this.endingExplanation)
-    ) {
-      this.fetchContent(section);
-    }
-
-    // Clear chat history when switching to "Ask AI"
-    if (section === 'ask') {
-      this.chatHistory = [{ sender: 'ai', text: 'Note: Only 2023 movies/series below can answer.' }];
-    }
-  }
-  fetchContent(section: string): void {
-    if (this.isLoading) {
-      console.warn('Still loading title... Please wait.');
-      return;
-    }
-
-    const title = this.title || 'Unknown Title'; // Use the fetched title or a fallback
-    let prompt = '';
-
-    // Check if content is already cached for the current season/episode
-    if (this.mediaType === 'tv') {
-      if (
-        this.cachedContent[this.selectedSeason] &&
-        this.cachedContent[this.selectedSeason][this.selectedEpisode]
-      ) {
-        const cached = this.cachedContent[this.selectedSeason][this.selectedEpisode];
-        if (section === 'plot' && cached.plot) {
-          this.plot = cached.plot;
-          return;
-        } else if (section === 'summary' && cached.summary) {
-          this.summary = cached.summary;
-          return;
-        } else if (section === 'ending' && cached.ending) {
-          this.endingExplanation = cached.ending;
-          return;
-        }
+  private startProgressTimer(): void {
+    this.stopProgressTimer();
+    this.progressTimer = setInterval(() => {
+      if (this.isPlaying || this.currentTime > 5) {
+        this.persistLocalProgress(false);
       }
+    }, 8000);
+  }
+
+  private stopProgressTimer(): void {
+    if (this.progressTimer) {
+      clearInterval(this.progressTimer);
+      this.progressTimer = null;
     }
-
-    // Define prompts for each section based on the knowledge base
-    switch (section) {
-      case 'plot':
-        if (this.mediaType === 'tv') {
-          prompt = `Provide a detailed plot summary for Season ${this.selectedSeason} of the TV show "${title}". Include information about its storyline, characters, and key events. 2-3 paragraphs only.`;
-        } else {
-          prompt = `Provide a detailed plot summary for the movie "${title}". Include information about its storyline, characters, and key events. 2-3 paragraphs only.`;
-        }
-        break;
-
-      case 'summary':
-        if (this.mediaType === 'tv') {
-          prompt = `Provide a concise summary of Episode ${this.selectedEpisode}, Season ${this.selectedSeason} of the TV show "${title}". Highlight its main themes, genre, and overall narrative. 2-3 paragraphs only.`;
-        } else {
-          prompt = `Provide a concise summary of the movie "${title}". Highlight its main themes, genre, and overall narrative. 2-3 paragraphs only.`;
-        }
-        break;
-
-      case 'ending':
-        if (this.mediaType === 'tv') {
-          prompt = `Explain the ending of Episode ${this.selectedEpisode}, Season ${this.selectedSeason} of the TV show "${title}" in detail. Discuss the resolution, character arcs, and any significant plot twists. 2-3 paragraphs only.`;
-        } else {
-          prompt = `Explain the ending of the movie "${title}" in detail. Discuss the resolution, character arcs, and any significant plot twists. 2-3 paragraphs only.`;
-        }
-        break;
-
-      default:
-        console.error('Invalid section:', section);
-        return;
-    }
-
-    // Call the Gemini API
-    this.http
-      .post(
-        `${this.GEMINI_API_URL}?key=${this.GEMINI_API_KEY}`,
-        {
-          contents: [{ parts: [{ text: prompt }] }]
-        }
-      )
-      .subscribe(
-        (response: any) => {
-          // Extract the generated text from the response
-          const generatedText = response?.candidates?.[0]?.content?.parts?.[0]?.text || 'No content available.';
-          // Cache the content based on the section
-          if (this.mediaType === 'tv') {
-            if (!this.cachedContent[this.selectedSeason]) {
-              this.cachedContent[this.selectedSeason] = {};
-            }
-            if (!this.cachedContent[this.selectedSeason][this.selectedEpisode]) {
-              this.cachedContent[this.selectedSeason][this.selectedEpisode] = {
-                plot: '',
-                summary: '',
-                ending: '',
-              };
-            }
-            if (section === 'plot') {
-              this.plot = generatedText;
-              this.cachedContent[this.selectedSeason][this.selectedEpisode].plot = generatedText;
-            } else if (section === 'summary') {
-              this.summary = generatedText;
-              this.cachedContent[this.selectedSeason][this.selectedEpisode].summary = generatedText;
-            } else if (section === 'ending') {
-              this.endingExplanation = generatedText;
-              this.cachedContent[this.selectedSeason][this.selectedEpisode].ending = generatedText;
-            }
-          } else {
-            if (section === 'plot') {
-              this.plot = generatedText;
-            } else if (section === 'summary') {
-              this.summary = generatedText;
-            } else if (section === 'ending') {
-              this.endingExplanation = generatedText;
-            }
-          }
-        },
-        (error) => {
-          console.error('Error fetching content from Gemini API:', error);
-          // Fallback content in case of an error
-          if (section === 'plot') {
-            this.plot = 'Failed to load plot.';
-          } else if (section === 'summary') {
-            this.summary = 'Failed to load summary.';
-          } else if (section === 'ending') {
-            this.endingExplanation = 'Failed to load ending explanation.';
-          }
-        }
-      );
   }
 
   fetchLogo(mediaType: string, id: number): void {
@@ -441,9 +299,13 @@ export class FrameComponent implements OnInit, OnDestroy {
 
         this.embedUrl = this.buildEmbedUrl(`movie/${this.id}`);
         this.syncWatchPartyMedia();
-
-        // Fetch initial content after loading is complete
-        this.fetchContent('plot');
+        this.watchProgress.enrichMetadata({
+          mediaType: 'movie',
+          id: this.id,
+          title: this.title,
+          posterPath: data.poster_path ?? null,
+          backdropPath: data.backdrop_path ?? null,
+        });
       },
       (error) => {
         console.error('Error fetching movie details:', error);
@@ -475,8 +337,13 @@ export class FrameComponent implements OnInit, OnDestroy {
           console.error('No seasons found for this TV show.');
         }
 
-        // Fetch initial content after loading is complete
-        this.fetchContent('plot');
+        this.watchProgress.enrichMetadata({
+          mediaType: 'tv',
+          id: this.id,
+          title: this.title,
+          posterPath: data.poster_path ?? null,
+          backdropPath: data.backdrop_path ?? null,
+        });
       },
       (error) => {
         console.error('Error fetching TV show details:', error);
@@ -509,25 +376,13 @@ export class FrameComponent implements OnInit, OnDestroy {
   }
   
   selectSeason(seasonNumber: number): void {
-    this.isSeasonEpisodeLoading = true; // Start loading
     this.selectedSeason = seasonNumber;
-  
-    // Use .add() to execute logic after the observable completes
-    this.fetchEpisodes(this.selectedSeason).add(() => {
-      this.isSeasonEpisodeLoading = false; // Stop loading after episodes are fetched
-      this.fetchContent(this.activeSection); // Refetch content for the new season
-    });
+    this.fetchEpisodes(this.selectedSeason);
   }
   
   selectEpisode(episodeNumber: number): void {
-    this.isSeasonEpisodeLoading = true; // Start loading
     this.selectedEpisode = episodeNumber;
     this.updateEmbedUrl();
-  
-    setTimeout(() => {
-      this.isSeasonEpisodeLoading = false; // Stop loading after a short delay
-      this.fetchContent(this.activeSection); // Refetch content for the new episode
-    }, 500); // Simulate a slight delay for UX purposes
   }
 
   updateEmbedUrl(): void {
@@ -647,11 +502,20 @@ export class FrameComponent implements OnInit, OnDestroy {
   }
 
   private handleVidfastMessage(event: MessageEvent): void {
-    if (!this.vidfastOrigins.includes(event.origin) || !event.data) {
+    if (!event.data) {
+      return;
+    }
+    // Allow known VidFast hosts; also accept if origin host contains "vidfast"
+    const originOk =
+      this.vidfastOrigins.includes(event.origin) ||
+      /vidfast\./i.test(event.origin || '');
+    if (!originOk) {
       return;
     }
 
-    const { type, data } = event.data;
+    const payload = event.data;
+    const type = payload?.type || payload?.eventType;
+    const data = payload?.data ?? payload?.payload ?? payload;
 
     if (type === 'PLAYER_EVENT' && data) {
       this.onPlayerEvent(data as PlayerEventData);
@@ -659,87 +523,102 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
 
     if (type === 'MEDIA_DATA' && data) {
-      this.saveVidFastProgress(data as VidFastProgressMap);
+      this.watchProgress.saveMap(data);
+      this.persistLocalProgress(true);
+      return;
+    }
+
+    // Some embeds send player fields without wrapping type
+    if (
+      data &&
+      typeof data === 'object' &&
+      ('currentTime' in data || 'event' in data) &&
+      ((data as PlayerEventData).event || (data as PlayerEventData).playing !== undefined)
+    ) {
+      this.onPlayerEvent(data as PlayerEventData);
     }
   }
 
   private onPlayerEvent(data: PlayerEventData): void {
     if (!this.isSeeking || data.event === 'seeked') {
-      this.currentTime = data.currentTime ?? this.currentTime;
+      this.currentTime = Number(data.currentTime ?? this.currentTime) || this.currentTime;
     }
 
-    this.duration = data.duration ?? this.duration;
-    this.isPlaying = data.playing ?? this.isPlaying;
+    this.duration = Number(data.duration ?? this.duration) || this.duration;
+    if (typeof data.playing === 'boolean') {
+      this.isPlaying = data.playing;
+    }
 
     switch (data.event) {
       case 'play':
         this.isPlaying = true;
         this.broadcastWatchPartyEvent('play', data.currentTime);
+        this.persistLocalProgress(true);
         break;
       case 'pause':
         this.isPlaying = false;
         this.broadcastWatchPartyEvent('pause', data.currentTime);
+        this.persistLocalProgress(true);
         break;
       case 'ended':
         this.isPlaying = false;
+        this.persistLocalProgress(true);
         break;
       case 'seeked':
         this.isSeeking = false;
         this.broadcastWatchPartyEvent('seeked', data.currentTime);
+        this.persistLocalProgress(true);
         break;
       case 'timeupdate':
+        this.persistLocalProgress(false);
+        break;
       case 'playerstatus':
+        this.persistLocalProgress(false);
+        break;
+      default:
+        // Still persist when we get timed updates without a named event
+        if (typeof data.currentTime === 'number' && data.currentTime > 0) {
+          this.persistLocalProgress(false);
+        }
         break;
     }
   }
 
-  private saveVidFastProgress(progressMap: VidFastProgressMap): void {
-    try {
-      localStorage.setItem('vidFastProgress', JSON.stringify(progressMap));
-    } catch (error) {
-      console.error('Failed to save VidFast progress:', error);
+  private persistLocalProgress(force = false): void {
+    const now = Date.now();
+    if (!force && now - this.lastLocalProgressSaveAt < 3000) {
+      return;
     }
-  }
-
-  private getVidFastProgress(): VidFastProgressMap {
-    try {
-      const raw = localStorage.getItem('vidFastProgress');
-      return raw ? (JSON.parse(raw) as VidFastProgressMap) : {};
-    } catch {
-      return {};
+    if (!this.id) {
+      return;
     }
-  }
 
-  private getProgressKey(): string {
-    const prefix = this.mediaType === 'tv' ? 't' : 'm';
-    return `${prefix}${this.id}`;
+    // Prefer live player time; fall back to last saved resume point so we don't wipe history
+    const watched = this.currentTime > 0 ? this.currentTime : this.getSavedStartAt();
+    if (watched < 1 && !force) {
+      return;
+    }
+
+    this.lastLocalProgressSaveAt = now;
+    this.watchProgress.upsertPlayback({
+      mediaType: this.mediaType,
+      id: this.id,
+      season: this.selectedSeason,
+      episode: this.selectedEpisode,
+      watched,
+      duration: this.duration,
+      title: this.title,
+      backdropPath: this.backdropPath,
+    });
   }
 
   private getSavedStartAt(): number {
-    const entry = this.getVidFastProgress()[this.getProgressKey()];
-    if (!entry) {
-      return 0;
-    }
-
-    let watched = 0;
-    let total = 0;
-
-    if (this.mediaType === 'tv') {
-      const episodeKey = `s${this.selectedSeason}e${this.selectedEpisode}`;
-      const episodeProgress = entry.show_progress?.[episodeKey]?.progress;
-      watched = episodeProgress?.watched ?? 0;
-      total = episodeProgress?.duration ?? 0;
-    } else {
-      watched = entry.progress?.watched ?? 0;
-      total = entry.progress?.duration ?? 0;
-    }
-
-    // Don't resume near the very start or end
-    if (watched < 30 || (total > 0 && watched / total > 0.95)) {
-      return 0;
-    }
-
-    return watched;
+    return this.watchProgress.getSavedStartAt(
+      this.mediaType,
+      this.id,
+      this.selectedSeason,
+      this.selectedEpisode
+    );
   }
 
   private postPlayerCommand(command: Record<string, unknown>): void {
@@ -1028,7 +907,11 @@ export class FrameComponent implements OnInit, OnDestroy {
   async startWatchParty(): Promise<void> {
     try {
       this.syncWatchPartyMedia();
-      await this.watchPartyService.createParty(this.watchPartyName || 'Host');
+      await this.watchPartyService.createParty(
+        this.watchPartyName || 'Host',
+        undefined,
+        this.partyVisibility
+      );
       this.showWatchPartyPanel = true;
     } catch (error) {
       console.error('Failed to start watch party:', error);
@@ -1046,6 +929,34 @@ export class FrameComponent implements OnInit, OnDestroy {
       this.syncWatchPartyMedia();
     } catch (error) {
       console.error('Failed to join watch party:', error);
+    }
+  }
+
+  async joinPublicRoom(room: PublicPartyRoom): Promise<void> {
+    this.joinRoomCode = room.code;
+    this.watchPartyMode = 'join';
+    await this.joinWatchParty();
+  }
+
+  refreshPublicRooms(): void {
+    if (!this.partyLobby.enabled) {
+      this.publicPartyRooms = [];
+      return;
+    }
+    this.publicRoomsLoading = true;
+    this.watchPartySubs.add(
+      this.partyLobby.listPublicRooms().subscribe((rooms) => {
+        this.publicPartyRooms = rooms;
+        this.publicRoomsLoading = false;
+        this.cdr.markForCheck();
+      })
+    );
+  }
+
+  setWatchPartyMode(mode: 'create' | 'join' | 'browse'): void {
+    this.watchPartyMode = mode;
+    if (mode === 'browse') {
+      this.refreshPublicRooms();
     }
   }
 
@@ -1281,127 +1192,5 @@ export class FrameComponent implements OnInit, OnDestroy {
   scrollRight(type: string): void {
     const container = type === 'seasons' ? this.seasonScroll.nativeElement : this.episodeScroll.nativeElement;
     container.scrollBy({ left: 200, behavior: 'smooth' }); // Scroll right by 200px
-  }
-
-  askAI(): void {
-    if (!this.userQuestion.trim()) {
-      console.warn('User question is empty.');
-      return;
-    }
-
-    this.isAIResponding = true; // Start loading
-    const title = this.title || 'Unknown Title'; // Use the fetched title or a fallback
-    const prompt = `
-  You are an expert assistant answering questions about the ${this.mediaType} "${title}".
-  - Answer the following question: "${this.userQuestion}"
-  - Be formal and concise in your response.
-  - If the question is not related to this ${this.mediaType}, respond with: "I'd love to help, but I'm only answering movie/series-related questions!"
-`;
-
-    // Call the Gemini API
-    this.http
-      .post(
-        `${this.GEMINI_API_URL}?key=${this.GEMINI_API_KEY}`,
-        {
-          contents: [{ parts: [{ text: prompt }] }]
-        }
-      )
-      .subscribe(
-        (response: any) => {
-          // Extract the generated text from the response
-          this.aiResponse = response?.candidates?.[0]?.content?.parts?.[0]?.text || 'No response available.';
-          this.chatHistory.push({ sender: 'ai', text: this.aiResponse }); // Add AI's response to chat history
-          this.scrollToBottom(); // Scroll to the bottom after adding the AI response
-          this.isAIResponding = false; // Stop loading
-        },
-        (error) => {
-          console.error('Error fetching AI response:', error);
-          this.chatHistory.push({ sender: 'ai', text: 'Failed to get AI response.' }); // Add error message to chat history
-          this.scrollToBottom(); // Scroll to the bottom after adding the error message
-          this.isAIResponding = false; // Stop loading
-        }
-      );
-  }
-
-  sendMessage(): void {
-    if (!this.userQuestion.trim()) {
-      console.warn('User question is empty.');
-      return;
-    }
-  
-    // Add user's message to chat history
-    this.chatHistory.push({ sender: 'user', text: this.userQuestion });
-  
-    // Call the AI and show loading spinner
-    this.isAIResponding = true;
-    const title = this.title || 'Unknown Title'; // Use the fetched title or a fallback
-  
-    // Refined prompt for better clarity
-    const prompt = `
-      You are an expert assistant answering questions about the ${this.mediaType} "${title}".
-      - Answer the following question: "${this.userQuestion}"
-      - Be formal and concise in your response.
-      - If the question is not related to this ${this.mediaType}, respond with: "Sorry, but your question doesn't seem related to this movies or series!"
-    `;
-  
-    // Call the Gemini API
-    this.http
-      .post(
-        `${this.GEMINI_API_URL}?key=${this.GEMINI_API_KEY}`,
-        {
-          contents: [{ parts: [{ text: prompt }] }]
-        }
-      )
-      .subscribe(
-        (response: any) => {
-          // Extract the generated text from the response
-          let aiResponse = response?.candidates?.[0]?.content?.parts?.[0]?.text || 'No response available.';
-  
-          // Post-process the response to ensure relevance
-          if (!this.isResponseRelevant(aiResponse)) {
-            aiResponse = "Sorry, but your question doesn't seem related to this movies or series!";
-          }
-  
-          // Add AI's response to chat history
-          this.chatHistory.push({ sender: 'ai', text: aiResponse });
-          this.scrollToBottom(); // Scroll to the bottom after adding the AI response
-          this.isAIResponding = false; // Stop loading
-        },
-        (error) => {
-          console.error('Error fetching AI response:', error);
-          this.chatHistory.push({ sender: 'ai', text: 'Failed to get AI response.' }); // Add error message to chat history
-          this.scrollToBottom(); // Scroll to the bottom after adding the error message
-          this.isAIResponding = false; // Stop loading
-        }
-      );
-  
-    // Clear the input field
-    this.userQuestion = '';
-  }
-  
-  // Helper function to check if the response is relevant
-  isResponseRelevant(response: string): boolean {
-    const fallbackMessage = "Sorry, but your question doesn't seem related to this movies or series!";
-    const irrelevantKeywords = ['not related', 'unrelated', 'cannot answer'];
-  
-    // Check if the response contains the fallback message or irrelevant keywords
-    if (response.includes(fallbackMessage)) {
-      return false;
-    }
-  
-    // Check for irrelevant keywords
-    for (const keyword of irrelevantKeywords) {
-      if (response.toLowerCase().includes(keyword)) {
-        return false;
-      }
-    }
-  
-    return true;
-  }
-  scrollToBottom(): void {
-    const chatContainer = document.querySelector('.chat-container');
-    if (chatContainer) {
-      chatContainer.scrollTop = chatContainer.scrollHeight;
-    }
   }
 }

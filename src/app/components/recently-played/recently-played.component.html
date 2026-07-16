@@ -1,0 +1,44 @@
+<section *ngIf="items.length > 0" class="py-6">
+  <div class="container mx-auto px-4">
+    <div class="flex items-end justify-between gap-3 mb-4">
+      <h2 class="text-xl sm:text-2xl font-bold text-white">Recently Played</h2>
+      <a
+        routerLink="/history"
+        class="text-sm text-gray-400 hover:text-white transition"
+      >
+        View all
+      </a>
+    </div>
+
+    <div class="flex space-x-4 overflow-x-auto scrollbar-hide pb-2">
+      <a
+        *ngFor="let item of items"
+        [routerLink]="item.frameLink"
+        class="min-w-[150px] max-w-[150px] group relative overflow-hidden rounded-lg shadow-md block"
+      >
+        <img
+          [src]="item.posterPath
+            ? 'https://image.tmdb.org/t/p/w500' + item.posterPath
+            : (item.backdropPath
+              ? 'https://image.tmdb.org/t/p/w500' + item.backdropPath
+              : 'assets/fallback.jpg')"
+          [alt]="item.title"
+          class="w-full h-64 object-cover group-hover:scale-110 transition-transform duration-300"
+          loading="lazy"
+        />
+
+        <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/80 to-transparent p-3 pt-10">
+          <h3 class="text-sm font-semibold text-white line-clamp-2">{{ item.title }}</h3>
+          <p class="text-[11px] text-gray-300 mt-1">
+            <span *ngIf="item.mediaType === 'tv'">S{{ item.season }}E{{ item.episode }} · </span>
+            {{ formatTime(item.watched) }}
+            <span *ngIf="item.duration"> / {{ formatTime(item.duration) }}</span>
+          </p>
+          <div class="mt-2 h-1 rounded-full bg-white/20 overflow-hidden">
+            <div class="h-full bg-red-600" [style.width.%]="item.percent"></div>
+          </div>
+        </div>
+      </a>
+    </div>
+  </div>
+</section>
