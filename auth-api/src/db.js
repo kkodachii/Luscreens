@@ -59,6 +59,9 @@ async function connectMongo(uri) {
   client = new MongoClient(normalized, {
     serverSelectionTimeoutMS: 20000,
     connectTimeoutMS: 20000,
+    // Render / some hosts break on IPv6 — force IPv4
+    family: 4,
+    autoSelectFamily: false,
   });
 
   try {
