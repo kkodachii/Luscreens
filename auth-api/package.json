@@ -1,0 +1,21 @@
+{
+  "name": "luscreens-auth-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Email/password auth API for Luscreens (JWT)",
+  "main": "src/index.js",
+  "scripts": {
+    "build": "echo \"auth-api: no compile step\"",
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2"
+  }
+}

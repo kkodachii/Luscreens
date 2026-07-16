@@ -5,5 +5,7 @@ export const environment = {
   streamServers: ['vEdge', 'Beta', 'Bravo', 'vFast', 'Cobra', 'Charlie'],
   openRouterApiKey: '',
   openRouterModel: 'google/gemma-4-26b-a4b-it:free',
+  /** Auth API on Render (Root Directory: auth-api) */
+  authApiUrl: 'https://luscreens.onrender.com',
 };
   

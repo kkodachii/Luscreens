@@ -286,6 +286,29 @@
           <path d="M21 21l-6 -6" />
         </svg>
       </button>
+
+      <ng-container *ngIf="isLoggedIn(); else loginBtn">
+        <div class="hidden sm:flex items-center gap-2">
+          <span class="text-sm text-gray-300 max-w-[8rem] truncate">
+            {{ user()?.name || user()?.email }}
+          </span>
+          <button
+            type="button"
+            (click)="logout()"
+            class="px-3 py-1.5 text-sm font-medium rounded-md border border-white/20 text-white hover:bg-white/10 transition"
+          >
+            Log out
+          </button>
+        </div>
+      </ng-container>
+      <ng-template #loginBtn>
+        <a
+          routerLink="/login"
+          class="px-3 py-1.5 text-sm font-medium rounded-md bg-red-600 hover:bg-red-500 text-white transition"
+        >
+          Login
+        </a>
+      </ng-template>
     </div>
   </div>
 
@@ -342,7 +365,7 @@
     </a>
     <a
       routerLink="/watchlist"
-      class="block px-4 py-3 text-white hover:bg-red-600 transition duration-300"
+      class="block px-4 py-3 text-white hover:bg-red-600 transition duration-300 border-b border-gray-700"
     >
       <svg
         xmlns="http://www.w3.org/2000/svg"
@@ -362,5 +385,20 @@
       </svg>
       <span class="text-sm font-medium">Watchlist</span>
     </a>
+    <a
+      *ngIf="!isLoggedIn()"
+      routerLink="/login"
+      class="block px-4 py-3 text-white bg-red-600 hover:bg-red-500 transition duration-300"
+    >
+      <span class="text-sm font-medium">Login</span>
+    </a>
+    <button
+      *ngIf="isLoggedIn()"
+      type="button"
+      (click)="logout()"
+      class="w-full text-left px-4 py-3 text-white hover:bg-red-600 transition duration-300"
+    >
+      <span class="text-sm font-medium">Log out ({{ user()?.name || 'Account' }})</span>
+    </button>
   </div>
 </header>
