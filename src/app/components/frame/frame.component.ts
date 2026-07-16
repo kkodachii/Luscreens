@@ -8,6 +8,7 @@ import { Subscription } from 'rxjs';
 import { inject } from '@vercel/analytics';
 import { environment } from '../../../environments/environment';
 import { WatchProgressService } from '../../services/watch-progress.service';
+import { AuthService } from '../../services/auth.service';
 import {
   WatchPartyChatMessage,
   WatchPartyCommand,
@@ -86,8 +87,10 @@ export class FrameComponent implements OnInit, OnDestroy {
   duration = 0;
   isSeeking = false;
   isFullscreen = false;
-  /** In fullscreen, buttons stay hidden until the user expands controls. */
-  showFullscreenControls = false;
+  /** Overlay controls — visible on tap; auto-hide after 4s while playing. */
+  showPlayerControls = true;
+  private controlsHideTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly CONTROLS_HIDE_MS = 4000;
   isPictureInPicture = false;
   readonly supportsDocumentPip =
     typeof window !== 'undefined' && 'documentPictureInPicture' in window;
@@ -110,17 +113,33 @@ export class FrameComponent implements OnInit, OnDestroy {
   ];
   selectedSubtitle: string | null = null;
   selectedServer: string = environment.streamServer || 'vEdge';
+  /** When true, omit `server=` so VidFast can pick a working source itself. */
+  useAutoServer = false;
   showCcMenu = false;
   showServerMenu = false;
   isPlayerReloading = false;
   playerReloadLabel = 'Loading…';
 
+  /** Auto-failover: try next server if current one never starts playback. */
+  private static readonly SERVER_FAILOVER_MS = 12000;
+  private static readonly AUTO_SERVER_ID = 'auto';
+  private serverFailoverTimer: ReturnType<typeof setTimeout> | null = null;
+  private serversTriedThisTitle = new Set<string>();
+  private serverPlaybackOk = false;
+
   get serverOptions(): { id: string; label: string }[] {
     const fromEnv = (environment as { streamServers?: string[] }).streamServers ?? [];
     const preferred = environment.streamServer || 'vEdge';
     const names = [preferred, ...fromEnv].filter(Boolean);
-    // Keep vEdge (preferred) first, then the rest unique
-    return [...new Set(names)].map((id) => ({ id, label: id }));
+    // Auto first (VidFast picks), then preferred, then the rest
+    return [
+      { id: FrameComponent.AUTO_SERVER_ID, label: 'Auto' },
+      ...[...new Set(names)].map((id) => ({ id, label: id })),
+    ];
+  }
+
+  get activeServerLabel(): string {
+    return this.useAutoServer ? 'Auto' : this.selectedServer || 'Auto';
   }
 
   // Watch party
@@ -153,11 +172,7 @@ export class FrameComponent implements OnInit, OnDestroy {
 
   private readonly onFullscreenChange = (): void => {
     this.isFullscreen = !!document.fullscreenElement;
-    // Entering fullscreen → minimal time bar only
-    this.showFullscreenControls = !this.isFullscreen;
-    if (!this.isFullscreen) {
-      this.showFloatingPartyChat = false;
-    }
+    this.revealPlayerControls();
   };
   
 
@@ -174,8 +189,21 @@ export class FrameComponent implements OnInit, OnDestroy {
     private tmdbService: TmdbService,
     private watchPartyService: WatchPartyService,
     private watchProgress: WatchProgressService,
+    private authService: AuthService,
     private cdr: ChangeDetectorRef,
   ) {}
+
+  get isGuest(): boolean {
+    return !this.authService.isLoggedIn();
+  }
+
+  getWatchPartyDisplayName(fallback: string): string {
+    const accountName = this.authService.user()?.name?.trim();
+    if (accountName) {
+      return accountName;
+    }
+    return this.watchPartyName.trim() || fallback;
+  }
 
   ngOnInit(): void {
     // Initialize Vercel Analytics
@@ -218,6 +246,8 @@ export class FrameComponent implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     this.persistLocalProgress(true);
     this.stopProgressTimer();
+    this.clearControlsHideTimer();
+    this.clearServerFailoverWatch();
     window.removeEventListener('message', this.onPlayerMessage);
     document.removeEventListener('fullscreenchange', this.onFullscreenChange);
     window.removeEventListener('beforeunload', this.onBeforeUnload);
@@ -373,11 +403,13 @@ export class FrameComponent implements OnInit, OnDestroy {
   
   selectSeason(seasonNumber: number): void {
     this.selectedSeason = seasonNumber;
+    this.resetServerFailoverState();
     this.fetchEpisodes(this.selectedSeason);
   }
   
   selectEpisode(episodeNumber: number): void {
     this.selectedEpisode = episodeNumber;
+    this.resetServerFailoverState();
     this.updateEmbedUrl();
   }
 
@@ -402,7 +434,8 @@ export class FrameComponent implements OnInit, OnDestroy {
       chromecast: 'false',
     });
 
-    if (this.selectedServer) {
+    // Omit server in Auto mode so VidFast can find a working source itself
+    if (!this.useAutoServer && this.selectedServer) {
       params.set('server', this.selectedServer);
     }
 
@@ -457,16 +490,19 @@ export class FrameComponent implements OnInit, OnDestroy {
   onPlayerIframeLoad(): void {
     this.isPlayerReloading = false;
     this.requestPlayerStatus();
+    this.armServerFailoverWatch();
   }
 
   toggleCcMenu(): void {
     this.showCcMenu = !this.showCcMenu;
     this.showServerMenu = false;
+    this.revealPlayerControls();
   }
 
   toggleServerMenu(): void {
     this.showServerMenu = !this.showServerMenu;
     this.showCcMenu = false;
+    this.revealPlayerControls();
   }
 
   selectSubtitle(code: string | null): void {
@@ -481,13 +517,102 @@ export class FrameComponent implements OnInit, OnDestroy {
   }
 
   selectServer(server: string): void {
-    if (this.selectedServer === server) {
-      this.showServerMenu = false;
+    const wantsAuto = server === FrameComponent.AUTO_SERVER_ID;
+    if (wantsAuto) {
+      if (this.useAutoServer) {
+        this.showServerMenu = false;
+        return;
+      }
+      this.useAutoServer = true;
+    } else {
+      if (!this.useAutoServer && this.selectedServer === server) {
+        this.showServerMenu = false;
+        return;
+      }
+      this.useAutoServer = false;
+      this.selectedServer = server;
+    }
+    this.showServerMenu = false;
+    this.resetServerFailoverState();
+    this.reloadPlayer(
+      this.currentTime,
+      wantsAuto ? 'Finding a server…' : `Switching to ${server}…`
+    );
+  }
+
+  private resetServerFailoverState(): void {
+    this.clearServerFailoverWatch();
+    this.serversTriedThisTitle.clear();
+    this.serverPlaybackOk = false;
+  }
+
+  private clearServerFailoverWatch(): void {
+    if (this.serverFailoverTimer != null) {
+      clearTimeout(this.serverFailoverTimer);
+      this.serverFailoverTimer = null;
+    }
+  }
+
+  private armServerFailoverWatch(): void {
+    this.clearServerFailoverWatch();
+    if (this.serverPlaybackOk) {
       return;
     }
-    this.selectedServer = server;
-    this.showServerMenu = false;
-    this.reloadPlayer(this.currentTime, 'Switching server…');
+
+    const triedKey = this.useAutoServer
+      ? FrameComponent.AUTO_SERVER_ID
+      : this.selectedServer;
+    if (triedKey) {
+      this.serversTriedThisTitle.add(triedKey);
+    }
+
+    this.serverFailoverTimer = setTimeout(() => {
+      this.tryNextServerFailover();
+    }, FrameComponent.SERVER_FAILOVER_MS);
+  }
+
+  private markServerPlaybackOk(): void {
+    if (this.serverPlaybackOk) {
+      return;
+    }
+    if (this.duration > 1 || this.currentTime > 0.5 || this.isPlaying) {
+      this.serverPlaybackOk = true;
+      this.clearServerFailoverWatch();
+    }
+  }
+
+  /** Current server never started — try the next one, then VidFast Auto. */
+  private tryNextServerFailover(): void {
+    if (this.serverPlaybackOk || this.isPlayerReloading) {
+      return;
+    }
+
+    const pinnedServers = this.serverOptions
+      .map((s) => s.id)
+      .filter((id) => id !== FrameComponent.AUTO_SERVER_ID);
+
+    const nextPinned = pinnedServers.find((id) => !this.serversTriedThisTitle.has(id));
+    if (nextPinned) {
+      this.useAutoServer = false;
+      this.selectedServer = nextPinned;
+      this.reloadPlayer(this.currentTime, `Trying ${nextPinned}…`);
+      return;
+    }
+
+    if (!this.serversTriedThisTitle.has(FrameComponent.AUTO_SERVER_ID)) {
+      this.useAutoServer = true;
+      this.reloadPlayer(this.currentTime, 'Finding a working server…');
+      return;
+    }
+
+    this.playerReloadLabel = 'No working server found';
+    this.isPlayerReloading = true;
+    setTimeout(() => {
+      if (!this.serverPlaybackOk) {
+        this.isPlayerReloading = false;
+        this.cdr.detectChanges();
+      }
+    }, 2500);
   }
 
   private resetPlayerState(): void {
@@ -524,6 +649,17 @@ export class FrameComponent implements OnInit, OnDestroy {
       return;
     }
 
+    // Error / failure messages from the embed (names vary by VidFast build)
+    const errorType = String(type || '').toLowerCase();
+    if (
+      errorType.includes('error') ||
+      errorType === 'playback_error' ||
+      errorType === 'player_error'
+    ) {
+      this.tryNextServerFailover();
+      return;
+    }
+
     // Some embeds send player fields without wrapping type
     if (
       data &&
@@ -541,8 +677,15 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
 
     this.duration = Number(data.duration ?? this.duration) || this.duration;
+    const wasPlaying = this.isPlaying;
     if (typeof data.playing === 'boolean') {
       this.isPlaying = data.playing;
+    }
+
+    const eventName = String(data.event || '').toLowerCase();
+    if (eventName === 'error' || eventName === 'playbackerror') {
+      this.tryNextServerFailover();
+      return;
     }
 
     switch (data.event) {
@@ -577,6 +720,12 @@ export class FrameComponent implements OnInit, OnDestroy {
           this.persistLocalProgress(false);
         }
         break;
+    }
+
+    this.markServerPlaybackOk();
+
+    if (wasPlaying !== this.isPlaying) {
+      this.onPlaybackStateChanged();
     }
   }
 
@@ -628,14 +777,69 @@ export class FrameComponent implements OnInit, OnDestroy {
 
   togglePlayPause(): void {
     this.postPlayerCommand({ command: this.isPlaying ? 'pause' : 'play' });
+    // Optimistic UI so controls don't hide before the player event arrives
+    this.isPlaying = !this.isPlaying;
+    this.onPlaybackStateChanged();
   }
 
-  /** Overlay over the iframe — play/pause without clicking into the embed (avoids ads). */
-  onPlayerOverlayClick(): void {
+  get seekProgressPercent(): string {
+    if (!this.duration || this.duration <= 0) {
+      return '0%';
+    }
+    const pct = Math.min(100, Math.max(0, (this.currentTime / this.duration) * 100));
+    return `${pct}%`;
+  }
+
+  /** Tap video surface: show controls and toggle play/pause (avoids clicking into the embed). */
+  onPlayerSurfaceTap(): void {
     if (this.isPlayerReloading) {
       return;
     }
+    this.revealPlayerControls();
     this.togglePlayPause();
+  }
+
+  /** Mouse move over the video reveals controls while playing. */
+  onPlayerSurfaceMove(): void {
+    if (this.showPlayerControls) {
+      this.scheduleControlsHide();
+      return;
+    }
+    this.revealPlayerControls();
+  }
+
+  revealPlayerControls(): void {
+    this.showPlayerControls = true;
+    this.scheduleControlsHide();
+  }
+
+  private onPlaybackStateChanged(): void {
+    if (!this.isPlaying) {
+      this.showPlayerControls = true;
+      this.clearControlsHideTimer();
+      return;
+    }
+    this.scheduleControlsHide();
+  }
+
+  private scheduleControlsHide(): void {
+    this.clearControlsHideTimer();
+    if (!this.isPlaying || this.showCcMenu || this.showServerMenu) {
+      return;
+    }
+    this.controlsHideTimer = setTimeout(() => {
+      if (this.isPlaying && !this.showCcMenu && !this.showServerMenu) {
+        this.showPlayerControls = false;
+        this.cdr.detectChanges();
+      }
+    }, FrameComponent.CONTROLS_HIDE_MS);
+  }
+
+  private clearControlsHideTimer(): void {
+    if (this.controlsHideTimer != null) {
+      clearTimeout(this.controlsHideTimer);
+      this.controlsHideTimer = null;
+    }
   }
 
   seekTo(time: number): void {
@@ -672,12 +876,11 @@ export class FrameComponent implements OnInit, OnDestroy {
 
     try {
       if (!document.fullscreenElement) {
-        this.showFullscreenControls = false;
         await container.requestFullscreen();
       } else {
         await document.exitFullscreen();
-        this.showFullscreenControls = false;
       }
+      this.revealPlayerControls();
     } catch (error) {
       console.error('Fullscreen toggle failed:', error);
     }
@@ -764,14 +967,6 @@ export class FrameComponent implements OnInit, OnDestroy {
     });
   }
 
-  toggleFullscreenControls(): void {
-    this.showFullscreenControls = !this.showFullscreenControls;
-  }
-
-  get showPlayerButtons(): boolean {
-    return !this.isFullscreen || this.showFullscreenControls;
-  }
-
   private setupWatchParty(): void {
     this.watchPartySubs.add(
       this.watchPartyService.state$.subscribe((state) => {
@@ -828,6 +1023,7 @@ export class FrameComponent implements OnInit, OnDestroy {
       if (saved?.displayName) {
         this.watchPartyName = saved.displayName;
       }
+      // Host owns the room title; guests only update local session state
       this.syncWatchPartyMedia();
       return;
     }
@@ -900,9 +1096,11 @@ export class FrameComponent implements OnInit, OnDestroy {
     if (!this.title?.trim() || !this.id || !this.mediaType) {
       return;
     }
+    // Guests keep local session media in sync after navigating to the host title,
+    // but never broadcast (host is source of truth).
     this.watchPartyService.setMediaState({
       mediaType: this.mediaType,
-      id: this.id,
+      id: String(this.id),
       season: this.mediaType === 'tv' ? this.selectedSeason : undefined,
       episode: this.mediaType === 'tv' ? this.selectedEpisode : undefined,
       title: this.title,
@@ -933,7 +1131,9 @@ export class FrameComponent implements OnInit, OnDestroy {
   async startWatchParty(): Promise<void> {
     try {
       this.syncWatchPartyMedia();
-      await this.watchPartyService.createParty(this.watchPartyName || 'Host');
+      await this.watchPartyService.createParty(this.getWatchPartyDisplayName('Host'));
+      // Ensure media is stored/broadcast now that the party is live
+      this.syncWatchPartyMedia();
       this.showWatchPartyPanel = true;
     } catch (error) {
       console.error('Failed to start watch party:', error);
@@ -944,11 +1144,11 @@ export class FrameComponent implements OnInit, OnDestroy {
     try {
       await this.watchPartyService.joinParty(
         this.joinRoomCode,
-        this.watchPartyName.trim() || 'Guest'
+        this.getWatchPartyDisplayName('Guest')
       );
       this.showJoinInviteModal = false;
       this.showWatchPartyPanel = true;
-      this.syncWatchPartyMedia();
+      // Do not push the guest's current title — wait for the host media sync
     } catch (error) {
       console.error('Failed to join watch party:', error);
       // Keep invite modal open so the error + retry are visible on mobile
@@ -1073,12 +1273,14 @@ export class FrameComponent implements OnInit, OnDestroy {
           this.postPlayerCommand({ command: 'play', time });
           this.isPlaying = true;
           this.currentTime = time;
+          this.onPlaybackStateChanged();
           break;
         case 'pause':
           this.postPlayerCommand({ command: 'seek', time });
           this.postPlayerCommand({ command: 'pause', time });
           this.isPlaying = false;
           this.currentTime = time;
+          this.onPlaybackStateChanged();
           break;
         case 'seek':
           this.seekTo(time);
@@ -1091,6 +1293,7 @@ export class FrameComponent implements OnInit, OnDestroy {
           });
           this.isPlaying = !!command.playing;
           this.currentTime = time;
+          this.onPlaybackStateChanged();
           break;
       }
     });
@@ -1103,7 +1306,8 @@ export class FrameComponent implements OnInit, OnDestroy {
     episode?: number;
   }): void {
     const sameTitle =
-      media.mediaType === this.mediaType && media.id === this.id;
+      media.mediaType === this.mediaType &&
+      String(media.id) === String(this.id);
 
     if (sameTitle && media.mediaType === 'tv') {
       if (

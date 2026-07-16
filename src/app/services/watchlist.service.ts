@@ -28,8 +28,16 @@ export class WatchlistService {
     this.listSubject.next(this.readMap());
   }
 
-  replaceMap(map: WatchlistMap): void {
-    this.writeMap(map && typeof map === 'object' ? map : {});
+  replaceMap(
+    map: WatchlistMap,
+    options: { persistLocal?: boolean } = {}
+  ): void {
+    const next = map && typeof map === 'object' ? map : {};
+    if (options.persistLocal === false) {
+      this.listSubject.next({ ...next });
+      return;
+    }
+    this.writeMap(next);
   }
 
   getMap(): WatchlistMap {
@@ -110,6 +118,10 @@ export class WatchlistService {
     return `${mediaType === 'tv' ? 't' : 'm'}${id}`;
   }
 
+  /**
+   * Guest: browser cache only (`luscreensWatchlist`).
+   * Logged in: per-user mirror (`luscreensWatchlist:{userId}`) + Render sync.
+   */
   private storageKey(): string {
     return this.userId
       ? `${WatchlistService.STORAGE_KEY}:${this.userId}`

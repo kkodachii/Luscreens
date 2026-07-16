@@ -17,7 +17,9 @@
           Join Watch Party
         </h2>
         <p class="text-sm text-gray-400">
-          You’ve been invited to watch together. Enter your name to join.
+          You’ve been invited to watch together.
+          <ng-container *ngIf="isGuest"> Enter your name to join.</ng-container>
+          <ng-container *ngIf="!isGuest"> You’ll join as {{ getWatchPartyDisplayName('Guest') }}.</ng-container>
         </p>
       </div>
 
@@ -26,7 +28,7 @@
         <code class="text-sm font-semibold tracking-[0.2em] text-white">{{ joinRoomCode }}</code>
       </div>
 
-      <div class="space-y-2">
+      <div *ngIf="isGuest" class="space-y-2">
         <label for="invite-party-name" class="block text-xs text-gray-400">Your name</label>
         <input
           id="invite-party-name"
@@ -92,8 +94,14 @@
           [class.flex-col]="isFullscreen"
         >
           <div
-            class="relative w-full overflow-hidden"
-            [ngClass]="isFullscreen ? 'flex-1 min-h-0' : 'aspect-video'"
+            class="relative w-full bg-black"
+            [class.flex-1]="isFullscreen"
+            [class.min-h-0]="isFullscreen"
+            [class.aspect-video]="!isFullscreen"
+            [class.rounded-lg]="!isFullscreen"
+            [class.overflow-hidden]="!isFullscreen && !showCcMenu && !showServerMenu"
+            [class.overflow-visible]="!isFullscreen && (showCcMenu || showServerMenu)"
+            [class.z-30]="!isFullscreen && (showCcMenu || showServerMenu)"
           >
             <iframe
               #playerIframe
@@ -107,7 +115,7 @@
               aria-hidden="true"
               inert
               class="player-embed w-full h-full shadow-xl absolute inset-0"
-              [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-t-lg'"
+              [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-lg'"
             ></iframe>
 
             <!--
@@ -116,8 +124,9 @@
             -->
             <div
               class="player-click-shield absolute inset-0 z-20 flex items-center justify-center cursor-pointer select-none"
-              [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-t-lg'"
-              (click)="onPlayerOverlayClick()"
+              [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-lg'"
+              (click)="onPlayerSurfaceTap()"
+              (mousemove)="onPlayerSurfaceMove()"
               (dblclick)="$event.preventDefault()"
               (contextmenu)="$event.preventDefault()"
               (auxclick)="$event.preventDefault()"
@@ -126,330 +135,288 @@
               [title]="isPlaying ? 'Pause' : 'Play'"
             >
               <span
-                *ngIf="!isPlaying && !isPlayerReloading"
-                class="flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-red-600/90 text-white shadow-xl pointer-events-none"
+                *ngIf="!isPlaying && !isPlayerReloading && showPlayerControls"
+                class="flex items-center justify-center w-14 h-14 sm:w-20 sm:h-20 rounded-full bg-red-600/90 text-white shadow-xl pointer-events-none"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="currentColor" class="ml-1">
+                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="currentColor" class="ml-1">
                   <path d="M8 5v14l11-7z" />
                 </svg>
               </span>
             </div>
 
-            <!-- Covers the black iframe flash while CC / server reload -->
+            <!-- Overlay controls (auto-hide while playing) -->
             <div
-              *ngIf="isPlayerReloading"
-              class="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-cover bg-center"
-              [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-t-lg'"
-              style="pointer-events: auto;"
-              [ngStyle]="{
-                'background-image': backdropPath
-                  ? 'linear-gradient(rgba(0,0,0,.65), rgba(0,0,0,.8)), url(https://image.tmdb.org/t/p/w780' + backdropPath + ')'
-                  : 'linear-gradient(#111, #000)'
-              }"
+              class="player-controls absolute inset-0 z-30 flex flex-col justify-between pointer-events-none transition-opacity duration-300"
+              [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-lg'"
+              [class.opacity-0]="!showPlayerControls"
+              [class.opacity-100]="showPlayerControls"
+              [class.invisible]="!showPlayerControls"
             >
-              <span class="inline-block w-7 h-7 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
-              <p class="text-sm text-white/90">{{ playerReloadLabel }}</p>
-            </div>
-          </div>
-
-          <!-- Custom player controls (use these instead of clicking inside the embed) -->
-          <div
-            class="bg-black/80 border border-white/10 px-3 py-2.5 space-y-2"
-            [ngClass]="isFullscreen ? 'border-0 rounded-none shrink-0' : 'border-t-0 rounded-b-lg'"
-          >
-            <!-- Seek / time bar (always visible; fullscreen adds a controls toggle) -->
-            <div class="flex items-center gap-1.5 sm:gap-3">
-              <span class="text-[11px] sm:text-xs text-gray-400 tabular-nums w-10 sm:w-12 text-right shrink-0">{{ formatTime(currentTime) }}</span>
-              <input
-                type="range"
-                min="0"
-                [max]="duration || 0"
-                step="0.1"
-                [value]="currentTime"
-                (input)="onSeekInput($event)"
-                (change)="onSeekChange($event)"
-                class="flex-1 min-w-0 h-1.5 accent-red-600 cursor-pointer"
-                [attr.aria-label]="'Seek'"
-              />
-              <span class="text-[11px] sm:text-xs text-gray-400 tabular-nums w-10 sm:w-12 shrink-0">{{ formatTime(duration) }}</span>
-
-              <div *ngIf="isFullscreen" class="flex items-center gap-0.5 shrink-0">
-                <button
-                  *ngIf="watchParty.connected"
-                  type="button"
-                  (click)="toggleFloatingPartyChat()"
-                  class="relative p-1.5 rounded-full text-white hover:bg-white/10 transition"
-                  [class.text-red-400]="showFloatingPartyChat"
-                  [attr.aria-label]="showFloatingPartyChat ? 'Hide chat' : 'Show chat'"
-                  [title]="showFloatingPartyChat ? 'Hide chat' : 'Show chat'"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                  </svg>
-                  <span
-                    *ngIf="partyChatUnread > 0 && !showFloatingPartyChat"
-                    class="absolute top-1 right-1 w-2 h-2 rounded-full bg-red-500 ring-2 ring-black"
-                    aria-hidden="true"
-                  ></span>
-                </button>
-
-                <button
-                  type="button"
-                  (click)="toggleFullscreenControls()"
-                  class="p-1.5 rounded-full text-white hover:bg-white/10 transition"
-                  [attr.aria-label]="showFullscreenControls ? 'Hide controls' : 'Show controls'"
-                  [title]="showFullscreenControls ? 'Hide controls' : 'Show controls'"
-                >
-                  <svg *ngIf="!showFullscreenControls" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M18 15l-6-6-6 6" />
-                  </svg>
-                  <svg *ngIf="showFullscreenControls" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M6 9l6 6 6-6" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-
-            <!-- Control buttons (hidden in fullscreen until chevron is tapped) -->
-            <!-- Mobile: stacked rows (playback, then utilities). sm+: balanced 3-column grid. -->
-            <div
-              *ngIf="showPlayerButtons"
-              class="flex flex-col items-stretch gap-2 sm:grid sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center sm:gap-1"
-            >
-              <!-- Left: episode nav on sm+ (balances the right side) -->
-              <div class="hidden sm:flex items-center justify-start gap-1 min-h-[40px]">
-                <button
-                  *ngIf="mediaType === 'tv'"
-                  type="button"
-                  (click)="prevEpisode()"
-                  class="p-2 rounded-full text-white hover:bg-white/10 transition"
-                  aria-label="Previous episode"
-                  title="Previous episode"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z" />
-                  </svg>
-                </button>
-                <button
-                  *ngIf="mediaType === 'tv'"
-                  type="button"
-                  (click)="nextEpisode()"
-                  class="p-2 rounded-full text-white hover:bg-white/10 transition"
-                  aria-label="Next episode"
-                  title="Next episode"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M16 18h2V6h-2zm-11 0 8.5-6L5 6z" />
-                  </svg>
-                </button>
-              </div>
-
-              <!-- Center: skip + play (+ episode nav on mobile) -->
-              <div class="flex items-center justify-center gap-1 sm:gap-2 min-h-[40px]">
-                <button
-                  *ngIf="mediaType === 'tv'"
-                  type="button"
-                  (click)="prevEpisode()"
-                  class="p-2 rounded-full text-white hover:bg-white/10 transition sm:hidden"
-                  aria-label="Previous episode"
-                  title="Previous episode"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z" />
-                  </svg>
-                </button>
-
-                <button
-                  type="button"
-                  (click)="skipBy(-10)"
-                  class="p-2 rounded-full text-white hover:bg-white/10 transition text-xs font-semibold"
-                  aria-label="Rewind 10 seconds"
-                  title="Rewind 10s"
-                >
-                  -10s
-                </button>
-
-                <button
-                  type="button"
-                  (click)="togglePlayPause()"
-                  class="p-2.5 rounded-full bg-red-600 text-white hover:bg-red-500 transition"
-                  [attr.aria-label]="isPlaying ? 'Pause' : 'Play'"
-                  [title]="isPlaying ? 'Pause' : 'Play'"
-                >
-                  <svg *ngIf="isPlaying" xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
-                    <rect x="6" y="4" width="4" height="16" rx="1" />
-                    <rect x="14" y="4" width="4" height="16" rx="1" />
-                  </svg>
-                  <svg *ngIf="!isPlaying" xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M8 5v14l11-7z" />
-                  </svg>
-                </button>
-
-                <button
-                  type="button"
-                  (click)="skipBy(10)"
-                  class="p-2 rounded-full text-white hover:bg-white/10 transition text-xs font-semibold"
-                  aria-label="Forward 10 seconds"
-                  title="Forward 10s"
-                >
-                  +10s
-                </button>
-
-                <button
-                  *ngIf="mediaType === 'tv'"
-                  type="button"
-                  (click)="nextEpisode()"
-                  class="p-2 rounded-full text-white hover:bg-white/10 transition sm:hidden"
-                  aria-label="Next episode"
-                  title="Next episode"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M16 18h2V6h-2zm-11 0 8.5-6L5 6z" />
-                  </svg>
-                </button>
-              </div>
-
-              <!-- Right / mobile row 2: cc + server + sync + fullscreen -->
-              <div class="flex items-center justify-center sm:justify-end gap-1 flex-wrap">
-                <!-- CC / subtitles -->
-                <div class="relative shrink-0">
-                  <button
-                    type="button"
-                    (click)="toggleCcMenu()"
-                    class="px-2.5 py-1.5 rounded-md text-xs font-semibold border transition"
-                    [ngClass]="selectedSubtitle || showCcMenu
-                      ? 'border-red-500/60 text-red-400 bg-red-600/10'
-                      : 'border-white/20 text-white hover:bg-white/10'"
-                    aria-label="Subtitles"
-                    title="Subtitles (CC)"
-                  >
-                    CC
-                  </button>
+              <!-- Top: cloud server (left) + title -->
+              <div class="relative bg-gradient-to-b from-black/80 via-black/40 to-transparent px-2.5 sm:px-4 pt-2.5 sm:pt-4 pb-8 sm:pb-12 pointer-events-none">
+                <div class="relative flex items-start">
                   <div
-                    *ngIf="showCcMenu"
-                    class="absolute bottom-full right-0 mb-2 w-40 max-h-56 overflow-y-auto rounded-lg border border-white/15 bg-black/95 shadow-xl py-1 z-30"
+                    class="relative shrink-0 z-40"
+                    [class.pointer-events-auto]="showPlayerControls"
+                    (click)="$event.stopPropagation()"
+                    (touchstart)="$event.stopPropagation()"
                   >
                     <button
-                      *ngFor="let opt of subtitleOptions"
                       type="button"
-                      (click)="selectSubtitle(opt.code)"
-                      class="w-full text-left px-3 py-1.5 text-xs hover:bg-white/10 transition"
-                      [class.text-red-400]="selectedSubtitle === opt.code"
-                      [class.font-semibold]="selectedSubtitle === opt.code"
+                      (click)="toggleServerMenu(); revealPlayerControls()"
+                      class="p-1.5 sm:p-2 rounded-full text-white hover:bg-white/10 transition"
+                      [class.text-red-400]="showServerMenu || useAutoServer"
+                      aria-label="Server"
+                      [title]="'Server: ' + activeServerLabel"
                     >
-                      {{ opt.label }}
+                      <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M17.5 19a4.5 4.5 0 0 0 .5-9 7 7 0 0 0-13.6 1.8A4 4 0 0 0 6 19h11.5z" />
+                      </svg>
+                    </button>
+                    <div
+                      *ngIf="showServerMenu"
+                      class="absolute top-full left-0 mt-1 w-44 max-h-52 overflow-y-auto rounded-xl border border-white/15 bg-black/95 shadow-xl py-1 pointer-events-auto"
+                    >
+                      <p class="px-3 py-1.5 text-[10px] uppercase tracking-wide text-white/40">
+                        Server · {{ activeServerLabel }}
+                      </p>
+                      <button
+                        *ngFor="let server of serverOptions"
+                        type="button"
+                        (click)="selectServer(server.id); revealPlayerControls()"
+                        class="w-full text-left px-3 py-2 text-xs hover:bg-white/10 transition"
+                        [class.text-red-400]="(server.id === 'auto' && useAutoServer) || (server.id !== 'auto' && !useAutoServer && selectedServer === server.id)"
+                        [class.font-semibold]="(server.id === 'auto' && useAutoServer) || (server.id !== 'auto' && !useAutoServer && selectedServer === server.id)"
+                      >
+                        {{ server.label }}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="absolute inset-x-10 sm:inset-x-12 top-1 sm:top-1.5 text-center pointer-events-none">
+                    <p class="text-[10px] sm:text-xs text-white/70 tracking-wide">
+                      You're Watching
+                    </p>
+                    <h2 class="text-sm sm:text-lg font-semibold text-white truncate leading-tight px-1">
+                      {{ title || 'Luscreens' }}
+                      <span *ngIf="mediaType === 'tv'" class="text-white/70 font-normal">
+                        · S{{ selectedSeason }} E{{ selectedEpisode }}
+                      </span>
+                    </h2>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Bottom: seek + buttons -->
+              <div
+                class="bg-gradient-to-t from-black/90 via-black/55 to-transparent px-2 sm:px-4 pt-8 sm:pt-14 pb-2 sm:pb-4 space-y-1.5 sm:space-y-2.5"
+                [class.pointer-events-auto]="showPlayerControls"
+                (click)="$event.stopPropagation()"
+                (touchstart)="$event.stopPropagation()"
+                (mousemove)="revealPlayerControls()"
+              >
+                <input
+                  type="range"
+                  min="0"
+                  [max]="duration || 0"
+                  step="0.1"
+                  [value]="currentTime"
+                  (input)="onSeekInput($event); revealPlayerControls()"
+                  (change)="onSeekChange($event); revealPlayerControls()"
+                  class="player-seek w-full cursor-pointer"
+                  [style.--seek-progress]="seekProgressPercent"
+                  [attr.aria-label]="'Seek'"
+                />
+
+                <div class="flex items-center justify-between gap-1 sm:gap-2">
+                  <!-- Left: playback -->
+                  <div class="flex items-center gap-0 sm:gap-1 min-w-0">
+                    <button
+                      type="button"
+                      (click)="togglePlayPause(); revealPlayerControls()"
+                      class="p-1.5 sm:p-2 rounded-full text-white hover:bg-white/10 transition"
+                      [attr.aria-label]="isPlaying ? 'Pause' : 'Play'"
+                      [title]="isPlaying ? 'Pause' : 'Play'"
+                    >
+                      <svg *ngIf="isPlaying" xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 sm:w-[22px] sm:h-[22px]" viewBox="0 0 24 24" fill="currentColor">
+                        <rect x="6" y="4" width="4" height="16" rx="1" />
+                        <rect x="14" y="4" width="4" height="16" rx="1" />
+                      </svg>
+                      <svg *ngIf="!isPlaying" xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 sm:w-[22px] sm:h-[22px]" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M8 5v14l11-7z" />
+                      </svg>
+                    </button>
+
+                    <button
+                      type="button"
+                      (click)="skipBy(-10); revealPlayerControls()"
+                      class="relative p-1.5 sm:p-2 rounded-full text-white hover:bg-white/10 transition"
+                      aria-label="Rewind 10 seconds"
+                      title="Rewind 10s"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 sm:w-[22px] sm:h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M2.5 12a9.5 9.5 0 1 0 2.2-6" />
+                        <path d="M2 5.5v4.2h4.2" />
+                      </svg>
+                      <span class="absolute inset-0 flex items-center justify-center text-[8px] sm:text-[9px] font-semibold pt-0.5 pointer-events-none">10</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      (click)="skipBy(10); revealPlayerControls()"
+                      class="relative p-1.5 sm:p-2 rounded-full text-white hover:bg-white/10 transition"
+                      aria-label="Forward 10 seconds"
+                      title="Forward 10s"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 sm:w-[22px] sm:h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M21.5 12a9.5 9.5 0 1 1-2.2-6" />
+                        <path d="M22 5.5v4.2h-4.2" />
+                      </svg>
+                      <span class="absolute inset-0 flex items-center justify-center text-[8px] sm:text-[9px] font-semibold pt-0.5 pointer-events-none">10</span>
+                    </button>
+
+                    <button
+                      *ngIf="mediaType === 'tv'"
+                      type="button"
+                      (click)="prevEpisode(); revealPlayerControls()"
+                      class="p-1.5 sm:p-2 rounded-full text-white hover:bg-white/10 transition hidden md:inline-flex"
+                      aria-label="Previous episode"
+                      title="Previous episode"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z" />
+                      </svg>
+                    </button>
+                    <button
+                      *ngIf="mediaType === 'tv'"
+                      type="button"
+                      (click)="nextEpisode(); revealPlayerControls()"
+                      class="p-1.5 sm:p-2 rounded-full text-white hover:bg-white/10 transition hidden md:inline-flex"
+                      aria-label="Next episode"
+                      title="Next episode"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M16 18h2V6h-2zm-11 0 8.5-6L5 6z" />
+                      </svg>
+                    </button>
+
+                    <span class="ml-0.5 sm:ml-1 text-[10px] sm:text-xs text-white/80 tabular-nums whitespace-nowrap">
+                      {{ formatTime(currentTime) }}
+                      <span class="text-white/45"> / {{ formatTime(duration) }}</span>
+                    </span>
+                  </div>
+
+                  <!-- Right: utilities -->
+                  <div class="flex items-center justify-end gap-0 sm:gap-1 shrink-0">
+                    <div class="relative shrink-0">
+                      <button
+                        type="button"
+                        (click)="toggleCcMenu(); revealPlayerControls()"
+                        class="p-1.5 sm:p-2 rounded-full text-white hover:bg-white/10 transition"
+                        [class.text-red-400]="!!selectedSubtitle || showCcMenu"
+                        aria-label="Subtitles"
+                        title="Subtitles (CC)"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                          <rect x="2.5" y="5.5" width="19" height="13" rx="2" />
+                          <path d="M7 12h3.5M12.5 12H17M7 15h6" />
+                        </svg>
+                      </button>
+                      <div
+                        *ngIf="showCcMenu"
+                        class="absolute bottom-full right-0 mb-1 w-40 sm:w-44 max-h-48 overflow-y-auto rounded-xl border border-white/15 bg-black/95 shadow-xl py-1 z-40"
+                      >
+                        <button
+                          *ngFor="let opt of subtitleOptions"
+                          type="button"
+                          (click)="selectSubtitle(opt.code); revealPlayerControls()"
+                          class="w-full text-left px-3 py-2 text-xs hover:bg-white/10 transition"
+                          [class.text-red-400]="selectedSubtitle === opt.code"
+                          [class.font-semibold]="selectedSubtitle === opt.code"
+                        >
+                          {{ opt.label }}
+                        </button>
+                      </div>
+                    </div>
+
+                    <button
+                      *ngIf="watchParty.connected"
+                      type="button"
+                      (click)="syncWatchParty(); revealPlayerControls()"
+                      class="shrink-0 px-2 py-1 rounded-full text-[10px] sm:text-[11px] font-semibold text-red-400 border border-red-500/50 bg-red-600/15 hover:bg-red-600/30 transition"
+                      title="Sync everyone to your current time"
+                    >
+                      Sync
+                    </button>
+
+                    <button
+                      *ngIf="watchParty.connected"
+                      type="button"
+                      (click)="toggleFloatingPartyChat(); revealPlayerControls()"
+                      class="relative shrink-0 p-1.5 sm:p-2 rounded-full text-white hover:bg-white/10 transition"
+                      [class.text-red-400]="showFloatingPartyChat"
+                      [attr.aria-label]="showFloatingPartyChat ? 'Hide chat' : 'Show chat'"
+                      [title]="showFloatingPartyChat ? 'Hide chat' : 'Party chat'"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                      </svg>
+                      <span
+                        *ngIf="partyChatUnread > 0 && !showFloatingPartyChat"
+                        class="absolute top-1 right-1 w-2 h-2 rounded-full bg-red-500 ring-2 ring-black"
+                        aria-hidden="true"
+                      ></span>
+                    </button>
+
+                    <button
+                      *ngIf="supportsDocumentPip"
+                      type="button"
+                      (click)="togglePictureInPicture(); revealPlayerControls()"
+                      class="hidden sm:inline-flex shrink-0 p-1.5 sm:p-2 rounded-full text-white hover:bg-white/10 transition"
+                      [class.text-red-400]="isPictureInPicture"
+                      [attr.aria-label]="isPictureInPicture ? 'Exit picture-in-picture' : 'Picture-in-picture'"
+                      [title]="isPictureInPicture ? 'Exit picture-in-picture' : 'Picture-in-picture'"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <rect x="2" y="3.5" width="20" height="17" rx="2.5" />
+                        <rect x="13" y="12" width="7.5" height="6" rx="1.25" fill="currentColor" stroke="none" />
+                        <path d="M7.5 9.5 L11.5 13.5" />
+                        <path d="M11.5 10 v3.5 h-3.5" />
+                      </svg>
+                    </button>
+
+                    <button
+                      type="button"
+                      (click)="toggleFullscreen(); revealPlayerControls()"
+                      class="shrink-0 p-1.5 sm:p-2 rounded-full text-white hover:bg-white/10 transition"
+                      [attr.aria-label]="isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'"
+                      [title]="isFullscreen ? 'Exit fullscreen' : 'Fullscreen'"
+                    >
+                      <svg *ngIf="!isFullscreen" xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+                        <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
+                        <path d="M3 16v3a2 2 0 0 0 2 2h3" />
+                        <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+                      </svg>
+                      <svg *ngIf="isFullscreen" xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M8 3v3a2 2 0 0 1-2 2H3" />
+                        <path d="M21 8h-3a2 2 0 0 1-2-2V3" />
+                        <path d="M3 16h3a2 2 0 0 1 2 2v3" />
+                        <path d="M16 21v-3a2 2 0 0 1 2-2h3" />
+                      </svg>
                     </button>
                   </div>
                 </div>
-
-                <!-- Server -->
-                <div class="relative shrink-0">
-                  <button
-                    type="button"
-                    (click)="toggleServerMenu()"
-                    class="px-2.5 py-1.5 rounded-md text-xs font-semibold border transition max-w-[5.5rem] truncate"
-                    [ngClass]="showServerMenu
-                      ? 'border-red-500/60 text-red-400 bg-red-600/10'
-                      : 'border-white/20 text-white hover:bg-white/10'"
-                    aria-label="Server"
-                    [title]="'Server: ' + (selectedServer || 'Auto')"
-                  >
-                    {{ selectedServer || 'Server' }}
-                  </button>
-                  <div
-                    *ngIf="showServerMenu"
-                    class="absolute bottom-full right-0 mb-2 w-40 max-h-56 overflow-y-auto rounded-lg border border-white/15 bg-black/95 shadow-xl py-1 z-30"
-                  >
-                    <button
-                      *ngFor="let server of serverOptions"
-                      type="button"
-                      (click)="selectServer(server.id)"
-                      class="w-full text-left px-3 py-1.5 text-xs hover:bg-white/10 transition"
-                      [class.text-red-400]="selectedServer === server.id"
-                      [class.font-semibold]="selectedServer === server.id"
-                    >
-                      {{ server.label }}
-                    </button>
-                  </div>
-                </div>
-
-                <button
-                  *ngIf="watchParty.connected"
-                  type="button"
-                  (click)="syncWatchParty()"
-                  class="shrink-0 px-2.5 py-1.5 rounded-full text-xs font-medium text-emerald-300 border border-emerald-500/40 hover:bg-emerald-600/20 transition"
-                  title="Sync everyone to your current time"
-                >
-                  Sync
-                </button>
-
-                <button
-                  *ngIf="isFullscreen && watchParty.connected"
-                  type="button"
-                  (click)="toggleFloatingPartyChat()"
-                  class="relative shrink-0 p-2 rounded-full text-white hover:bg-white/10 transition"
-                  [class.text-red-400]="showFloatingPartyChat"
-                  [attr.aria-label]="showFloatingPartyChat ? 'Hide chat' : 'Show chat'"
-                  [title]="showFloatingPartyChat ? 'Hide chat' : 'Party chat'"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                  </svg>
-                  <span
-                    *ngIf="partyChatUnread > 0 && !showFloatingPartyChat"
-                    class="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-black"
-                    aria-hidden="true"
-                  ></span>
-                </button>
-
-                <button
-                  *ngIf="supportsDocumentPip"
-                  type="button"
-                  (click)="togglePictureInPicture()"
-                  class="shrink-0 p-2 rounded-full text-white hover:bg-white/10 transition"
-                  [class.text-red-400]="isPictureInPicture"
-                  [attr.aria-label]="isPictureInPicture ? 'Exit picture-in-picture' : 'Picture-in-picture'"
-                  [title]="isPictureInPicture ? 'Exit picture-in-picture' : 'Picture-in-picture'"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <rect x="2" y="3.5" width="20" height="17" rx="2.5" />
-                    <rect x="13" y="12" width="7.5" height="6" rx="1.25" fill="currentColor" stroke="none" />
-                    <path d="M7.5 9.5 L11.5 13.5" />
-                    <path d="M11.5 10 v3.5 h-3.5" />
-                  </svg>
-                </button>
-
-                <button
-                  type="button"
-                  (click)="toggleFullscreen()"
-                  class="shrink-0 p-2 rounded-full text-white hover:bg-white/10 transition"
-                  [attr.aria-label]="isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'"
-                  [title]="isFullscreen ? 'Exit fullscreen' : 'Fullscreen'"
-                >
-                  <svg *ngIf="!isFullscreen" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M8 3H5a2 2 0 0 0-2 2v3" />
-                    <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
-                    <path d="M3 16v3a2 2 0 0 0 2 2h3" />
-                    <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
-                  </svg>
-                  <svg *ngIf="isFullscreen" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M8 3v3a2 2 0 0 1-2 2H3" />
-                    <path d="M21 8h-3a2 2 0 0 1-2-2V3" />
-                    <path d="M3 16h3a2 2 0 0 1 2 2v3" />
-                    <path d="M16 21v-3a2 2 0 0 1 2-2h3" />
-                  </svg>
-                </button>
               </div>
             </div>
-          </div>
 
-          <!-- Floating party chat (fullscreen) -->
-          <div
-            *ngIf="isFullscreen && watchParty.connected && showFloatingPartyChat"
-            class="absolute bottom-24 right-3 sm:right-4 z-40 w-[min(22rem,calc(100%-1.5rem))] rounded-xl border border-white/15 bg-black/90 shadow-2xl backdrop-blur-sm overflow-hidden flex flex-col max-h-[min(50vh,24rem)]"
-            (click)="$event.stopPropagation()"
-            (mousedown)="$event.stopPropagation()"
-          >
+            <!-- Floating party chat (kept inside the player so it doesn't cover the page) -->
+            <div
+              *ngIf="watchParty.connected && showFloatingPartyChat"
+              class="absolute bottom-16 sm:bottom-20 right-2 sm:right-3 z-40 w-[min(20rem,calc(100%-1rem))] rounded-xl border border-white/15 bg-black/95 shadow-2xl backdrop-blur-sm overflow-hidden flex flex-col max-h-[min(42%,18rem)]"
+              (click)="$event.stopPropagation()"
+              (touchstart)="$event.stopPropagation()"
+            >
             <div class="px-3 py-2 border-b border-white/10 flex items-center justify-between gap-2 shrink-0">
               <div class="flex items-center gap-2 min-w-0">
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-red-400 shrink-0" aria-hidden="true">
@@ -500,30 +467,47 @@
               </div>
             </div>
 
-            <form
-              class="flex gap-2 p-2 border-t border-white/10 shrink-0"
-              (ngSubmit)="sendPartyChat()"
-            >
-              <input
-                type="text"
-                [(ngModel)]="partyChatDraft"
-                name="partyChatDraftFullscreen"
-                maxlength="500"
-                placeholder="Message the party…"
-                autocomplete="off"
-                class="flex-1 min-w-0 px-3 py-2 text-sm bg-transparent border border-white/15 rounded-md focus:outline-none focus:border-red-600"
-              />
-              <button
-                type="submit"
-                [disabled]="!partyChatDraft.trim()"
-                class="shrink-0 px-3 py-2 rounded-md bg-red-600 hover:bg-red-500 disabled:opacity-40 text-sm font-medium transition"
+              <form
+                class="flex gap-2 p-2 border-t border-white/10 shrink-0"
+                (ngSubmit)="sendPartyChat()"
               >
-                Send
-              </button>
-            </form>
+                <input
+                  type="text"
+                  [(ngModel)]="partyChatDraft"
+                  name="partyChatDraftFullscreen"
+                  maxlength="500"
+                  placeholder="Message the party…"
+                  autocomplete="off"
+                  class="flex-1 min-w-0 px-3 py-2 text-sm bg-transparent border border-white/15 rounded-md focus:outline-none focus:border-red-600"
+                />
+                <button
+                  type="submit"
+                  [disabled]="!partyChatDraft.trim()"
+                  class="shrink-0 px-3 py-2 rounded-md bg-red-600 hover:bg-red-500 disabled:opacity-40 text-sm font-medium transition"
+                >
+                  Send
+                </button>
+              </form>
+            </div>
+
+            <!-- Covers the black iframe flash while CC / server reload -->
+            <div
+              *ngIf="isPlayerReloading"
+              class="absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-cover bg-center"
+              [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-lg'"
+              style="pointer-events: auto;"
+              [ngStyle]="{
+                'background-image': backdropPath
+                  ? 'linear-gradient(rgba(0,0,0,.65), rgba(0,0,0,.8)), url(https://image.tmdb.org/t/p/w780' + backdropPath + ')'
+                  : 'linear-gradient(#111, #000)'
+              }"
+            >
+              <span class="inline-block w-7 h-7 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+              <p class="text-sm text-white/90">{{ playerReloadLabel }}</p>
+            </div>
           </div>
         </div>
-      
+
         <div *ngIf="!embedUrl" class="text-gray-500 text-center mt-8 mb-8">
           Unable to load the video.
         </div>
@@ -595,11 +579,15 @@
               </div>
 
               <input
+                *ngIf="isGuest"
                 type="text"
                 [(ngModel)]="watchPartyName"
                 placeholder="Your name"
                 class="w-full px-3 py-2 text-sm bg-transparent border border-white/20 rounded-md focus:outline-none focus:border-red-600"
               />
+              <p *ngIf="!isGuest" class="text-xs text-gray-400">
+                Joining as <span class="text-white">{{ getWatchPartyDisplayName('Host') }}</span>
+              </p>
 
               <div *ngIf="watchPartyMode === 'create'" class="space-y-2">
                 <p class="text-xs text-gray-400">

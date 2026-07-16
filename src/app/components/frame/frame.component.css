@@ -11,3 +11,72 @@
   background: rgba(0, 0, 0, 0.002);
   -webkit-tap-highlight-color: transparent;
 }
+
+.player-seek {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 999px;
+  /* Played portion (left of thumb) stays red */
+  background: linear-gradient(
+    to right,
+    #e50914 0%,
+    #e50914 var(--seek-progress, 0%),
+    rgba(255, 255, 255, 0.28) var(--seek-progress, 0%),
+    rgba(255, 255, 255, 0.28) 100%
+  );
+}
+
+.player-seek::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: transparent;
+}
+
+.player-seek::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border-radius: 999px;
+  background: #e50914;
+  border: none;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35);
+  position: relative;
+  z-index: 1;
+}
+
+@media (max-width: 640px) {
+  .player-seek::-webkit-slider-thumb {
+    width: 16px;
+    height: 16px;
+    margin-top: -6px;
+  }
+
+  .player-seek::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+  }
+}
+
+.player-seek::-moz-range-track {
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.player-seek::-moz-range-progress {
+  height: 4px;
+  border-radius: 999px;
+  background: #e50914;
+}
+
+.player-seek::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: #e50914;
+  border: none;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35);
+}

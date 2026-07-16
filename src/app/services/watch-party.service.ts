@@ -136,21 +136,31 @@ export class WatchPartyService implements OnDestroy {
     this.displayName = trimmed || 'Guest';
   }
 
-  setMediaState(media: WatchPartyMediaState): void {
+  /**
+   * Update the local media snapshot. Only the host broadcasts media changes —
+   * guests must follow the host and never push their current page into the room.
+   */
+  setMediaState(media: WatchPartyMediaState, options?: { broadcast?: boolean }): void {
     this.mediaState = media;
-    if (this.isInParty) {
+    if (!this.isInParty) {
+      return;
+    }
+
+    const shouldBroadcast = options?.broadcast ?? this.isHost;
+    if (shouldBroadcast) {
       this.broadcast({
         action: 'media',
         media,
         displayName: this.displayName,
         sentAt: Date.now(),
       });
-      // Refresh persisted media so reload lands on the same title/episode
-      const role = this.snapshot.role;
-      const roomCode = this.snapshot.roomCode;
-      if ((role === 'host' || role === 'guest') && roomCode) {
-        this.persistSession(role, roomCode);
-      }
+    }
+
+    // Refresh persisted media so reload lands on the same title/episode
+    const role = this.snapshot.role;
+    const roomCode = this.snapshot.roomCode;
+    if ((role === 'host' || role === 'guest') && roomCode) {
+      this.persistSession(role, roomCode);
     }
   }
 
@@ -252,8 +262,10 @@ export class WatchPartyService implements OnDestroy {
         throw new Error('Could not start connection to host');
       }
 
-      await this.waitForConnection(conn);
+      // Listen for host hello/media before the connection opens — otherwise the
+      // host's first media sync can arrive and be dropped.
       this.registerConnection(conn, false);
+      await this.waitForConnection(conn);
 
       this.send(conn, {
         action: 'hello',
@@ -652,28 +664,39 @@ export class WatchPartyService implements OnDestroy {
   }
 
   private handleIncomingConnection(conn: DataConnection): void {
-    conn.on('open', () => {
+    // Register early so guest hello is never missed
+    this.registerConnection(conn, true);
+
+    const pushMediaToGuest = (): void => {
       this.ngZone.run(() => {
-        this.registerConnection(conn, true);
-
-        this.send(conn, {
-          action: 'hello',
-          displayName: this.displayName || 'Host',
-          media: this.mediaState ?? undefined,
-          sentAt: Date.now(),
-        });
-
-        if (this.mediaState) {
-          this.send(conn, {
-            action: 'media',
-            media: this.mediaState,
-            sentAt: Date.now(),
-          });
-        }
-
+        this.sendHostMediaSync(conn);
         this.syncRequestedSubject.next();
       });
+    };
+
+    if (conn.open) {
+      pushMediaToGuest();
+    } else {
+      conn.on('open', pushMediaToGuest);
+    }
+  }
+
+  /** Push current title/episode to a guest so they navigate to the host's media. */
+  private sendHostMediaSync(conn: DataConnection): void {
+    this.send(conn, {
+      action: 'hello',
+      displayName: this.displayName || 'Host',
+      media: this.mediaState ?? undefined,
+      sentAt: Date.now(),
     });
+
+    if (this.mediaState) {
+      this.send(conn, {
+        action: 'media',
+        media: this.mediaState,
+        sentAt: Date.now(),
+      });
+    }
   }
 
   private registerConnection(conn: DataConnection, fromHostSide: boolean): void {
@@ -715,6 +738,24 @@ export class WatchPartyService implements OnDestroy {
         });
       }
       this.patchState({ members });
+
+      // Guest hello: re-send host media after the guest is listening (avoids race)
+      if (fromHostSide && this.mediaState) {
+        this.send(conn, {
+          action: 'media',
+          media: this.mediaState,
+          sentAt: Date.now(),
+        });
+      }
+
+      // Host hello may include media — apply it on the guest
+      if (!fromHostSide && command.media) {
+        this.remoteCommandSubject.next({
+          action: 'media',
+          media: command.media,
+          sentAt: command.sentAt || Date.now(),
+        });
+      }
       return;
     }
 

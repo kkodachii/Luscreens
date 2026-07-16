@@ -64,9 +64,17 @@ export class WatchProgressService {
     this.progressSubject.next(this.readMap());
   }
 
-  /** Replace local map (e.g. after server pull). */
-  replaceMap(map: WatchProgressMap): void {
-    this.writeMap(map && typeof map === 'object' ? map : {});
+  /** Replace in-memory map (and optional local persist). */
+  replaceMap(
+    map: WatchProgressMap,
+    options: { persistLocal?: boolean } = {}
+  ): void {
+    const next = map && typeof map === 'object' ? map : {};
+    if (options.persistLocal === false) {
+      this.progressSubject.next({ ...next });
+      return;
+    }
+    this.writeMap(next);
   }
 
   getMap(): WatchProgressMap {
@@ -463,6 +471,10 @@ export class WatchProgressService {
     return `${mediaType === 'tv' ? 't' : 'm'}${id}`;
   }
 
+  /**
+   * Guest: browser cache only (`vidFastProgress`).
+   * Logged in: per-user mirror (`vidFastProgress:{userId}`) + Render sync.
+   */
   private storageKey(): string {
     return this.userId
       ? `${WatchProgressService.STORAGE_KEY}:${this.userId}`

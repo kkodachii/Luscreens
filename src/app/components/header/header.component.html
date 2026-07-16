@@ -144,10 +144,11 @@
         routerLink="/"
         routerLinkActive="active-link"
         [routerLinkActiveOptions]="{ exact: true }"
-        [class]="
+        class="hidden sm:flex items-center space-x-2 transition duration-300"
+        [ngClass]="
           isHomeRouteActive
-            ? 'flex items-center space-x-2 text-white transition duration-300'
-            : 'flex items-center space-x-2 text-white hover:text-red-500 transition duration-300'
+            ? 'text-white'
+            : 'text-white hover:text-red-500'
         "
       >
         <svg
@@ -160,7 +161,7 @@
           stroke-width="2"
           stroke-linecap="round"
           stroke-linejoin="round"
-          class="w-6 h-6 sm:inline-block hidden"
+          class="w-6 h-6"
         >
           <path stroke="none" d="M0 0h24v24H0z" fill="none" />
           <path d="M5 12l-2 0l9 -9l9 9l-2 0" />

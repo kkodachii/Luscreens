@@ -14,8 +14,8 @@ interface UserLibrary {
 }
 
 /**
- * Keeps recently played / history / watchlist scoped to the logged-in user
- * and syncs them to the Render auth-api.
+ * Guest (logged out): recently played / history / watchlist stay in localStorage only.
+ * Logged in: those lists live on Render for that account (with a per-user local mirror).
  */
 @Injectable({
   providedIn: 'root',
@@ -34,57 +34,70 @@ export class UserLibraryService {
   private pulling = false;
 
   constructor() {
-    // Defer so progress/watchlist constructors finish first
     queueMicrotask(() => {
       this.ready = true;
-      this.lastUserId = this.auth.user()?.id ?? null;
-      this.progress.bindToUser(this.lastUserId);
-      this.watchlist.bindToUser(this.lastUserId);
-      this.watchParty.bindToUser(this.lastUserId);
-      if (this.lastUserId) {
-        this.pullFromServer();
-      }
+      this.applyAuthState(this.auth.user()?.id ?? null, true);
     });
 
     effect(() => {
-      const user = this.auth.user();
-      const userId = user?.id ?? null;
+      const userId = this.auth.user()?.id ?? null;
       if (!this.ready || userId === this.lastUserId) {
         return;
       }
-
-      const wasLoggedIn = !!this.lastUserId;
-      this.lastUserId = userId;
-
-      // Leaving an account — drop active party so it isn't mixed into guest
-      if (wasLoggedIn && !userId) {
-        this.watchParty.leaveParty();
-      }
-
-      this.progress.bindToUser(userId);
-      this.watchlist.bindToUser(userId);
-      this.watchParty.bindToUser(userId);
-
-      if (userId) {
-        this.pullFromServer();
-      }
+      this.applyAuthState(userId, false);
     });
 
     this.progress.progress$.subscribe(() => this.schedulePush());
     this.watchlist.list$.subscribe(() => this.schedulePush());
   }
 
+  private applyAuthState(userId: string | null, initial: boolean): void {
+    const wasLoggedIn = !!this.lastUserId;
+    this.lastUserId = userId;
+
+    this.clearSyncTimer();
+
+    if (wasLoggedIn && !userId) {
+      this.watchParty.leaveParty();
+    }
+
+    // Guest → cache only. Logged-in → user-scoped storage + Render.
+    this.progress.bindToUser(userId);
+    this.watchlist.bindToUser(userId);
+    this.watchParty.bindToUser(userId);
+
+    if (userId && this.canSyncToRender()) {
+      this.pullFromServer();
+    } else if (!initial && !userId) {
+      // Explicitly ensure we are not talking to Render while logged out
+      this.pulling = false;
+    }
+  }
+
+  private canSyncToRender(): boolean {
+    return !!this.baseUrl && !!this.lastUserId && !!this.auth.getToken() && this.auth.isLoggedIn();
+  }
+
   private authHeaders(): HttpHeaders | null {
-    const token = this.auth.getToken();
-    if (!token) {
+    if (!this.canSyncToRender()) {
       return null;
     }
-    return new HttpHeaders({ Authorization: `Bearer ${token}` });
+    const token = this.auth.getToken();
+    return token
+      ? new HttpHeaders({ Authorization: `Bearer ${token}` })
+      : null;
+  }
+
+  private clearSyncTimer(): void {
+    if (this.syncTimer) {
+      clearTimeout(this.syncTimer);
+      this.syncTimer = null;
+    }
   }
 
   private pullFromServer(): void {
     const headers = this.authHeaders();
-    if (!this.baseUrl || !headers || !this.lastUserId) {
+    if (!headers || !this.lastUserId) {
       return;
     }
 
@@ -97,13 +110,13 @@ export class UserLibraryService {
       )
       .subscribe((res) => {
         try {
-          if (!res?.library || this.auth.user()?.id !== this.lastUserId) {
+          if (!res?.library || !this.canSyncToRender() || this.auth.user()?.id !== this.lastUserId) {
             return;
           }
-          this.progress.replaceMap(res.library.progress || {});
-          this.watchlist.replaceMap(res.library.watchlist || {});
+          // Server is source of truth while logged in
+          this.progress.replaceMap(res.library.progress || {}, { persistLocal: true });
+          this.watchlist.replaceMap(res.library.watchlist || {}, { persistLocal: true });
         } finally {
-          // Allow a tick so replaceMap emissions don't immediately re-push
           setTimeout(() => {
             this.pulling = false;
           }, 50);
@@ -112,18 +125,17 @@ export class UserLibraryService {
   }
 
   private schedulePush(): void {
-    if (!this.ready || !this.lastUserId || !this.baseUrl || this.pulling) {
+    // Never push guest/cache data to Render
+    if (!this.ready || !this.canSyncToRender() || this.pulling) {
       return;
     }
-    if (this.syncTimer) {
-      clearTimeout(this.syncTimer);
-    }
+    this.clearSyncTimer();
     this.syncTimer = setTimeout(() => this.pushToServer(), 800);
   }
 
   private pushToServer(): void {
     const headers = this.authHeaders();
-    if (!headers || !this.lastUserId) {
+    if (!headers || !this.lastUserId || !this.canSyncToRender()) {
       return;
     }
 
