@@ -54,8 +54,20 @@ export class WatchProgressService {
   private static readonly MIN_RESUME_SECONDS = 15;
   private static readonly MAX_RESUME_RATIO = 0.95;
 
+  private userId: string | null = null;
   private readonly progressSubject = new BehaviorSubject<WatchProgressMap>(this.readMap());
   readonly progress$ = this.progressSubject.asObservable();
+
+  /** Switch storage bucket when auth user changes. */
+  bindToUser(userId: string | null): void {
+    this.userId = userId;
+    this.progressSubject.next(this.readMap());
+  }
+
+  /** Replace local map (e.g. after server pull). */
+  replaceMap(map: WatchProgressMap): void {
+    this.writeMap(map && typeof map === 'object' ? map : {});
+  }
 
   getMap(): WatchProgressMap {
     return this.progressSubject.value;
@@ -451,9 +463,15 @@ export class WatchProgressService {
     return `${mediaType === 'tv' ? 't' : 'm'}${id}`;
   }
 
+  private storageKey(): string {
+    return this.userId
+      ? `${WatchProgressService.STORAGE_KEY}:${this.userId}`
+      : WatchProgressService.STORAGE_KEY;
+  }
+
   private readMap(): WatchProgressMap {
     try {
-      const raw = localStorage.getItem(WatchProgressService.STORAGE_KEY);
+      const raw = localStorage.getItem(this.storageKey());
       return raw ? (JSON.parse(raw) as WatchProgressMap) : {};
     } catch {
       return {};
@@ -462,7 +480,7 @@ export class WatchProgressService {
 
   private writeMap(map: WatchProgressMap): void {
     try {
-      localStorage.setItem(WatchProgressService.STORAGE_KEY, JSON.stringify(map));
+      localStorage.setItem(this.storageKey(), JSON.stringify(map));
       this.progressSubject.next({ ...map });
     } catch (error) {
       console.error('Failed to save watch progress:', error);

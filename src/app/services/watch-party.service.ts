@@ -80,6 +80,7 @@ export class WatchPartyService implements OnDestroy {
   private static readonly CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   private static readonly SESSION_KEY = 'luscreensWatchParty';
   private static readonly SESSION_MAX_AGE_MS = 6 * 60 * 60 * 1000; // 6 hours
+  private userId: string | null = null;
 
   private peer: Peer | null = null;
   private connections = new Map<string, DataConnection>();
@@ -104,6 +105,11 @@ export class WatchPartyService implements OnDestroy {
   private static readonly MAX_CHAT_LENGTH = 500;
 
   constructor(private ngZone: NgZone) {}
+
+  /** Scope party session restore to the logged-in user. */
+  bindToUser(userId: string | null): void {
+    this.userId = userId;
+  }
 
   get snapshot(): WatchPartyState {
     return this.stateSubject.value;
@@ -593,6 +599,12 @@ export class WatchPartyService implements OnDestroy {
       : new Error('Could not reclaim watch party room after reload');
   }
 
+  private sessionKey(): string {
+    return this.userId
+      ? `${WatchPartyService.SESSION_KEY}:${this.userId}`
+      : WatchPartyService.SESSION_KEY;
+  }
+
   private persistSession(role: 'host' | 'guest', roomCode: string): void {
     try {
       const session: WatchPartySession = {
@@ -606,10 +618,7 @@ export class WatchPartyService implements OnDestroy {
         title: this.mediaState?.title,
         savedAt: Date.now(),
       };
-      sessionStorage.setItem(
-        WatchPartyService.SESSION_KEY,
-        JSON.stringify(session)
-      );
+      sessionStorage.setItem(this.sessionKey(), JSON.stringify(session));
     } catch {
       // ignore quota / private mode
     }
@@ -617,7 +626,7 @@ export class WatchPartyService implements OnDestroy {
 
   private readSession(): WatchPartySession | null {
     try {
-      const raw = sessionStorage.getItem(WatchPartyService.SESSION_KEY);
+      const raw = sessionStorage.getItem(this.sessionKey());
       if (!raw) {
         return null;
       }
@@ -638,7 +647,7 @@ export class WatchPartyService implements OnDestroy {
 
   private clearSession(): void {
     try {
-      sessionStorage.removeItem(WatchPartyService.SESSION_KEY);
+      sessionStorage.removeItem(this.sessionKey());
     } catch {
       // ignore
     }

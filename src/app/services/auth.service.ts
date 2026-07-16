@@ -30,8 +30,30 @@ export class AuthService {
   readonly user = this.userSignal.asReadonly();
   readonly isLoggedIn = computed(() => !!this.userSignal() && !!this.tokenSignal());
 
+  private readonly authModalOpenSignal = signal(false);
+  private readonly authModalModeSignal = signal<'login' | 'register'>('login');
+  readonly authModalOpen = this.authModalOpenSignal.asReadonly();
+  readonly authModalMode = this.authModalModeSignal.asReadonly();
+
   get enabled(): boolean {
     return !!this.baseUrl;
+  }
+
+  getToken(): string | null {
+    return this.tokenSignal();
+  }
+
+  openAuthModal(mode: 'login' | 'register' = 'login'): void {
+    this.authModalModeSignal.set(mode);
+    this.authModalOpenSignal.set(true);
+  }
+
+  setAuthModalMode(mode: 'login' | 'register'): void {
+    this.authModalModeSignal.set(mode);
+  }
+
+  closeAuthModal(): void {
+    this.authModalOpenSignal.set(false);
   }
 
   constructor() {

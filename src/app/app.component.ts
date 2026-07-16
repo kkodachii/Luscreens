@@ -1,7 +1,8 @@
-import { Component, AfterViewInit } from '@angular/core'; // Import AfterViewInit
+import { Component, AfterViewInit, inject } from '@angular/core'; // Import AfterViewInit
 import { HeaderComponent } from './components/header/header.component';
 import { initFlowbite } from 'flowbite'; // Import Flowbite 
 import { RouterModule,Router, NavigationEnd } from '@angular/router';
+import { UserLibraryService } from './services/user-library.service';
 
 @Component({
   selector: 'app-root',
@@ -17,6 +18,10 @@ export class AppComponent implements AfterViewInit {
   isHomeRouteActive: boolean = false;
   isDetailsRoute: boolean = false;
   isFrameRoute: boolean = false;
+
+  /** Ensures user-scoped library sync starts with the app. */
+  private readonly _userLibrary = inject(UserLibraryService);
+
   constructor(private router: Router) {
     // Listen for route changes
     this.router.events.subscribe((event) => {

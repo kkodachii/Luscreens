@@ -27,8 +27,10 @@ Health: `http://localhost:8788/health`
 - `POST /auth/register` `{ email, password, name? }`
 - `POST /auth/login` `{ email, password }`
 - `GET /auth/me` `Authorization: Bearer <token>`
+- `GET /me/library` — user history / recently played / watchlist
+- `PUT /me/library` `{ progress, watchlist }`
 
 ### Notes
 
-- Free Render disks are ephemeral — user accounts in `data/users.json` can be lost on redeploy. Fine for MVP; use a real DB later.
+- Free Render disks are ephemeral — user accounts in `data/*.json` can be lost on redeploy. Fine for MVP; use a real DB later.
 - First request after sleep may take 30–60s.

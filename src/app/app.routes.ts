@@ -7,7 +7,6 @@ import { FrameComponent } from './components/frame/frame.component';
 import { AiComponent } from './components/ai/ai.component';
 import { HistoryComponent } from './components/history/history.component';
 import { WatchlistComponent } from './components/watchlist/watchlist.component';
-import { LoginComponent } from './components/login/login.component';
 
 export const routes: Routes = [
   { path: '', component: HomeComponent },
@@ -19,5 +18,4 @@ export const routes: Routes = [
   { path: 'ai', component: AiComponent },
   { path: 'history', component: HistoryComponent },
   { path: 'watchlist', component: WatchlistComponent },
-  { path: 'login', component: LoginComponent },
 ];

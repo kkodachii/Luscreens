@@ -19,8 +19,18 @@ export type WatchlistMap = Record<string, WatchlistItem>;
 export class WatchlistService {
   private static readonly STORAGE_KEY = 'luscreensWatchlist';
 
+  private userId: string | null = null;
   private readonly listSubject = new BehaviorSubject<WatchlistMap>(this.readMap());
   readonly list$ = this.listSubject.asObservable();
+
+  bindToUser(userId: string | null): void {
+    this.userId = userId;
+    this.listSubject.next(this.readMap());
+  }
+
+  replaceMap(map: WatchlistMap): void {
+    this.writeMap(map && typeof map === 'object' ? map : {});
+  }
 
   getMap(): WatchlistMap {
     return this.listSubject.value;
@@ -100,9 +110,15 @@ export class WatchlistService {
     return `${mediaType === 'tv' ? 't' : 'm'}${id}`;
   }
 
+  private storageKey(): string {
+    return this.userId
+      ? `${WatchlistService.STORAGE_KEY}:${this.userId}`
+      : WatchlistService.STORAGE_KEY;
+  }
+
   private readMap(): WatchlistMap {
     try {
-      const raw = localStorage.getItem(WatchlistService.STORAGE_KEY);
+      const raw = localStorage.getItem(this.storageKey());
       return raw ? (JSON.parse(raw) as WatchlistMap) : {};
     } catch {
       return {};
@@ -111,7 +127,7 @@ export class WatchlistService {
 
   private writeMap(map: WatchlistMap): void {
     try {
-      localStorage.setItem(WatchlistService.STORAGE_KEY, JSON.stringify(map));
+      localStorage.setItem(this.storageKey(), JSON.stringify(map));
       this.listSubject.next({ ...map });
     } catch (error) {
       console.error('Failed to save watchlist:', error);

@@ -13,7 +13,9 @@ const DATA_DIR = path.join(__dirname, '..', 'data');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 
 app.use(cors({ origin: true }));
-app.use(express.json({ limit: '32kb' }));
+app.use(express.json({ limit: '2mb' }));
+
+const LIBRARY_FILE = path.join(DATA_DIR, 'library.json');
 
 function ensureStore() {
   if (!fs.existsSync(DATA_DIR)) {
@@ -22,6 +24,54 @@ function ensureStore() {
   if (!fs.existsSync(USERS_FILE)) {
     fs.writeFileSync(USERS_FILE, '[]', 'utf8');
   }
+  if (!fs.existsSync(LIBRARY_FILE)) {
+    fs.writeFileSync(LIBRARY_FILE, '{}', 'utf8');
+  }
+}
+
+function readLibrary() {
+  ensureStore();
+  try {
+    const raw = fs.readFileSync(LIBRARY_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeLibrary(library) {
+  ensureStore();
+  fs.writeFileSync(LIBRARY_FILE, JSON.stringify(library), 'utf8');
+}
+
+function getUserLibrary(userId) {
+  const library = readLibrary();
+  const entry = library[userId] || {};
+  return {
+    progress: entry.progress && typeof entry.progress === 'object' ? entry.progress : {},
+    watchlist: entry.watchlist && typeof entry.watchlist === 'object' ? entry.watchlist : {},
+    updatedAt: entry.updatedAt || null,
+  };
+}
+
+function setUserLibrary(userId, patch) {
+  const library = readLibrary();
+  const current = library[userId] || {};
+  const next = {
+    progress:
+      patch.progress && typeof patch.progress === 'object'
+        ? patch.progress
+        : current.progress || {},
+    watchlist:
+      patch.watchlist && typeof patch.watchlist === 'object'
+        ? patch.watchlist
+        : current.watchlist || {},
+    updatedAt: Date.now(),
+  };
+  library[userId] = next;
+  writeLibrary(library);
+  return next;
 }
 
 function readUsers() {
@@ -159,6 +209,20 @@ app.get('/auth/me', authMiddleware, (req, res) => {
     return res.status(401).json({ error: 'User not found' });
   }
   res.json({ user: publicUser(user) });
+});
+
+/** Per-user history / recently played / watchlist */
+app.get('/me/library', authMiddleware, (req, res) => {
+  res.json({ library: getUserLibrary(req.auth.sub) });
+});
+
+app.put('/me/library', authMiddleware, (req, res) => {
+  const body = req.body || {};
+  const saved = setUserLibrary(req.auth.sub, {
+    progress: body.progress,
+    watchlist: body.watchlist,
+  });
+  res.json({ library: saved });
 });
 
 ensureStore();
