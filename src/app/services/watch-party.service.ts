@@ -1,4 +1,4 @@
-import { Injectable, NgZone, OnDestroy } from '@angular/core';
+import { Injectable, OnDestroy } from '@angular/core';
 import { BehaviorSubject, Subject } from 'rxjs';
 import Peer, { DataConnection, PeerError } from 'peerjs';
 
@@ -80,6 +80,7 @@ export class WatchPartyService implements OnDestroy {
   private static readonly CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   private static readonly SESSION_KEY = 'luscreensWatchParty';
   private static readonly SESSION_MAX_AGE_MS = 6 * 60 * 60 * 1000; // 6 hours
+  private static readonly MAX_CHAT_LENGTH = 500;
   private userId: string | null = null;
 
   private peer: Peer | null = null;
@@ -102,16 +103,12 @@ export class WatchPartyService implements OnDestroy {
   private readonly chatSubject = new Subject<WatchPartyChatMessage>();
   readonly chatMessages$ = this.chatSubject.asObservable();
 
-  /** App-wide Join modal (opened from header or ?party= invite links). */
+  /** App-wide Join modal (header / ?party= invite links). */
   private readonly joinModalSubject = new BehaviorSubject<{
     open: boolean;
     code: string;
   }>({ open: false, code: '' });
   readonly joinModal$ = this.joinModalSubject.asObservable();
-
-  private static readonly MAX_CHAT_LENGTH = 500;
-
-  constructor(private ngZone: NgZone) {}
 
   openJoinModal(prefillCode?: string): void {
     const code = prefillCode?.trim()
@@ -131,15 +128,10 @@ export class WatchPartyService implements OnDestroy {
     return this.mediaState;
   }
 
-  /**
-   * Wait until the host has shared a title (media sync), or timeout.
-   * Used after Join from the header so guests navigate to the host's link.
-   */
   waitForMediaState(timeoutMs = 4000): Promise<WatchPartyMediaState | null> {
     if (this.mediaState?.mediaType && this.mediaState?.id) {
       return Promise.resolve(this.mediaState);
     }
-
     return new Promise((resolve) => {
       let settled = false;
       const finish = (media: WatchPartyMediaState | null): void => {
@@ -151,13 +143,11 @@ export class WatchPartyService implements OnDestroy {
         sub.unsubscribe();
         resolve(media);
       };
-
       const sub = this.remoteCommands$.subscribe((command) => {
         if (command.media?.mediaType && command.media?.id) {
           finish(command.media);
         }
       });
-
       const timer = setTimeout(() => finish(this.mediaState), timeoutMs);
     });
   }
@@ -192,16 +182,13 @@ export class WatchPartyService implements OnDestroy {
     this.displayName = trimmed || 'Guest';
   }
 
-  /**
-   * Update the local media snapshot. Only the host broadcasts media changes —
-   * guests must follow the host and never push their current page into the room.
-   */
   setMediaState(media: WatchPartyMediaState, options?: { broadcast?: boolean }): void {
     this.mediaState = media;
     if (!this.isInParty) {
       return;
     }
 
+    // Guests follow the host — only host broadcasts media by default
     const shouldBroadcast = options?.broadcast ?? this.isHost;
     if (shouldBroadcast) {
       this.broadcast({
@@ -212,7 +199,6 @@ export class WatchPartyService implements OnDestroy {
       });
     }
 
-    // Refresh persisted media so reload lands on the same title/episode
     const role = this.snapshot.role;
     const roomCode = this.snapshot.roomCode;
     if ((role === 'host' || role === 'guest') && roomCode) {
@@ -226,12 +212,7 @@ export class WatchPartyService implements OnDestroy {
     }
 
     await this.resetPeer();
-    this.patchState({
-      connecting: true,
-      error: null,
-      role: 'host',
-      roomCode: null,
-    });
+    this.patchState({ connecting: true, error: null, role: 'host', roomCode: null });
 
     const roomCode = existingRoomCode
       ? this.normalizeRoomCode(existingRoomCode)
@@ -249,12 +230,8 @@ export class WatchPartyService implements OnDestroy {
         throw new Error('Room id mismatch from signaling server. Please try again.');
       }
 
-      this.peer.on('connection', (conn) =>
-        this.ngZone.run(() => this.handleIncomingConnection(conn))
-      );
-      this.peer.on('error', (err) =>
-        this.ngZone.run(() => this.onPeerError(err))
-      );
+      this.peer.on('connection', (conn) => this.handleIncomingConnection(conn));
+      this.peer.on('error', (err) => this.onPeerError(err));
 
       this.patchState({
         role: 'host',
@@ -294,89 +271,63 @@ export class WatchPartyService implements OnDestroy {
       throw new Error('Enter a valid room code');
     }
 
-    let lastError: unknown;
-    // Mobile/cellular often needs a couple tries for PeerJS + ICE
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      await this.resetPeer();
-      this.patchState({
-        connecting: true,
-        error: null,
-        role: 'guest',
-        roomCode: normalized,
-        connected: false,
-        members: [],
-        inviteUrl: null,
-      });
-
-      try {
-        await this.openPeer();
-        this.peer!.on('error', (err) =>
-          this.ngZone.run(() => this.onPeerError(err))
-        );
-
-        const hostPeerId = this.toPeerId(normalized);
-        const conn = this.peer!.connect(hostPeerId, { reliable: true });
-        if (!conn) {
-          throw new Error('Could not start connection to host');
-        }
-
-        // Buffer host packets that arrive before we fully register handlers
-        const earlyPackets: unknown[] = [];
-        const onEarlyData = (data: unknown): void => {
-          earlyPackets.push(data);
-        };
-        conn.on('data', onEarlyData);
-
-        await this.waitForConnection(conn);
-        conn.off('data', onEarlyData);
-
-        this.registerConnection(conn, false);
-        for (const packet of earlyPackets) {
-          this.onConnectionData(conn, packet, false);
-        }
-
-        this.send(conn, {
-          action: 'hello',
-          displayName: this.displayName,
-          sentAt: Date.now(),
-        });
-
-        this.patchState({
-          role: 'guest',
-          roomCode: normalized,
-          connected: true,
-          connecting: false,
-          inviteUrl: this.buildInviteUrl(normalized),
-          members: [
-            { peerId: hostPeerId, displayName: 'Host', isHost: true },
-            {
-              peerId: this.peer!.id,
-              displayName: this.displayName,
-              isHost: false,
-            },
-          ],
-          error: null,
-        });
-
-        this.persistSession('guest', normalized);
-        return;
-      } catch (error) {
-        lastError = error;
-        if (attempt < 3) {
-          await new Promise((r) => setTimeout(r, 700 * attempt));
-        }
-      }
-    }
-
     await this.resetPeer();
     this.patchState({
-      ...INITIAL_STATE,
-      connecting: false,
-      error: this.toErrorMessage(lastError, 'Failed to join watch party'),
+      connecting: true,
+      error: null,
+      role: 'guest',
+      roomCode: normalized,
+      connected: false,
+      members: [],
+      inviteUrl: null,
     });
-    throw lastError instanceof Error
-      ? lastError
-      : new Error(this.toErrorMessage(lastError, 'Failed to join watch party'));
+
+    try {
+      await this.openPeer();
+      this.peer!.on('error', (err) => this.onPeerError(err));
+
+      const hostPeerId = this.toPeerId(normalized);
+      const conn = this.peer!.connect(hostPeerId, { reliable: true });
+
+      if (!conn) {
+        throw new Error('Could not start connection to host');
+      }
+
+      await this.waitForConnection(conn);
+      this.registerConnection(conn, false);
+
+      this.send(conn, {
+        action: 'hello',
+        displayName: this.displayName,
+        sentAt: Date.now(),
+      });
+
+      this.patchState({
+        role: 'guest',
+        roomCode: normalized,
+        connected: true,
+        connecting: false,
+        inviteUrl: this.buildInviteUrl(normalized),
+        members: [
+          { peerId: hostPeerId, displayName: 'Host', isHost: true },
+          {
+            peerId: this.peer!.id,
+            displayName: this.displayName,
+            isHost: false,
+          },
+        ],
+        error: null,
+      });
+
+      this.persistSession('guest', normalized);
+    } catch (error) {
+      await this.resetPeer();
+      this.patchState({
+        ...INITIAL_STATE,
+        error: this.toErrorMessage(error, 'Failed to join watch party'),
+      });
+      throw error;
+    }
   }
 
   /** Restore a party after page reload. Returns true if reconnect was attempted. */
@@ -432,7 +383,7 @@ export class WatchPartyService implements OnDestroy {
     this.stateSubject.next({ ...INITIAL_STATE });
   }
 
-  /** Tear down the peer without clearing the saved session (used on page unload / SPA nav). */
+  /** Tear down the peer without clearing the saved session (used on page unload). */
   disconnectKeepingSession(): void {
     void this.resetPeer();
     this.applyingRemote = false;
@@ -534,28 +485,9 @@ export class WatchPartyService implements OnDestroy {
 
   private async openPeer(peerId?: string): Promise<void> {
     await new Promise<void>((resolve, reject) => {
-      // Keep PeerJS cloud TURN + extra STUN — mobile/cellular often needs TURN
-      const peerOptions = {
-        debug: 1 as const,
-        config: {
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-            { urls: 'stun:stun.cloudflare.com:3478' },
-            {
-              urls: [
-                'turn:0.peerjs.com:3478',
-                'turn:0.peerjs.com:3478?transport=tcp',
-              ],
-              username: 'peerjs',
-              credential: 'peerjsp',
-            },
-          ],
-        },
-      };
       const peer = peerId
-        ? new Peer(peerId, peerOptions)
-        : new Peer(peerOptions);
+        ? new Peer(peerId, { debug: 1 })
+        : new Peer({ debug: 1 });
       this.peer = peer;
 
       let settled = false;
@@ -566,13 +498,11 @@ export class WatchPartyService implements OnDestroy {
         }
         settled = true;
         cleanup();
-        this.ngZone.run(() => {
-          if (peerId && id !== peerId) {
-            reject(new Error('Signaling server assigned a different room id'));
-            return;
-          }
-          resolve();
-        });
+        if (peerId && id !== peerId) {
+          reject(new Error('Signaling server assigned a different room id'));
+          return;
+        }
+        resolve();
       };
 
       const onError = (err: PeerError<string>): void => {
@@ -581,7 +511,7 @@ export class WatchPartyService implements OnDestroy {
         }
         settled = true;
         cleanup();
-        this.ngZone.run(() => reject(err));
+        reject(err);
       };
 
       const cleanup = (): void => {
@@ -677,7 +607,7 @@ export class WatchPartyService implements OnDestroy {
 
   /**
    * PeerJS often emits peer-unavailable on the Peer, not the DataConnection.
-   * Same behavior as the original working watch-party commit.
+   * Listen to both so join fails fast instead of hanging / acting weird.
    */
   private waitForConnection(conn: DataConnection): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -697,7 +627,7 @@ export class WatchPartyService implements OnDestroy {
             )
           )
         );
-      }, 20000);
+      }, 12000);
 
       const onOpen = (): void => {
         finish(() => resolve());
@@ -731,13 +661,8 @@ export class WatchPartyService implements OnDestroy {
         conn.off('open', onOpen);
         conn.off('error', onConnError);
         peer.off('error', onPeerError);
-        this.ngZone.run(cb);
+        cb();
       };
-
-      if (conn.open) {
-        finish(() => resolve());
-        return;
-      }
 
       conn.on('open', onOpen);
       conn.on('error', onConnError);
@@ -759,54 +684,34 @@ export class WatchPartyService implements OnDestroy {
   }
 
   private handleIncomingConnection(conn: DataConnection): void {
-    // Original working approach: register + sync only after the data channel is open
-    const onOpen = (): void => {
-      this.ngZone.run(() => {
-        this.registerConnection(conn, true);
-        this.sendHostMediaSync(conn);
-        this.syncRequestedSubject.next();
-      });
-    };
+    conn.on('open', () => {
+      this.registerConnection(conn, true);
 
-    if (conn.open) {
-      onOpen();
-      return;
-    }
-    conn.on('open', onOpen);
-  }
-
-  /** Push current title/episode to a guest so they navigate to the host's media. */
-  private sendHostMediaSync(conn: DataConnection): void {
-    this.send(conn, {
-      action: 'hello',
-      displayName: this.displayName || 'Host',
-      media: this.mediaState ?? undefined,
-      sentAt: Date.now(),
-    });
-
-    if (this.mediaState) {
       this.send(conn, {
-        action: 'media',
-        media: this.mediaState,
+        action: 'hello',
+        displayName: this.displayName || 'Host',
+        media: this.mediaState ?? undefined,
         sentAt: Date.now(),
       });
-    }
+
+      if (this.mediaState) {
+        this.send(conn, {
+          action: 'media',
+          media: this.mediaState,
+          sentAt: Date.now(),
+        });
+      }
+
+      this.syncRequestedSubject.next();
+    });
   }
 
   private registerConnection(conn: DataConnection, fromHostSide: boolean): void {
     this.connections.set(conn.peer, conn);
 
-    conn.on('data', (data) =>
-      this.ngZone.run(() => this.onConnectionData(conn, data, fromHostSide))
-    );
-    conn.on('close', () =>
-      this.ngZone.run(() => this.onConnectionClosed(conn.peer))
-    );
-    // Do not tear down on transient ICE/WebRTC errors — common on mobile.
-    // Only 'close' means the peer is actually gone.
-    conn.on('error', (err) => {
-      console.warn('Watch party connection error:', err);
-    });
+    conn.on('data', (data) => this.onConnectionData(conn, data, fromHostSide));
+    conn.on('close', () => this.onConnectionClosed(conn.peer));
+    conn.on('error', () => this.onConnectionClosed(conn.peer));
 
     this.refreshMembers();
   }
@@ -835,7 +740,7 @@ export class WatchPartyService implements OnDestroy {
       }
       this.patchState({ members });
 
-      // Guest hello: re-send host media after the guest is listening (avoids race)
+      // Guest hello: re-send host media after the guest is listening
       if (fromHostSide && this.mediaState) {
         this.send(conn, {
           action: 'media',
@@ -844,9 +749,9 @@ export class WatchPartyService implements OnDestroy {
         });
       }
 
-      // Host hello may include media — apply it on the guest
+      // Host hello may include media — surface it for guests
       if (!fromHostSide && command.media) {
-        this.applyGuestMedia(command.media);
+        this.mediaState = command.media;
         this.remoteCommandSubject.next({
           action: 'media',
           media: command.media,
@@ -857,7 +762,9 @@ export class WatchPartyService implements OnDestroy {
     }
 
     if (command.action === 'chat') {
-      const text = (command.text || '').trim().slice(0, WatchPartyService.MAX_CHAT_LENGTH);
+      const text = (command.text || '')
+        .trim()
+        .slice(0, WatchPartyService.MAX_CHAT_LENGTH);
       if (text) {
         this.chatSubject.next({
           id: command.messageId || `${command.sentAt || Date.now()}-${conn.peer}`,
@@ -868,20 +775,16 @@ export class WatchPartyService implements OnDestroy {
           isLocal: false,
         });
       }
-
-      // Star topology: host relays guest chat to the other guests
       if (this.isHost) {
         this.relayExcept(conn.peer, command);
       }
       return;
     }
 
-    // Guests store host media so Join-from-header can navigate to the title
-    if (!fromHostSide && command.media && command.action === 'media') {
-      this.applyGuestMedia(command.media);
-    }
-
     // Apply remote playback/media for everyone (host and guests)
+    if (command.media && !fromHostSide) {
+      this.mediaState = command.media;
+    }
     this.remoteCommandSubject.next(command);
 
     // Star topology: host relays guest controls to the other guests
@@ -894,25 +797,6 @@ export class WatchPartyService implements OnDestroy {
         command.action === 'media')
     ) {
       this.relayExcept(conn.peer, command);
-    }
-  }
-
-  private applyGuestMedia(media: WatchPartyMediaState): void {
-    if (!media?.mediaType || media.id == null || media.id === '') {
-      return;
-    }
-    this.mediaState = {
-      mediaType: media.mediaType,
-      id: String(media.id),
-      season: media.season,
-      episode: media.episode,
-      title: media.title,
-      posterPath: media.posterPath ?? null,
-    };
-    const role = this.snapshot.role;
-    const roomCode = this.snapshot.roomCode;
-    if ((role === 'host' || role === 'guest') && roomCode) {
-      this.persistSession(role, roomCode);
     }
   }
 
@@ -1053,33 +937,13 @@ export class WatchPartyService implements OnDestroy {
       return '';
     }
 
-    const origin = window.location.origin;
-    const media = this.mediaState;
-    // Prefer host media path so invite links open the correct title
-    if (media?.mediaType && media.id) {
-      let path = `/frame/${media.mediaType}/${media.id}`;
-      if (
-        media.mediaType === 'tv' &&
-        media.season != null &&
-        media.episode != null
-      ) {
-        path += `/${media.season}/${media.episode}`;
-      }
-      return `${origin}${path}?party=${encodeURIComponent(roomCode)}`;
-    }
-
     const url = new URL(window.location.href);
     url.searchParams.set('party', roomCode);
     return url.toString();
   }
 
   private patchState(partial: Partial<WatchPartyState>): void {
-    const next = { ...this.stateSubject.value, ...partial };
-    if (NgZone.isInAngularZone()) {
-      this.stateSubject.next(next);
-    } else {
-      this.ngZone.run(() => this.stateSubject.next(next));
-    }
+    this.stateSubject.next({ ...this.stateSubject.value, ...partial });
   }
 
   private toErrorMessage(error: unknown, fallback: string): string {
