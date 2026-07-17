@@ -1,6 +1,6 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { HttpClient, HttpErrorResponse, HttpHeaders } from '@angular/common/http';
-import { Observable, catchError, map, of, tap, timeout } from 'rxjs';
+import { Observable, catchError, map, of, retry, tap, throwError, timeout, timer } from 'rxjs';
 import { environment } from '../../environments/environment';
 
 export interface AuthUser {
@@ -141,16 +141,28 @@ export class AuthService {
         headers: new HttpHeaders({ Authorization: `Bearer ${token}` }),
       })
       .pipe(
-        // Render free tier cold-start can take 30–60s — don't cut the session early
-        timeout(60000),
+        // Render free tier cold-start can take a while; retries cover the rest.
+        timeout(45000),
         map((res) => {
           this.userSignal.set(res.user);
           this.writeUser(res.user);
           return res.user;
         }),
+        retry({
+          count: 2,
+          delay: (error, retryCount) => {
+            // Never retry a rejected credential — surface 401 immediately.
+            if (this.isUnauthorizedError(error)) {
+              return throwError(() => error);
+            }
+            // Backoff while the auth API wakes up (e.g. after ~1hr idle).
+            const waitMs = retryCount === 1 ? 2000 : 5000;
+            return timer(waitMs);
+          },
+        }),
         catchError((err: unknown) => {
           // Only clear session on real auth rejection — not timeouts / wake-ups / 5xx
-          if (this.isAuthRejection(err)) {
+          if (this.isUnauthorizedError(err)) {
             this.logout();
             return of(null);
           }
@@ -308,7 +320,8 @@ export class AuthService {
     }
   }
 
-  private isAuthRejection(err: unknown): boolean {
+  /** True when the auth API rejected the credential (not a cold-start / network blip). */
+  private isUnauthorizedError(err: unknown): boolean {
     const status = (err as HttpErrorResponse)?.status;
     return status === 401 || status === 403;
   }
