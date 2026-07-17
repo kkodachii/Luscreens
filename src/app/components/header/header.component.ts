@@ -165,17 +165,9 @@ export class HeaderComponent {
       );
       this.closeJoinPartyModal();
 
-      // If they pasted a full /frame/...?party= invite, go there right away
-      if (mediaFromInvite) {
-        this.navigateToPartyMedia(mediaFromInvite);
-      }
-
-      // Then follow the host's live media (may refine season/episode/title)
+      // Navigate without blocking join — host media also arrives via remoteCommands$
       const media =
-        (await this.watchPartyService.waitForMediaState(
-          mediaFromInvite ? 2500 : 4500
-        )) || this.watchPartyService.getMediaState();
-
+        this.watchPartyService.getMediaState() || mediaFromInvite;
       if (media) {
         this.navigateToPartyMedia(media);
       }

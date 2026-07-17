@@ -312,16 +312,14 @@ export class WatchPartyService implements OnDestroy {
       );
 
       const hostPeerId = this.toPeerId(normalized);
-      // Same connect path as the original working watch-party commit
+      // Match original working watch-party commit: wait for open, then register.
       const conn = this.peer!.connect(hostPeerId, { reliable: true });
       if (!conn) {
         throw new Error('Could not start connection to host');
       }
 
-      // Listen for host hello/media before the connection opens — otherwise the
-      // host's first media sync can arrive and be dropped.
-      this.registerConnection(conn, false);
       await this.waitForConnection(conn);
+      this.registerConnection(conn, false);
 
       this.send(conn, {
         action: 'hello',
@@ -720,21 +718,20 @@ export class WatchPartyService implements OnDestroy {
   }
 
   private handleIncomingConnection(conn: DataConnection): void {
-    // Register early so guest hello is never missed
-    this.registerConnection(conn, true);
-
-    const pushMediaToGuest = (): void => {
+    // Original working approach: register + sync only after the data channel is open
+    const onOpen = (): void => {
       this.ngZone.run(() => {
+        this.registerConnection(conn, true);
         this.sendHostMediaSync(conn);
         this.syncRequestedSubject.next();
       });
     };
 
     if (conn.open) {
-      pushMediaToGuest();
-    } else {
-      conn.on('open', pushMediaToGuest);
+      onOpen();
+      return;
     }
+    conn.on('open', onOpen);
   }
 
   /** Push current title/episode to a guest so they navigate to the host's media. */
