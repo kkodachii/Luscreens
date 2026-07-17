@@ -153,10 +153,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     inviteUrl: null,
   };
   showWatchPartyPanel = false;
-  showJoinInviteModal = false;
-  watchPartyMode: 'create' | 'join' = 'create';
   watchPartyName = '';
-  joinRoomCode = '';
   watchPartyCopied = false;
   partyChatMessages: WatchPartyChatMessage[] = [];
   partyChatDraft = '';
@@ -1081,10 +1078,6 @@ export class FrameComponent implements OnInit, OnDestroy {
     // Already connected from a previous frame (SPA navigation) — keep peer, just sync media
     if (this.watchPartyService.isInParty) {
       this.showWatchPartyPanel = true;
-      const live = this.watchPartyService.snapshot;
-      if (live.roomCode) {
-        this.joinRoomCode = live.roomCode;
-      }
       if (saved?.displayName) {
         this.watchPartyName = saved.displayName;
       }
@@ -1099,49 +1092,40 @@ export class FrameComponent implements OnInit, OnDestroy {
       saved &&
       saved.roomCode.toUpperCase() !== inviteCode
     ) {
-      this.openJoinInviteModal(inviteCode);
+      this.watchPartyService.openJoinModal(inviteCode);
+      this.showWatchPartyPanel = false;
       return;
     }
 
     if (saved) {
       this.showWatchPartyPanel = true;
       this.watchPartyName = saved.displayName || '';
-      this.joinRoomCode = saved.roomCode;
-      this.watchPartyMode = saved.role === 'host' ? 'create' : 'join';
 
       try {
         const restored = await this.watchPartyService.restoreSession();
         if (restored) {
           this.syncWatchPartyMedia();
         } else if (saved.role === 'guest') {
-          // Host may still be reconnecting — show join modal so they can retry with a name
-          this.openJoinInviteModal(saved.roomCode);
+          // Host may still be reconnecting — open header join modal to retry
+          this.watchPartyService.openJoinModal(saved.roomCode);
           this.watchPartyName = saved.displayName || '';
+          this.showWatchPartyPanel = false;
         }
       } catch (error) {
         console.error('Failed to restore watch party:', error);
         if (saved.role === 'guest') {
-          this.openJoinInviteModal(saved.roomCode);
+          this.watchPartyService.openJoinModal(saved.roomCode);
           this.watchPartyName = saved.displayName || '';
+          this.showWatchPartyPanel = false;
         }
       }
       return;
     }
 
     if (inviteCode) {
-      this.openJoinInviteModal(inviteCode);
+      this.watchPartyService.openJoinModal(inviteCode);
+      this.showWatchPartyPanel = false;
     }
-  }
-
-  private openJoinInviteModal(roomCode: string): void {
-    this.joinRoomCode = roomCode.trim().toUpperCase();
-    this.watchPartyMode = 'join';
-    this.showJoinInviteModal = true;
-    this.showWatchPartyPanel = false;
-  }
-
-  closeJoinInviteModal(): void {
-    this.showJoinInviteModal = false;
   }
 
   private syncPartyQueryParam(roomCode: string): void {
@@ -1202,24 +1186,6 @@ export class FrameComponent implements OnInit, OnDestroy {
       this.showWatchPartyPanel = true;
     } catch (error) {
       console.error('Failed to start watch party:', error);
-    }
-  }
-
-  async joinWatchParty(): Promise<void> {
-    try {
-      await this.watchPartyService.joinParty(
-        this.joinRoomCode,
-        this.getWatchPartyDisplayName('Guest')
-      );
-      this.showJoinInviteModal = false;
-      this.showWatchPartyPanel = true;
-      // Do not push the guest's current title — wait for the host media sync
-    } catch (error) {
-      console.error('Failed to join watch party:', error);
-      // Keep invite modal open so the error + retry are visible on mobile
-      this.showJoinInviteModal = true;
-    } finally {
-      this.cdr.detectChanges();
     }
   }
 

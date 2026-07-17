@@ -1,139 +1,151 @@
-<section class="min-h-screen text-white p-4">
+<section class="relative min-h-screen text-white overflow-hidden">
+  <!-- Decorative poster slider — not clickable -->
+  <div class="ai-bg pointer-events-none absolute inset-0 z-0" aria-hidden="true">
+    <div
+      *ngFor="let url of bgUrls; let i = index"
+      class="ai-bg-slide absolute inset-0 bg-cover bg-center"
+      [class.is-active]="i === bgIndex"
+      [style.background-image]="'url(' + url + ')'"
+    ></div>
+    <div class="absolute inset-0 bg-black/65"></div>
+    <div class="absolute inset-0 bg-gradient-to-b from-black/50 via-black/55 to-netflix-black"></div>
+  </div>
 
-  
-    <!-- Input Area -->
-    <div class="flex flex-col sm:flex-row w-full mb-8">
-      <!-- Search Bar -->
-      <div class="relative w-full sm:w-3/4 pr-0 sm:pr-2 mb-4 sm:mb-0">
-        <input
-          type="text"
-          placeholder="Find movies or series with AI (e.g., I want a sci-fi movie...)"
-          class="w-full px-4 py-3 pr-14 pl-12 bg-transparent border border-white text-white rounded-full focus:outline-none focus:border-red-600 focus:ring-2 focus:ring-red-600 transition duration-300"
-          [(ngModel)]="prompt"
-        />
-        <!-- Search Icon -->
-        <button
-          (click)="sendMessage()"
-          class="absolute inset-y-0 left-0 flex items-center px-3 ml-2 text-gray-400 hover:text-red-500 transition duration-300"
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="24"
-            height="24"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            class="icon icon-tabler icons-tabler-outline icon-tabler-search w-6 h-6"
-          >
-            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
-            <path d="M10 10m-7 0a7 7 0 1 0 14 0a7 7 0 1 0 -14 0" />
-            <path d="M21 21l-6 -6" />
-          </svg>
-        </button>
-        <!-- Regenerate Icon -->
-        <button
-          (click)="regenerate()"
-          class="absolute inset-y-0 right-0 flex items-center px-3 mr-2 text-gray-400 hover:text-red-500 transition duration-300"
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="24"
-            height="24"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            class="icon icon-tabler icons-tabler-outline icon-tabler-refresh w-6 h-6"
-          >
-            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
-            <path d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4" />
-            <path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4" />
-          </svg>
-        </button>
+  <div class="relative z-10 pt-20 sm:pt-28 pb-12 px-4 sm:px-6 lg:px-8">
+    <div class="w-full max-w-xl mx-auto">
+      <div class="mb-4 sm:mb-8">
+        <h1 class="text-2xl sm:text-3xl md:text-4xl font-bold text-white leading-snug">
+          What do you feel like watching?
+        </h1>
+        <p class="mt-1.5 sm:mt-3 text-sm text-gray-300 leading-relaxed">
+          Describe a mood, genre, or vibe — we’ll suggest real titles you can stream on Luscreens.
+        </p>
       </div>
-    
-      <!-- Send Button -->
-      <div class="w-full sm:w-1/4 pl-0 sm:pl-2">
-        <button
-          (click)="sendMessage()"
-          class="w-full px-4 py-3 bg-red-600 text-white rounded-full hover:bg-red-700 transition duration-300"
-        >
-          Send
-        </button>
-      </div>
-    </div>
 
-        <!-- AI Movie Suggestions Heading -->
-        <div class="flex items-center text-white text-xl sm:text-2xl md:text-3xl font-bold mb-6">
-            <span class="w-2 h-7 bg-red-600 rounded-full mr-3 animate-pulse"></span>
-            {{
-              isLoading
-                ? 'Generating Suggestions...'
-                : query.trim()
-                  ? tmdbResults.length > 0
-                    ? 'Generated Title: ' + response
-                    : 'No Results Found for "' + query + '"'
-                  : 'Top AI Movie Suggestions'
-            }}
+      <div class="ai-prompt rounded-2xl border border-white/20 bg-black/55 backdrop-blur-sm p-3 sm:p-4 transition">
+        <label for="ai-prompt" class="sr-only">Describe what you want to watch</label>
+        <textarea
+          id="ai-prompt"
+          rows="4"
+          [ngModel]="prompt"
+          (ngModelChange)="onPromptChange($event)"
+          (keydown.control.enter)="sendMessage()"
+          (keydown.meta.enter)="sendMessage()"
+          [disabled]="isLoading"
+          maxlength="400"
+          placeholder="e.g. slow-burn mystery shows with a great twist ending…"
+          class="w-full min-h-[6.5rem] sm:min-h-[7.5rem] resize-none rounded-xl border border-white/25 bg-black/40 px-3 py-2.5 text-white placeholder:text-gray-500 text-sm sm:text-base leading-relaxed focus:outline-none focus:border-red-500/70 disabled:opacity-60 transition"
+        ></textarea>
+
+        <div class="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <span class="text-xs text-gray-400 tabular-nums">
+            {{ promptLength }}/{{ maxPromptLength }}
+          </span>
+
+          <div class="flex items-center gap-2 ml-auto">
+            <button
+              *ngIf="hasSearched"
+              type="button"
+              (click)="regenerate()"
+              [disabled]="!canSubmit"
+              class="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-full text-sm border border-white/20 text-gray-200 hover:bg-white/10 disabled:opacity-40 transition"
+            >
+              More ideas
+            </button>
+
+            <button
+              type="button"
+              (click)="sendMessage()"
+              [disabled]="!canSubmit"
+              class="inline-flex items-center justify-center gap-2 px-3.5 py-2 rounded-full text-sm font-medium bg-red-600 hover:bg-red-500 text-white disabled:opacity-40 transition"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M15 4V2" />
+                <path d="M15 16v-2" />
+                <path d="M8 9h2" />
+                <path d="M20 9h2" />
+                <path d="M17.8 11.8 19 13" />
+                <path d="M15 9h0" />
+                <path d="M17.8 6.2 19 5" />
+                <path d="m3 21 9-9" />
+                <path d="M12.2 6.2 11 5" />
+              </svg>
+              {{ isLoading ? 'Finding…' : 'Get suggestions' }}
+            </button>
           </div>
-  
-    <!-- Loading Spinner -->
-    <div *ngIf="isLoading" class="flex justify- items-center min-h-[20vh]">
-      <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-red-600"></div>
-    </div>
-  
-    <!-- TMDB Results -->
-    <div *ngIf="!isLoading && tmdbResults.length > 0" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-      <div *ngFor="let result of tmdbResults" class="group relative rounded-lg overflow-hidden bg-gray-800">
-        <a [routerLink]="['/details', result.media_type || 'movie', result.id]" class="block">
-          <!-- Poster Image -->
-          <img
-            [src]="result.poster_path ? 'https://image.tmdb.org/t/p/w500' + result.poster_path : 'assets/fallback.jpg'"
-            alt="{{ result.title || result.name }}"
-            class="w-full h-48 sm:h-64 object-cover group-hover:scale-110 transition-transform duration-300"
-            loading="lazy"
-          />
-  
-          <!-- Overlay Content -->
-          <div
-            class="absolute bottom-0 left-0 right-0 bg-black bg-opacity-70 p-4 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-between"
-            style="min-height: 5rem; max-height: 8rem;"
+        </div>
+      </div>
+
+      <div class="mt-6 sm:mt-8" *ngIf="!isLoading">
+        <p class="text-[11px] tracking-[0.16em] uppercase text-gray-400 font-medium mb-2.5 sm:mb-3">
+          Try an example
+        </p>
+        <div class="flex flex-wrap gap-2">
+          <button
+            *ngFor="let example of examplePrompts"
+            type="button"
+            (click)="useExample(example)"
+            [disabled]="isLoading"
+            class="px-3 py-1.5 rounded-full text-xs sm:text-sm border border-white/25 bg-black/35 text-gray-200 hover:border-red-500/50 hover:text-white hover:bg-red-600/15 disabled:opacity-40 transition text-left"
           >
-            <!-- Title -->
-            <h2 class="text-sm font-bold text-white break-words line-clamp-3">
-              {{ result.title || result.name }}
-            </h2>
-            <!-- Type and Rating -->
-            <div class="flex items-center justify-between mt-2">
-              <!-- Type (Movie or Series) -->
-              <span class="text-xs text-gray-300">
-                {{ result.media_type === 'tv' ? 'Series' : 'Movie' }}
-              </span>
-              <!-- Rating with Red Star -->
-              <div class="flex items-center text-xs text-gray-300">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="12"
-                  height="12"
-                  viewBox="0 0 24 24"
-                  fill="currentColor"
-                  class="text-red-600 mr-1"
-                >
-                  <path
-                    d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"
-                  ></path>
-                </svg>
-                <span>{{ result.vote_average.toFixed(1) }}/10</span>
+            {{ example }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="max-w-6xl mx-auto mt-10 sm:mt-14" *ngIf="hasSearched">
+      <div class="flex items-center text-white text-lg sm:text-2xl font-bold mb-5">
+        <span class="w-2 h-6 sm:h-7 bg-red-600 rounded-full mr-3 shrink-0" [class.animate-pulse]="isLoading"></span>
+        <h2 class="leading-snug">{{ resultsHeading }}</h2>
+      </div>
+
+      <p *ngIf="!isLoading && response && tmdbResults.length > 0 && !usedFallback" class="text-xs text-gray-400 mb-4">
+        AI picked: {{ response }}
+      </p>
+      <p *ngIf="!isLoading && usedFallback && tmdbResults.length > 0" class="text-xs text-gray-400 mb-4">
+        Showing TMDB matches for your prompt (AI recommend unavailable).
+      </p>
+      <p *ngIf="!isLoading && errorMessage" class="text-sm text-red-400 mb-4">
+        {{ errorMessage }}
+      </p>
+
+      <div *ngIf="isLoading" class="flex justify-center items-center min-h-[24vh]">
+        <div class="animate-spin rounded-full h-14 w-14 border-t-4 border-b-4 border-red-600"></div>
+      </div>
+
+      <div
+        *ngIf="!isLoading && tmdbResults.length > 0"
+        class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 sm:gap-4"
+      >
+        <div
+          *ngFor="let result of tmdbResults"
+          class="group relative rounded-lg overflow-hidden bg-black/50 border border-white/10"
+        >
+          <a [routerLink]="['/details', result.media_type || 'movie', result.id]" class="block">
+            <img
+              [src]="result.poster_path ? 'https://image.tmdb.org/t/p/w500' + result.poster_path : 'assets/fallback.jpg'"
+              [alt]="result.title || result.name || 'Title'"
+              class="w-full aspect-[2/3] object-cover group-hover:scale-105 transition-transform duration-300"
+              loading="lazy"
+            />
+            <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black via-black/85 to-transparent p-2.5 sm:p-3 pt-8">
+              <h3 class="text-xs sm:text-sm font-semibold text-white line-clamp-2">
+                {{ result.title || result.name }}
+              </h3>
+              <div class="flex items-center justify-between mt-1 text-[10px] sm:text-[11px] text-gray-300">
+                <span>{{ result.media_type === 'tv' ? 'Series' : 'Movie' }}</span>
+                <span class="inline-flex items-center gap-1">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="currentColor" class="text-red-600">
+                    <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"></path>
+                  </svg>
+                  {{ (result.vote_average || 0).toFixed(1) }}
+                </span>
               </div>
             </div>
-          </div>
-        </a>
+          </a>
+        </div>
       </div>
     </div>
-  
-  </section>
+  </div>
+</section>

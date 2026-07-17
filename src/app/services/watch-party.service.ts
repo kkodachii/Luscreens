@@ -102,9 +102,34 @@ export class WatchPartyService implements OnDestroy {
   private readonly chatSubject = new Subject<WatchPartyChatMessage>();
   readonly chatMessages$ = this.chatSubject.asObservable();
 
+  /** App-wide Join modal (opened from header or ?party= invite links). */
+  private readonly joinModalSubject = new BehaviorSubject<{
+    open: boolean;
+    code: string;
+  }>({ open: false, code: '' });
+  readonly joinModal$ = this.joinModalSubject.asObservable();
+
   private static readonly MAX_CHAT_LENGTH = 500;
 
   constructor(private ngZone: NgZone) {}
+
+  openJoinModal(prefillCode?: string): void {
+    const code = prefillCode?.trim()
+      ? this.normalizeRoomCode(prefillCode)
+      : this.joinModalSubject.value.code;
+    this.joinModalSubject.next({ open: true, code: code || '' });
+  }
+
+  closeJoinModal(): void {
+    this.joinModalSubject.next({
+      open: false,
+      code: this.joinModalSubject.value.code,
+    });
+  }
+
+  getMediaState(): WatchPartyMediaState | null {
+    return this.mediaState;
+  }
 
   /** Scope party session restore to the logged-in user. */
   bindToUser(userId: string | null): void {

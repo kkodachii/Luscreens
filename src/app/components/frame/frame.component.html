@@ -1,70 +1,4 @@
 <section class="min-h-screen text-white relative overflow-hidden">
-  <!-- Watch Party invite modal (from shared ?party= link) -->
-  <div
-    *ngIf="showJoinInviteModal && !watchParty.connected"
-    class="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
-    (click)="closeJoinInviteModal()"
-  >
-    <div
-      class="w-full max-w-md rounded-xl border border-white/15 bg-netflix-black shadow-2xl p-5 sm:p-6 space-y-4"
-      (click)="$event.stopPropagation()"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="join-party-title"
-    >
-      <div class="space-y-1">
-        <h2 id="join-party-title" class="text-lg sm:text-xl font-semibold text-white">
-          Join Watch Party
-        </h2>
-        <p class="text-sm text-gray-400">
-          You’ve been invited to watch together.
-          <ng-container *ngIf="isGuest"> Enter your name to join.</ng-container>
-          <ng-container *ngIf="!isGuest"> You’ll join as {{ getWatchPartyDisplayName('Guest') }}.</ng-container>
-        </p>
-      </div>
-
-      <div class="rounded-lg bg-white/5 border border-white/10 px-3 py-2.5 flex items-center justify-between gap-3">
-        <span class="text-xs text-gray-400">Room code</span>
-        <code class="text-sm font-semibold tracking-[0.2em] text-white">{{ joinRoomCode }}</code>
-      </div>
-
-      <div *ngIf="isGuest" class="space-y-2">
-        <label for="invite-party-name" class="block text-xs text-gray-400">Your name</label>
-        <input
-          id="invite-party-name"
-          type="text"
-          [(ngModel)]="watchPartyName"
-          (keyup.enter)="joinWatchParty()"
-          placeholder="e.g. Kean"
-          autofocus
-          class="w-full px-3 py-2.5 text-sm bg-transparent border border-white/20 rounded-md focus:outline-none focus:border-red-600"
-        />
-      </div>
-
-      <p *ngIf="watchParty.error" class="text-xs text-red-400">
-        {{ watchParty.error }}
-      </p>
-
-      <div class="flex flex-col sm:flex-row gap-2 pt-1">
-        <button
-          type="button"
-          (click)="joinWatchParty()"
-          [disabled]="watchParty.connecting || !joinRoomCode"
-          class="flex-1 px-3 py-2.5 rounded-md bg-red-600 hover:bg-red-500 disabled:opacity-50 text-sm font-medium transition"
-        >
-          {{ watchParty.connecting ? 'Joining…' : 'Join party' }}
-        </button>
-        <button
-          type="button"
-          (click)="closeJoinInviteModal()"
-          class="px-3 py-2.5 rounded-md border border-white/20 hover:bg-white/10 text-sm transition"
-        >
-          Not now
-        </button>
-      </div>
-    </div>
-  </div>
-
   <!-- Background Image -->
   <div
     class="absolute inset-0 bg-cover bg-center z-0"
@@ -512,7 +446,7 @@
           Unable to load the video.
         </div>
 
-        <!-- Watch Party -->
+        <!-- Watch Party (create / manage — Join is in the header) -->
         <div class="mt-4 mb-2">
           <button
             type="button"
@@ -543,9 +477,13 @@
           >
             <div class="flex items-start justify-between gap-3">
               <div>
-                <h3 class="text-sm font-semibold text-white">Watch together</h3>
+                <h3 class="text-sm font-semibold text-white">
+                  {{ watchParty.connected ? 'Watch together' : 'Start a Watch Party' }}
+                </h3>
                 <p class="text-xs text-gray-400 mt-1">
-                  Anyone can control playback. Reload keeps you in the same room.
+                  {{ watchParty.connected
+                    ? 'Anyone can control playback. Reload keeps you in the same room.'
+                    : 'Create a room and share the code. Friends can join from Join in the header.' }}
                 </p>
               </div>
               <button
@@ -559,25 +497,6 @@
             </div>
 
             <div *ngIf="!watchParty.connected" class="space-y-3">
-              <div class="flex rounded-md overflow-hidden border border-white/15">
-                <button
-                  type="button"
-                  (click)="watchPartyMode = 'create'"
-                  class="flex-1 px-2 py-1.5 text-xs font-medium transition"
-                  [ngClass]="watchPartyMode === 'create' ? 'bg-red-600 text-white' : 'bg-transparent text-gray-300 hover:bg-white/5'"
-                >
-                  Create
-                </button>
-                <button
-                  type="button"
-                  (click)="watchPartyMode = 'join'"
-                  class="flex-1 px-2 py-1.5 text-xs font-medium transition"
-                  [ngClass]="watchPartyMode === 'join' ? 'bg-red-600 text-white' : 'bg-transparent text-gray-300 hover:bg-white/5'"
-                >
-                  Join
-                </button>
-              </div>
-
               <input
                 *ngIf="isGuest"
                 type="text"
@@ -586,43 +505,20 @@
                 class="w-full px-3 py-2 text-sm bg-transparent border border-white/20 rounded-md focus:outline-none focus:border-red-600"
               />
               <p *ngIf="!isGuest" class="text-xs text-gray-400">
-                Joining as <span class="text-white">{{ getWatchPartyDisplayName('Host') }}</span>
+                Hosting as <span class="text-white">{{ getWatchPartyDisplayName('Host') }}</span>
               </p>
 
-              <div *ngIf="watchPartyMode === 'create'" class="space-y-2">
-                <p class="text-xs text-gray-400">
-                  Only people with your room code can join.
-                </p>
-                <button
-                  type="button"
-                  (click)="startWatchParty()"
-                  [disabled]="watchParty.connecting"
-                  class="w-full px-3 py-2 rounded-md bg-red-600 hover:bg-red-500 disabled:opacity-50 text-sm font-medium transition"
-                >
-                  {{ watchParty.connecting ? 'Starting…' : 'Start party' }}
-                </button>
-              </div>
-
-              <div *ngIf="watchPartyMode === 'join'" class="space-y-2">
-                <p class="text-xs text-gray-400">
-                  Enter the host’s room code (or paste the invite link).
-                </p>
-                <input
-                  type="text"
-                  [(ngModel)]="joinRoomCode"
-                  (keyup.enter)="joinWatchParty()"
-                  placeholder="e.g. A3K9MP"
-                  class="w-full px-3 py-2 text-sm bg-transparent border border-white/20 rounded-md uppercase tracking-wider focus:outline-none focus:border-red-600"
-                />
-                <button
-                  type="button"
-                  (click)="joinWatchParty()"
-                  [disabled]="watchParty.connecting || !joinRoomCode"
-                  class="w-full px-3 py-2 rounded-md bg-red-600 hover:bg-red-500 disabled:opacity-50 text-sm font-medium transition"
-                >
-                  {{ watchParty.connecting ? 'Joining…' : 'Join party' }}
-                </button>
-              </div>
+              <p class="text-xs text-gray-400">
+                Only people with your room code can join.
+              </p>
+              <button
+                type="button"
+                (click)="startWatchParty()"
+                [disabled]="watchParty.connecting"
+                class="w-full px-3 py-2 rounded-md bg-red-600 hover:bg-red-500 disabled:opacity-50 text-sm font-medium transition"
+              >
+                {{ watchParty.connecting ? 'Starting…' : 'Start party' }}
+              </button>
             </div>
 
             <div *ngIf="watchParty.connected" class="space-y-3">

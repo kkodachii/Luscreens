@@ -4,8 +4,12 @@ export const environment = {
   streamServer: 'vEdge',
   /** VidFast `server=` query values shown in the custom Server picker */
   streamServers: ['vEdge', 'Beta', 'Bravo', 'vFast', 'Cobra', 'Charlie'],
+  /**
+   * Prefer setting OPENROUTER_API_KEY on the auth API (Render) instead of here.
+   * Client key is only a local/dev fallback.
+   */
   openRouterApiKey: '',
-  openRouterModel: 'google/gemma-4-26b-a4b-it:free',
+  openRouterModel: 'openrouter/free',
   /** Auth API on Render (Root Directory: auth-api) */
   authApiUrl: 'https://luscreens.onrender.com',
 };

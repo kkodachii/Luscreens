@@ -18,6 +18,7 @@ export class AppComponent implements AfterViewInit {
   isHomeRouteActive: boolean = false;
   isDetailsRoute: boolean = false;
   isFrameRoute: boolean = false;
+  isAiRoute: boolean = false;
 
   /** Ensures user-scoped library sync starts with the app. */
   private readonly _userLibrary = inject(UserLibraryService);
@@ -26,12 +27,14 @@ export class AppComponent implements AfterViewInit {
     // Listen for route changes
     this.router.events.subscribe((event) => {
       if (event instanceof NavigationEnd) {
+        const url = event.urlAfterRedirects || event.url;
         // Check if the current route is the default route
-        this.isDefaultRoute = event.url === '/';
-        this.isHomeRouteActive = event.url === '/';
-        this.isBrowseRouteActive = event.url.startsWith('/browse');
-        this.isDetailsRoute = event.url.startsWith('/details');
-        this.isFrameRoute = event.url.startsWith('/frame');
+        this.isDefaultRoute = url === '/' || url.startsWith('/?');
+        this.isHomeRouteActive = this.isDefaultRoute;
+        this.isBrowseRouteActive = url.startsWith('/browse');
+        this.isDetailsRoute = url.startsWith('/details');
+        this.isFrameRoute = url.startsWith('/frame');
+        this.isAiRoute = url.startsWith('/ai');
         this.resetScrollPosition();
       }
     });

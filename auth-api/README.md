@@ -46,6 +46,10 @@ Health: `http://localhost:8788/health`
    - `MONGODB_URI` = your Atlas connection string (**required** so accounts survive redeploy)
    - `JWT_SECRET` = a long random string
    - `ADMIN_EMAILS` = `kean@gmail.com` (optional; comma-separated)
+   - `OPENROUTER_API_KEY` = your key from [openrouter.ai](https://openrouter.ai/) (**required for AI Search**)
+   - `OPENROUTER_MODEL` = `openrouter/free` (optional)
+
+Local AI Search: copy `.env.example` → `.env` and set `OPENROUTER_API_KEY` (`.env` is gitignored — never commit it).
 6. Copy the service URL into Angular `authApiUrl` (e.g. `https://luscreens.onrender.com`)
 
 ### Atlas checklist
@@ -76,6 +80,7 @@ Also verify `MONGODB_URI` is set (no quotes around the value in Render).
 - `GET /auth/me` `Authorization: Bearer <token>`
 - `GET /auth/admin/users` — admin only
 - `GET /auth/admin/users/:userId/library` — admin only, read another user's history/watchlist
+- `POST /ai/recommend` `{ prompt, exclude? }` — AI movie/TV title suggestions (needs `OPENROUTER_API_KEY`)
 - `GET /me/library` — user history / watchlist
 - `PUT /me/library` `{ progress, watchlist }`
 

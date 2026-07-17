@@ -1,3 +1,9 @@
+try {
+  require('dotenv').config();
+} catch {
+  // dotenv is optional in production when env vars are injected by the host
+}
+
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
@@ -13,6 +19,10 @@ const JWT_EXPIRES_REMEMBER =
   process.env.JWT_EXPIRES_REMEMBER || process.env.JWT_EXPIRES || '30d';
 /** Session-only token when Remember me is unchecked */
 const JWT_EXPIRES_SESSION = process.env.JWT_EXPIRES_SESSION || '12h';
+/** Optional — powers /ai/recommend without putting the key in the Angular app */
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
+const OPENROUTER_MODEL =
+  process.env.OPENROUTER_MODEL || 'openrouter/free';
 const MONGODB_URI = process.env.MONGODB_URI || '';
 const hasMongoConfig = !!(
   MONGODB_URI ||
@@ -102,6 +112,7 @@ app.get('/', (_req, res) => {
       'GET /auth/me',
       'GET /auth/admin/users',
       'GET /auth/admin/users/:userId/library',
+      'POST /ai/recommend',
       'GET /me/library',
       'PUT /me/library',
     ],
@@ -113,8 +124,83 @@ app.get('/health', (_req, res) => {
     ok: true,
     service: 'auth-api',
     storage: store.storageMode(),
+    ai: OPENROUTER_API_KEY ? 'configured' : 'missing',
     ts: Date.now(),
   });
+});
+
+/**
+ * AI title recommendations via OpenRouter (server-side key).
+ * Body: { prompt: string, exclude?: string[] }
+ */
+app.post('/ai/recommend', async (req, res) => {
+  try {
+    if (!OPENROUTER_API_KEY) {
+      return res.status(503).json({
+        error: 'AI not configured. Set OPENROUTER_API_KEY on the auth API.',
+      });
+    }
+
+    const body = req.body || {};
+    const prompt = String(body.prompt || '').trim().slice(0, 500);
+    const exclude = Array.isArray(body.exclude)
+      ? body.exclude.map((t) => String(t || '').trim()).filter(Boolean).slice(0, 20)
+      : [];
+
+    if (!prompt) {
+      return res.status(400).json({ error: 'Prompt is required' });
+    }
+
+    const system =
+      'You recommend real movie and TV titles that exist on TMDB. Reply with 1 to 5 titles only, comma-separated. No numbering, no quotes, no explanation.';
+    let user = `Suggest existing movie or TV show titles matching: "${prompt}"`;
+    if (exclude.length) {
+      user += ` Do not suggest: ${exclude.join(', ')}.`;
+    }
+
+    const upstream = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://luscreens.app',
+        'X-Title': 'Luscreens',
+      },
+      body: JSON.stringify({
+        model: OPENROUTER_MODEL,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: user },
+        ],
+        stream: false,
+      }),
+    });
+
+    const data = await upstream.json().catch(() => ({}));
+    if (!upstream.ok) {
+      const message =
+        data?.error?.message || data?.error || `OpenRouter error (${upstream.status})`;
+      return res.status(502).json({ error: String(message) });
+    }
+
+    const content = String(data?.choices?.[0]?.message?.content || '').trim();
+    const titles = String(content)
+      .replace(/```[\s\S]*?```/g, ' ')
+      .replace(/^\s*[-*\d.)]+\s*/gm, '')
+      .split(/[\n,;|]+/)
+      .map((part) => part.replace(/^["'`]+|["'`]+$/g, '').trim())
+      .filter(Boolean)
+      .slice(0, 5);
+
+    if (!titles.length) {
+      return res.status(502).json({ error: 'AI returned no titles' });
+    }
+
+    res.json({ titles });
+  } catch (err) {
+    console.error('ai recommend failed', err);
+    res.status(500).json({ error: 'Could not get AI recommendations' });
+  }
 });
 
 app.post('/auth/register', async (req, res) => {

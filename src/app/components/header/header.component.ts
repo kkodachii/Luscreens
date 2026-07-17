@@ -1,4 +1,5 @@
-import { Component, HostListener, inject } from '@angular/core';
+import { Component, DestroyRef, HostListener, inject } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { RouterModule, Router, NavigationEnd } from '@angular/router';
@@ -8,6 +9,11 @@ import {
   WatchProgressMap,
   WatchProgressService,
 } from '../../services/watch-progress.service';
+import {
+  WatchPartyMediaState,
+  WatchPartyService,
+  WatchPartyState,
+} from '../../services/watch-party.service';
 
 @Component({
   selector: 'app-header',
@@ -20,11 +26,14 @@ export class HeaderComponent {
   private readonly auth = inject(AuthService);
   private readonly router = inject(Router);
   private readonly watchProgress = inject(WatchProgressService);
+  private readonly watchPartyService = inject(WatchPartyService);
+  private readonly destroyRef = inject(DestroyRef);
 
   isMenuOpen = false;
   isBrowseDropdownOpen = false;
   isAccountMenuOpen = false;
   isUsersModalOpen = false;
+  isJoinPartyModalOpen = false;
   isHomeRouteActive = false;
   isBrowseRouteActive = false;
   isAIRouteActive = false;
@@ -35,6 +44,20 @@ export class HeaderComponent {
   rememberMe = true;
   authError = '';
   authLoading = false;
+
+  joinRoomCode = '';
+  joinPartyName = '';
+  /** Prevents invite-link restore from reopening after the user taps Not now. */
+  private dismissedInviteCode: string | null = null;
+  watchParty: WatchPartyState = {
+    role: null,
+    roomCode: null,
+    connected: false,
+    connecting: false,
+    members: [],
+    error: null,
+    inviteUrl: null,
+  };
 
   adminUsers: AuthUser[] = [];
   adminUsersTotal = 0;
@@ -54,14 +77,131 @@ export class HeaderComponent {
   readonly authModalMode = this.auth.authModalMode;
 
   constructor() {
-    this.router.events.subscribe((event) => {
-      if (event instanceof NavigationEnd) {
-        this.isBrowseRouteActive = event.url.startsWith('/browse');
-        this.isHomeRouteActive = event.url === '/';
-        this.isAIRouteActive = event.url === '/ai';
-        this.closeAllDropdowns();
+    this.watchPartyService.state$
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((state) => {
+        this.watchParty = state;
+        if (state.connected) {
+          this.isJoinPartyModalOpen = false;
+        }
+      });
+
+    this.watchPartyService.joinModal$
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((modal) => {
+        if (!modal.open || this.watchParty.connected) {
+          this.isJoinPartyModalOpen = false;
+          return;
+        }
+        const code = (modal.code || '').toUpperCase();
+        if (code && this.dismissedInviteCode === code) {
+          this.watchPartyService.closeJoinModal();
+          return;
+        }
+        if (modal.code) {
+          this.joinRoomCode = modal.code;
+        }
+        this.isJoinPartyModalOpen = true;
+      });
+
+    this.watchPartyService.remoteCommands$
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((command) => {
+        if (command.media && this.watchParty.role === 'guest') {
+          this.navigateToPartyMedia(command.media);
+        }
+      });
+
+    this.router.events
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((event) => {
+        if (event instanceof NavigationEnd) {
+          this.isBrowseRouteActive = event.url.startsWith('/browse');
+          this.isHomeRouteActive = event.url === '/';
+          this.isAIRouteActive = event.url === '/ai';
+          this.closeAllDropdowns();
+          this.openJoinFromQueryParam(event.urlAfterRedirects || event.url);
+        }
+      });
+  }
+
+  get isAuthGuest(): boolean {
+    return !this.auth.isLoggedIn();
+  }
+
+  getWatchPartyDisplayName(fallback: string): string {
+    const accountName = this.auth.user()?.name?.trim();
+    if (accountName) {
+      return accountName;
+    }
+    return this.joinPartyName.trim() || fallback;
+  }
+
+  openJoinPartyModal(): void {
+    this.closeAllDropdowns();
+    this.dismissedInviteCode = null;
+    this.watchPartyService.openJoinModal(this.joinRoomCode || undefined);
+  }
+
+  closeJoinPartyModal(): void {
+    this.dismissedInviteCode = (this.joinRoomCode || '').trim().toUpperCase() || null;
+    this.watchPartyService.closeJoinModal();
+    this.isJoinPartyModalOpen = false;
+  }
+
+  async joinWatchParty(): Promise<void> {
+    try {
+      await this.watchPartyService.joinParty(
+        this.joinRoomCode,
+        this.getWatchPartyDisplayName('Guest')
+      );
+      this.closeJoinPartyModal();
+      const media = this.watchPartyService.getMediaState();
+      if (media) {
+        this.navigateToPartyMedia(media);
       }
-    });
+    } catch (error) {
+      console.error('Failed to join watch party:', error);
+      this.isJoinPartyModalOpen = true;
+    }
+  }
+
+  private openJoinFromQueryParam(url: string): void {
+    if (this.watchParty.connected || this.watchParty.connecting) {
+      return;
+    }
+    try {
+      const tree = this.router.parseUrl(url);
+      const party = String(tree.queryParams['party'] || '').trim();
+      if (party) {
+        this.watchPartyService.openJoinModal(party);
+      }
+    } catch {
+      // ignore bad URLs
+    }
+  }
+
+  private navigateToPartyMedia(media: WatchPartyMediaState): void {
+    if (!media?.mediaType || !media.id) {
+      return;
+    }
+    const queryParams = this.watchParty.roomCode
+      ? { party: this.watchParty.roomCode }
+      : {};
+
+    const target =
+      media.mediaType === 'tv' && media.season && media.episode
+        ? ['/frame', media.mediaType, media.id, media.season, media.episode]
+        : ['/frame', media.mediaType, media.id];
+
+    const targetUrl = this.router
+      .createUrlTree(target, { queryParams })
+      .toString();
+    if (this.router.url.split('?')[0] === targetUrl.split('?')[0]) {
+      return;
+    }
+
+    void this.router.navigate(target, { queryParams });
   }
 
   @HostListener('document:click')

@@ -1,0 +1,17 @@
+.ai-bg-slide {
+  opacity: 0;
+  transition: opacity 1.2s ease-in-out;
+  transform: scale(1.04);
+}
+
+.ai-bg-slide.is-active {
+  opacity: 1;
+}
+
+.ai-prompt:focus-within {
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.ai-prompt textarea:focus {
+  border-color: rgba(239, 68, 68, 0.7);
+}
