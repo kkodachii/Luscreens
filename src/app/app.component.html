@@ -1,6 +1,28 @@
 <div class="custom-scrollbar overflow-y-auto h-screen relative">
   <app-header class="absolute top-0 left-0 w-full z-50"></app-header>
   <main [class.mt-20]="!isDefaultRoute && !isDetailsRoute && !isFrameRoute && !isAiRoute">
-    <router-outlet></router-outlet> 
+    <router-outlet></router-outlet>
   </main>
+
+  <!-- Mobile-only AI Search bubble: drag to move, tap to open. Hide/show from burger menu. -->
+  <div
+    *ngIf="showAiBubble"
+    class="ai-fab sm:hidden fixed z-[60] touch-none select-none"
+    [ngClass]="{ 'ai-fab--dragging': isAiBubbleDragging }"
+    [ngStyle]="aiBubbleStyle"
+    (pointerdown)="onAiBubblePointerDown($event)"
+  >
+    <button
+      type="button"
+      (click)="openAiSearch($event)"
+      class="ai-fab-main relative flex items-center gap-1.5 pl-3.5 pr-3.5 py-2.5 rounded-full bg-red-600 text-white shadow-lg shadow-black/40 border border-red-400/30"
+      aria-label="Open AI Search. Drag to move. Hide from menu."
+    >
+      <span class="text-sm font-semibold tracking-wide">AI</span>
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="11" cy="11" r="7" />
+        <path d="M21 21l-4.3-4.3" />
+      </svg>
+    </button>
+  </div>
 </div>

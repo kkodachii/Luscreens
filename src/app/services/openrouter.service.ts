@@ -127,32 +127,61 @@ export class OpenRouterService {
     }
 
     const excluded = exclude.filter(Boolean).join(', ');
-    const system =
-      'You recommend real movie and TV titles that exist on TMDB. Reply with 1 to 5 titles only, comma-separated. No numbering, no quotes, no explanation.';
-    let user = `Suggest existing movie or TV show titles matching: "${prompt}"`;
+    const parts = [
+      'Recommend 1 to 5 real movie or TV show titles that exist on TMDB.',
+      `User request: ${prompt}`,
+      'Reply with ONLY a JSON array of title strings, like ["Inception","Interstellar"].',
+      'No numbering, no markdown, no explanation.',
+    ];
     if (excluded) {
-      user += ` Do not suggest: ${excluded}.`;
+      parts.push(`Do not suggest these titles: ${excluded}.`);
     }
 
-    return this.chat(user, system).pipe(
+    return this.chat(parts.join('\n')).pipe(
       map((text) => this.parseTitlesFromText(text)),
       catchError((err) => throwError(() => err))
     );
   }
 
   private parseTitlesFromText(text: string): string[] {
-    const cleaned = String(text || '')
-      .replace(/```[\s\S]*?```/g, ' ')
-      .replace(/^\s*[-*\d.)]+\s*/gm, '')
+    let cleaned = String(text || '')
+      .replace(/```(?:json|text)?\s*([\s\S]*?)```/gi, '$1')
+      .replace(/<think>[\s\S]*?<\/think>/gi, ' ')
       .trim();
     if (!cleaned) {
       return [];
     }
+
+    const jsonMatch = cleaned.match(/\[[\s\S]*?\]/);
+    if (jsonMatch) {
+      try {
+        const parsed = JSON.parse(jsonMatch[0]) as unknown;
+        if (Array.isArray(parsed)) {
+          return this.normalizeTitleList(
+            parsed.map((item) =>
+              String(item || '')
+                .replace(/\s*\(\d{4}\)\s*$/, '')
+                .trim()
+            )
+          );
+        }
+      } catch {
+        // fall through
+      }
+    }
+
+    cleaned = cleaned.replace(/^\s*[-*\d.)]+\s*/gm, '');
     return this.normalizeTitleList(
       cleaned
         .split(/[\n,;|]+/)
-        .map((part) => part.replace(/^["'`]+|["'`]+$/g, '').trim())
-        .filter(Boolean)
+        .map((part) =>
+          part
+            .replace(/^["'`]+|["'`]+$/g, '')
+            .replace(/\s*\(\d{4}\)\s*$/, '')
+            .replace(/^(?:title|movie|show)\s*:\s*/i, '')
+            .trim()
+        )
+        .filter((t) => t && t.length < 120 && !/^here (are|is)\b/i.test(t))
     );
   }
 

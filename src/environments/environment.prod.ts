@@ -5,7 +5,7 @@ export const environment = {
   streamServers: ['vEdge', 'Beta', 'Bravo', 'vFast', 'Cobra', 'Charlie'],
   /** Prefer OPENROUTER_API_KEY on the auth API — do not commit secrets here. */
   openRouterApiKey: '',
-  openRouterModel: 'openrouter/free',
+  openRouterModel: 'google/gemma-4-31b-it:free',
   /** Auth API on Render (Root Directory: auth-api) */
   authApiUrl: 'https://luscreens.onrender.com',
 };

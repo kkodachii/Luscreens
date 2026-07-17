@@ -171,8 +171,10 @@ export class AiComponent implements OnInit, OnDestroy {
             this.response = titles.join(', ');
             return this.searchTitlesOnTmdb(titles);
           }
-          this.response = this.query;
-          return this.searchTmdbQuery(this.query);
+          // AI unavailable (rate limit, etc.) — search shorter TMDB-friendly queries
+          const fallbackQueries = this.buildFallbackSearchQueries(this.query);
+          this.response = fallbackQueries[0] || this.query;
+          return this.searchTitlesOnTmdb(fallbackQueries);
         }),
         finalize(() => {
           this.isLoading = false;
@@ -203,6 +205,96 @@ export class AiComponent implements OnInit, OnDestroy {
     return forkJoin(titles.map((title) => this.searchTmdbQuery(title))).pipe(
       map((groups) => this.mergeUniqueResults(groups.flat()))
     );
+  }
+
+  /**
+   * When OpenRouter is rate-limited, turn a long vibe prompt into short TMDB queries
+   * (e.g. "movies like Inception" → "Inception", "sci-fi").
+   */
+  private buildFallbackSearchQueries(prompt: string): string[] {
+    const text = prompt.trim();
+    if (!text) {
+      return [];
+    }
+
+    const queries: string[] = [];
+    const likeMatch = text.match(
+      /\b(?:like|similar to|in the style of)\s+["']?([A-Za-z0-9][\w:'&.\-\s]{1,60}?)["']?(?:\s*$|[.!?,])/i
+    );
+    if (likeMatch?.[1]) {
+      queries.push(likeMatch[1].trim());
+    }
+
+    const quoted = [...text.matchAll(/["']([^"']{2,60})["']/g)].map((m) => m[1].trim());
+    queries.push(...quoted);
+
+    const stop = new Set([
+      'a',
+      'an',
+      'the',
+      'and',
+      'or',
+      'with',
+      'for',
+      'like',
+      'after',
+      'long',
+      'day',
+      'movie',
+      'movies',
+      'show',
+      'shows',
+      'tv',
+      'series',
+      'film',
+      'films',
+      'something',
+      'feel',
+      'feeling',
+      'good',
+      'great',
+      'best',
+      'that',
+      'this',
+      'from',
+      'into',
+      'about',
+      'really',
+      'very',
+      'watch',
+      'watching',
+      'similar',
+      'style',
+    ]);
+    const keywords = text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, ' ')
+      .split(/\s+/)
+      .filter((w) => w.length > 2 && !stop.has(w));
+
+    if (keywords.length) {
+      queries.push(keywords.slice(0, 3).join(' '));
+      if (keywords.length > 1) {
+        queries.push(keywords[0]);
+      }
+    }
+
+    queries.push(text.slice(0, 40).trim());
+
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const q of queries) {
+      const key = q.toLowerCase();
+      if (!q || seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      out.push(q);
+      if (out.length >= 4) {
+        break;
+      }
+    }
+    return out;
   }
 
   private searchTmdbQuery(query: string) {

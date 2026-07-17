@@ -746,7 +746,7 @@
 
   <div
     *ngIf="isMenuOpen"
-    class="absolute top-full left-0 mt-2 w-48 bg-black bg-opacity-95 shadow-lg rounded-md overflow-hidden"
+    class="absolute top-full left-0 mt-2 w-56 bg-black bg-opacity-95 shadow-lg rounded-md overflow-hidden"
   >
     <a
       href="#"
@@ -793,6 +793,65 @@
         <path d="M16 3.13a4 4 0 0 1 0 7.75" />
       </svg>
       <span class="text-sm font-medium">Join party</span>
+    </button>
+    <a
+      routerLink="/ai"
+      (click)="closeAllDropdowns()"
+      class="flex items-center px-4 py-3 text-white hover:bg-red-600 transition duration-300 border-b border-gray-700"
+    >
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="20"
+        height="20"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        class="w-5 h-5 mr-3"
+      >
+        <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+        <path d="M8 16v-6a2 2 0 1 1 4 0v6" />
+        <path d="M8 13h4" />
+        <path d="M16 8v8" />
+      </svg>
+      <span class="text-sm font-medium">AI Search</span>
+    </a>
+    <button
+      type="button"
+      (click)="toggleAiBubbleShortcut()"
+      class="flex items-center justify-between w-full px-4 py-3 text-white hover:bg-red-600 transition duration-300 border-b border-gray-700 sm:hidden"
+    >
+      <span class="flex items-center">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="20"
+          height="20"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          class="w-5 h-5 mr-3"
+        >
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 8v4" />
+          <path d="M12 16h.01" />
+        </svg>
+        <span class="text-sm font-medium">Floating AI</span>
+      </span>
+      <span
+        class="text-xs font-medium px-2 py-0.5 rounded-full"
+        [ngClass]="
+          aiBubblePref.isHidden()
+            ? 'bg-white/10 text-gray-300'
+            : 'bg-red-500/90 text-white'
+        "
+      >
+        {{ aiBubblePref.isHidden() ? 'Off' : 'On' }}
+      </span>
     </button>
     <a
       routerLink="/history"

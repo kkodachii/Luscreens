@@ -22,7 +22,14 @@ const JWT_EXPIRES_SESSION = process.env.JWT_EXPIRES_SESSION || '12h';
 /** Optional — powers /ai/recommend without putting the key in the Angular app */
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 const OPENROUTER_MODEL =
-  process.env.OPENROUTER_MODEL || 'openrouter/free';
+  process.env.OPENROUTER_MODEL || 'google/gemma-4-31b-it:free';
+/** Comma-separated fallbacks when the primary free model is rate-limited */
+const OPENROUTER_FALLBACK_MODELS = String(
+  process.env.OPENROUTER_FALLBACK_MODELS || 'openrouter/free'
+)
+  .split(',')
+  .map((m) => m.trim())
+  .filter(Boolean);
 const MONGODB_URI = process.env.MONGODB_URI || '';
 const hasMongoConfig = !!(
   MONGODB_URI ||
@@ -129,6 +136,109 @@ app.get('/health', (_req, res) => {
   });
 });
 
+function parseAiTitles(content) {
+  let text = String(content || '').trim();
+  if (!text) {
+    return [];
+  }
+
+  // Strip fenced code / thinking blocks some models wrap around answers
+  text = text
+    .replace(/```(?:json|text)?\s*([\s\S]*?)```/gi, '$1')
+    .replace(/<think>[\s\S]*?<\/think>/gi, ' ')
+    .trim();
+
+  // Prefer a JSON array if the model returns one
+  const jsonMatch = text.match(/\[[\s\S]*?\]/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (Array.isArray(parsed)) {
+        const fromJson = parsed
+          .map((item) => String(item || '').replace(/\s*\(\d{4}\)\s*$/, '').trim())
+          .filter(Boolean)
+          .slice(0, 5);
+        if (fromJson.length) {
+          return fromJson;
+        }
+      }
+    } catch {
+      // fall through to line/comma parsing
+    }
+  }
+
+  return text
+    .replace(/^\s*[-*\d.)]+\s*/gm, '')
+    .split(/[\n,;|]+/)
+    .map((part) =>
+      part
+        .replace(/^["'`]+|["'`]+$/g, '')
+        .replace(/\s*\(\d{4}\)\s*$/, '')
+        .replace(/^(?:title|movie|show)\s*:\s*/i, '')
+        .trim()
+    )
+    .filter((t) => t && t.length < 120 && !/^here (are|is)\b/i.test(t))
+    .slice(0, 5);
+}
+
+function extractMessageContent(data) {
+  const message = data?.choices?.[0]?.message || {};
+  const content = message.content;
+  if (typeof content === 'string' && content.trim()) {
+    return content.trim();
+  }
+  if (Array.isArray(content)) {
+    const joined = content
+      .map((part) => {
+        if (typeof part === 'string') {
+          return part;
+        }
+        return part?.text || part?.content || '';
+      })
+      .join('')
+      .trim();
+    if (joined) {
+      return joined;
+    }
+  }
+  // Some reasoning models put the final answer elsewhere
+  if (typeof message.reasoning === 'string' && message.reasoning.trim()) {
+    return message.reasoning.trim();
+  }
+  return '';
+}
+
+async function callOpenRouterRecommend(model, prompt, exclude) {
+  const userParts = [
+    'Recommend 1 to 5 real movie or TV show titles that exist on TMDB.',
+    `User request: ${prompt}`,
+    'Reply with ONLY a JSON array of title strings, like ["Inception","Interstellar"].',
+    'No numbering, no markdown, no explanation.',
+  ];
+  if (exclude.length) {
+    userParts.push(`Do not suggest these titles: ${exclude.join(', ')}.`);
+  }
+
+  const upstream = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://luscreens.app',
+      'X-Title': 'Luscreens',
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: 'user', content: userParts.join('\n') }],
+      stream: false,
+      temperature: 0.4,
+    }),
+  });
+
+  const data = await upstream.json().catch(() => ({}));
+  return { upstream, data };
+}
+
 /**
  * AI title recommendations via OpenRouter (server-side key).
  * Body: { prompt: string, exclude?: string[] }
@@ -151,52 +261,46 @@ app.post('/ai/recommend', async (req, res) => {
       return res.status(400).json({ error: 'Prompt is required' });
     }
 
-    const system =
-      'You recommend real movie and TV titles that exist on TMDB. Reply with 1 to 5 titles only, comma-separated. No numbering, no quotes, no explanation.';
-    let user = `Suggest existing movie or TV show titles matching: "${prompt}"`;
-    if (exclude.length) {
-      user += ` Do not suggest: ${exclude.join(', ')}.`;
+    const models = [
+      OPENROUTER_MODEL,
+      ...OPENROUTER_FALLBACK_MODELS.filter((m) => m !== OPENROUTER_MODEL),
+    ];
+
+    let lastError = 'OpenRouter request failed';
+    for (const model of models) {
+      try {
+        const { upstream, data } = await callOpenRouterRecommend(model, prompt, exclude);
+        if (!upstream.ok) {
+          lastError =
+            data?.error?.message ||
+            data?.error?.metadata?.raw ||
+            data?.error ||
+            `OpenRouter error (${upstream.status})`;
+          lastError = String(lastError);
+          // Rate-limited / overloaded free models → try next
+          if (upstream.status === 429 || upstream.status === 502 || upstream.status === 503) {
+            console.warn(`ai recommend model busy (${model}):`, lastError);
+            continue;
+          }
+          return res.status(502).json({ error: lastError });
+        }
+
+        const content = extractMessageContent(data);
+        const titles = parseAiTitles(content);
+        if (!titles.length) {
+          lastError = 'AI returned no titles';
+          console.warn(`ai recommend empty titles (${model}):`, content.slice(0, 200));
+          continue;
+        }
+
+        return res.json({ titles, model });
+      } catch (err) {
+        lastError = err?.message || 'OpenRouter request failed';
+        console.warn(`ai recommend model error (${model}):`, lastError);
+      }
     }
 
-    const upstream = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://luscreens.app',
-        'X-Title': 'Luscreens',
-      },
-      body: JSON.stringify({
-        model: OPENROUTER_MODEL,
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: user },
-        ],
-        stream: false,
-      }),
-    });
-
-    const data = await upstream.json().catch(() => ({}));
-    if (!upstream.ok) {
-      const message =
-        data?.error?.message || data?.error || `OpenRouter error (${upstream.status})`;
-      return res.status(502).json({ error: String(message) });
-    }
-
-    const content = String(data?.choices?.[0]?.message?.content || '').trim();
-    const titles = String(content)
-      .replace(/```[\s\S]*?```/g, ' ')
-      .replace(/^\s*[-*\d.)]+\s*/gm, '')
-      .split(/[\n,;|]+/)
-      .map((part) => part.replace(/^["'`]+|["'`]+$/g, '').trim())
-      .filter(Boolean)
-      .slice(0, 5);
-
-    if (!titles.length) {
-      return res.status(502).json({ error: 'AI returned no titles' });
-    }
-
-    res.json({ titles });
+    return res.status(502).json({ error: String(lastError) });
   } catch (err) {
     console.error('ai recommend failed', err);
     res.status(500).json({ error: 'Could not get AI recommendations' });

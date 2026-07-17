@@ -9,7 +9,7 @@ export const environment = {
    * Client key is only a local/dev fallback.
    */
   openRouterApiKey: '',
-  openRouterModel: 'openrouter/free',
+  openRouterModel: 'google/gemma-4-31b-it:free',
   /** Auth API on Render (Root Directory: auth-api) */
   authApiUrl: 'https://luscreens.onrender.com',
 };

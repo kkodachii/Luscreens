@@ -14,6 +14,7 @@ import {
   WatchPartyService,
   WatchPartyState,
 } from '../../services/watch-party.service';
+import { AiBubblePreferenceService } from '../../services/ai-bubble-preference.service';
 
 @Component({
   selector: 'app-header',
@@ -28,6 +29,7 @@ export class HeaderComponent {
   private readonly watchProgress = inject(WatchProgressService);
   private readonly watchPartyService = inject(WatchPartyService);
   private readonly destroyRef = inject(DestroyRef);
+  readonly aiBubblePref = inject(AiBubblePreferenceService);
 
   isMenuOpen = false;
   isBrowseDropdownOpen = false;
@@ -236,6 +238,10 @@ export class HeaderComponent {
     this.isMenuOpen = false;
     this.isBrowseDropdownOpen = false;
     this.isAccountMenuOpen = false;
+  }
+
+  toggleAiBubbleShortcut(): void {
+    this.aiBubblePref.toggleHidden();
   }
 
   openLoginModal(): void {
