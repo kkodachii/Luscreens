@@ -81,6 +81,44 @@ export class WatchPartyService implements OnDestroy {
   private static readonly SESSION_KEY = 'luscreensWatchParty';
   private static readonly SESSION_MAX_AGE_MS = 6 * 60 * 60 * 1000; // 6 hours
   private static readonly MAX_CHAT_LENGTH = 500;
+
+  /**
+   * STUN alone only works on the same LAN.
+   * TURN is required for PC ↔ mobile on different networks (cellular / different Wi‑Fi).
+   */
+  private static readonly ICE_SERVERS: RTCIceServer[] = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    {
+      urls: [
+        'turn:eu-0.turn.peerjs.com:3478',
+        'turn:us-0.turn.peerjs.com:3478',
+      ],
+      username: 'peerjs',
+      credential: 'peerjsp',
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+    {
+      urls: 'turns:openrelay.metered.ca:443?transport=tcp',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+  ];
+
   private userId: string | null = null;
 
   private peer: Peer | null = null;
@@ -271,63 +309,87 @@ export class WatchPartyService implements OnDestroy {
       throw new Error('Enter a valid room code');
     }
 
-    await this.resetPeer();
-    this.patchState({
-      connecting: true,
-      error: null,
-      role: 'guest',
-      roomCode: normalized,
-      connected: false,
-      members: [],
-      inviteUrl: null,
-    });
-
-    try {
-      await this.openPeer();
-      this.peer!.on('error', (err) => this.onPeerError(err));
-
-      const hostPeerId = this.toPeerId(normalized);
-      const conn = this.peer!.connect(hostPeerId, { reliable: true });
-
-      if (!conn) {
-        throw new Error('Could not start connection to host');
-      }
-
-      await this.waitForConnection(conn);
-      this.registerConnection(conn, false);
-
-      this.send(conn, {
-        action: 'hello',
-        displayName: this.displayName,
-        sentAt: Date.now(),
-      });
-
-      this.patchState({
-        role: 'guest',
-        roomCode: normalized,
-        connected: true,
-        connecting: false,
-        inviteUrl: this.buildInviteUrl(normalized),
-        members: [
-          { peerId: hostPeerId, displayName: 'Host', isHost: true },
-          {
-            peerId: this.peer!.id,
-            displayName: this.displayName,
-            isHost: false,
-          },
-        ],
-        error: null,
-      });
-
-      this.persistSession('guest', normalized);
-    } catch (error) {
+    let lastError: unknown;
+    // Attempt 1: normal ICE. Attempt 2: force TURN relay (PC ↔ mobile / cellular).
+    for (let attempt = 1; attempt <= 2; attempt++) {
       await this.resetPeer();
       this.patchState({
-        ...INITIAL_STATE,
-        error: this.toErrorMessage(error, 'Failed to join watch party'),
+        connecting: true,
+        error: null,
+        role: 'guest',
+        roomCode: normalized,
+        connected: false,
+        members: [],
+        inviteUrl: null,
       });
-      throw error;
+
+      try {
+        await this.openPeer(undefined, {
+          forceRelay: attempt === 2,
+        });
+        this.peer!.on('error', (err) => this.onPeerError(err));
+
+        const hostPeerId = this.toPeerId(normalized);
+        const conn = this.peer!.connect(hostPeerId, { reliable: true });
+
+        if (!conn) {
+          throw new Error('Could not start connection to host');
+        }
+
+        // Same order as the working baseline: wait for open, then register
+        await this.waitForConnection(conn);
+        this.registerConnection(conn, false);
+
+        this.send(conn, {
+          action: 'hello',
+          displayName: this.displayName,
+          sentAt: Date.now(),
+        });
+
+        this.patchState({
+          role: 'guest',
+          roomCode: normalized,
+          connected: true,
+          connecting: false,
+          inviteUrl: this.buildInviteUrl(normalized),
+          members: [
+            { peerId: hostPeerId, displayName: 'Host', isHost: true },
+            {
+              peerId: this.peer!.id,
+              displayName: this.displayName,
+              isHost: false,
+            },
+          ],
+          error: null,
+        });
+
+        this.persistSession('guest', normalized);
+        return;
+      } catch (error) {
+        lastError = error;
+        const message = this.toErrorMessage(error, '');
+        // Don't retry hard failures like bad room code
+        if (/room not found/i.test(message) || /enter a valid/i.test(message)) {
+          break;
+        }
+        if (attempt < 2) {
+          await new Promise((r) => setTimeout(r, 500));
+        }
+      }
     }
+
+    await this.resetPeer();
+    this.patchState({
+      ...INITIAL_STATE,
+      connecting: false,
+      error: this.toErrorMessage(
+        lastError,
+        'Failed to join watch party across networks. Ask the host to keep the party open and try again.'
+      ),
+    });
+    throw lastError instanceof Error
+      ? lastError
+      : new Error('Failed to join watch party');
   }
 
   /** Restore a party after page reload. Returns true if reconnect was attempted. */
@@ -483,11 +545,23 @@ export class WatchPartyService implements OnDestroy {
     this.stateSubject.complete();
   }
 
-  private async openPeer(peerId?: string): Promise<void> {
+  private async openPeer(
+    peerId?: string,
+    options?: { forceRelay?: boolean }
+  ): Promise<void> {
     await new Promise<void>((resolve, reject) => {
+      const peerOptions = {
+        debug: 1 as const,
+        config: {
+          iceServers: WatchPartyService.ICE_SERVERS,
+          sdpSemantics: 'unified-plan' as const,
+          ...(options?.forceRelay ? { iceTransportPolicy: 'relay' as const } : {}),
+        },
+      };
+
       const peer = peerId
-        ? new Peer(peerId, { debug: 1 })
-        : new Peer({ debug: 1 });
+        ? new Peer(peerId, peerOptions)
+        : new Peer(peerOptions);
       this.peer = peer;
 
       let settled = false;
@@ -620,14 +694,19 @@ export class WatchPartyService implements OnDestroy {
       let settled = false;
 
       const timeout = setTimeout(() => {
+        try {
+          conn.close();
+        } catch {
+          // ignore
+        }
         finish(() =>
           reject(
             new Error(
-              'Timed out connecting to host. Make sure the host party is still open and the code is correct.'
+              'Timed out connecting to host. If you are on mobile data, try Wi‑Fi or the host’s hotspot, then join again.'
             )
           )
         );
-      }, 12000);
+      }, 18000);
 
       const onOpen = (): void => {
         finish(() => resolve());
@@ -663,6 +742,11 @@ export class WatchPartyService implements OnDestroy {
         peer.off('error', onPeerError);
         cb();
       };
+
+      if (conn.open) {
+        finish(() => resolve());
+        return;
+      }
 
       conn.on('open', onOpen);
       conn.on('error', onConnError);
@@ -711,7 +795,10 @@ export class WatchPartyService implements OnDestroy {
 
     conn.on('data', (data) => this.onConnectionData(conn, data, fromHostSide));
     conn.on('close', () => this.onConnectionClosed(conn.peer));
-    conn.on('error', () => this.onConnectionClosed(conn.peer));
+    // Transient ICE errors are common on mobile — only 'close' means gone
+    conn.on('error', (err) => {
+      console.warn('Watch party connection error:', err);
+    });
 
     this.refreshMembers();
   }
