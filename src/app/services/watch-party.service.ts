@@ -294,66 +294,89 @@ export class WatchPartyService implements OnDestroy {
       throw new Error('Enter a valid room code');
     }
 
-    await this.resetPeer();
-    this.patchState({
-      connecting: true,
-      error: null,
-      role: 'guest',
-      roomCode: normalized,
-      connected: false,
-      members: [],
-      inviteUrl: null,
-    });
-
-    try {
-      await this.openPeer();
-      this.peer!.on('error', (err) =>
-        this.ngZone.run(() => this.onPeerError(err))
-      );
-
-      const hostPeerId = this.toPeerId(normalized);
-      // Match original working watch-party commit: wait for open, then register.
-      const conn = this.peer!.connect(hostPeerId, { reliable: true });
-      if (!conn) {
-        throw new Error('Could not start connection to host');
-      }
-
-      await this.waitForConnection(conn);
-      this.registerConnection(conn, false);
-
-      this.send(conn, {
-        action: 'hello',
-        displayName: this.displayName,
-        sentAt: Date.now(),
-      });
-
-      this.patchState({
-        role: 'guest',
-        roomCode: normalized,
-        connected: true,
-        connecting: false,
-        inviteUrl: this.buildInviteUrl(normalized),
-        members: [
-          { peerId: hostPeerId, displayName: 'Host', isHost: true },
-          {
-            peerId: this.peer!.id,
-            displayName: this.displayName,
-            isHost: false,
-          },
-        ],
-        error: null,
-      });
-
-      this.persistSession('guest', normalized);
-    } catch (error) {
+    let lastError: unknown;
+    // Mobile/cellular often needs a couple tries for PeerJS + ICE
+    for (let attempt = 1; attempt <= 3; attempt++) {
       await this.resetPeer();
       this.patchState({
-        ...INITIAL_STATE,
-        connecting: false,
-        error: this.toErrorMessage(error, 'Failed to join watch party'),
+        connecting: true,
+        error: null,
+        role: 'guest',
+        roomCode: normalized,
+        connected: false,
+        members: [],
+        inviteUrl: null,
       });
-      throw error;
+
+      try {
+        await this.openPeer();
+        this.peer!.on('error', (err) =>
+          this.ngZone.run(() => this.onPeerError(err))
+        );
+
+        const hostPeerId = this.toPeerId(normalized);
+        const conn = this.peer!.connect(hostPeerId, { reliable: true });
+        if (!conn) {
+          throw new Error('Could not start connection to host');
+        }
+
+        // Buffer host packets that arrive before we fully register handlers
+        const earlyPackets: unknown[] = [];
+        const onEarlyData = (data: unknown): void => {
+          earlyPackets.push(data);
+        };
+        conn.on('data', onEarlyData);
+
+        await this.waitForConnection(conn);
+        conn.off('data', onEarlyData);
+
+        this.registerConnection(conn, false);
+        for (const packet of earlyPackets) {
+          this.onConnectionData(conn, packet, false);
+        }
+
+        this.send(conn, {
+          action: 'hello',
+          displayName: this.displayName,
+          sentAt: Date.now(),
+        });
+
+        this.patchState({
+          role: 'guest',
+          roomCode: normalized,
+          connected: true,
+          connecting: false,
+          inviteUrl: this.buildInviteUrl(normalized),
+          members: [
+            { peerId: hostPeerId, displayName: 'Host', isHost: true },
+            {
+              peerId: this.peer!.id,
+              displayName: this.displayName,
+              isHost: false,
+            },
+          ],
+          error: null,
+        });
+
+        this.persistSession('guest', normalized);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt < 3) {
+          await new Promise((r) => setTimeout(r, 700 * attempt));
+        }
+      }
     }
+
+    await this.resetPeer();
+    this.patchState({
+      ...INITIAL_STATE,
+      connecting: false,
+      error: this.toErrorMessage(lastError, 'Failed to join watch party'),
+    });
+    throw lastError instanceof Error
+      ? lastError
+      : new Error(this.toErrorMessage(lastError, 'Failed to join watch party'));
   }
 
   /** Restore a party after page reload. Returns true if reconnect was attempted. */
@@ -511,10 +534,28 @@ export class WatchPartyService implements OnDestroy {
 
   private async openPeer(peerId?: string): Promise<void> {
     await new Promise<void>((resolve, reject) => {
-      // Match the original working commit: default PeerJS cloud, no forced TURN
+      // Keep PeerJS cloud TURN + extra STUN — mobile/cellular often needs TURN
+      const peerOptions = {
+        debug: 1 as const,
+        config: {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun.cloudflare.com:3478' },
+            {
+              urls: [
+                'turn:0.peerjs.com:3478',
+                'turn:0.peerjs.com:3478?transport=tcp',
+              ],
+              username: 'peerjs',
+              credential: 'peerjsp',
+            },
+          ],
+        },
+      };
       const peer = peerId
-        ? new Peer(peerId, { debug: 1 })
-        : new Peer({ debug: 1 });
+        ? new Peer(peerId, peerOptions)
+        : new Peer(peerOptions);
       this.peer = peer;
 
       let settled = false;
@@ -656,7 +697,7 @@ export class WatchPartyService implements OnDestroy {
             )
           )
         );
-      }, 12000);
+      }, 20000);
 
       const onOpen = (): void => {
         finish(() => resolve());
@@ -761,9 +802,11 @@ export class WatchPartyService implements OnDestroy {
     conn.on('close', () =>
       this.ngZone.run(() => this.onConnectionClosed(conn.peer))
     );
-    conn.on('error', () =>
-      this.ngZone.run(() => this.onConnectionClosed(conn.peer))
-    );
+    // Do not tear down on transient ICE/WebRTC errors — common on mobile.
+    // Only 'close' means the peer is actually gone.
+    conn.on('error', (err) => {
+      console.warn('Watch party connection error:', err);
+    });
 
     this.refreshMembers();
   }

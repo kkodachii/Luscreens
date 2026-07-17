@@ -149,7 +149,9 @@ export class HeaderComponent {
   }
 
   closeJoinPartyModal(): void {
-    this.dismissedInviteCode = (this.joinRoomCode || '').trim().toUpperCase() || null;
+    this.dismissedInviteCode =
+      (this.joinRoomCode || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '') ||
+      null;
     this.watchPartyService.closeJoinModal();
     this.isJoinPartyModalOpen = false;
   }
@@ -163,17 +165,28 @@ export class HeaderComponent {
         joinInput,
         this.getWatchPartyDisplayName('Guest')
       );
-      this.closeJoinPartyModal();
+      // Soft-close — do not mark the code as dismissed (that blocks re-open)
+      this.dismissedInviteCode = null;
+      this.watchPartyService.closeJoinModal();
+      this.isJoinPartyModalOpen = false;
 
-      // Navigate without blocking join — host media also arrives via remoteCommands$
-      const media =
-        this.watchPartyService.getMediaState() || mediaFromInvite;
-      if (media) {
-        this.navigateToPartyMedia(media);
-      }
+      // Navigate in the background so Join isn't blocked on media sync
+      void this.followHostMediaAfterJoin(mediaFromInvite);
     } catch (error) {
       console.error('Failed to join watch party:', error);
       this.isJoinPartyModalOpen = true;
+    }
+  }
+
+  private async followHostMediaAfterJoin(
+    mediaFromInvite: WatchPartyMediaState | null
+  ): Promise<void> {
+    const media =
+      this.watchPartyService.getMediaState() ||
+      (await this.watchPartyService.waitForMediaState(5000)) ||
+      mediaFromInvite;
+    if (media) {
+      this.navigateToPartyMedia(media);
     }
   }
 
