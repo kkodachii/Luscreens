@@ -1,6 +1,7 @@
-import { Injectable, OnDestroy } from '@angular/core';
-import { BehaviorSubject, Subject } from 'rxjs';
-import Peer, { DataConnection, PeerError } from 'peerjs';
+import { Injectable, NgZone, OnDestroy, inject } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { BehaviorSubject, Subject, firstValueFrom } from 'rxjs';
+import { environment } from '../../environments/environment';
 
 export type WatchPartyRole = 'host' | 'guest' | null;
 
@@ -43,6 +44,7 @@ export interface WatchPartySession {
   role: 'host' | 'guest';
   roomCode: string;
   displayName: string;
+  memberId?: string;
   mediaType?: string;
   id?: string;
   season?: number;
@@ -71,24 +73,46 @@ const INITIAL_STATE: WatchPartyState = {
   inviteUrl: null,
 };
 
+interface PartyCreateResponse {
+  code: string;
+  memberId: string;
+  members?: WatchPartyMember[];
+  media?: WatchPartyMediaState | null;
+}
+
+interface PartyPollResponse {
+  events?: Array<{ seq: number; from: string; command: WatchPartyCommand }>;
+  members?: WatchPartyMember[];
+  media?: WatchPartyMediaState | null;
+  seq?: number;
+  closed?: boolean;
+  error?: string;
+}
+
+/**
+ * Watch party over auth-api HTTP long-poll.
+ * Works PC ↔ mobile on different Wi‑Fi / cellular (no WebRTC/NAT).
+ */
 @Injectable({
   providedIn: 'root',
 })
 export class WatchPartyService implements OnDestroy {
-  /** Alphanumeric-only peer ids (PeerJS is picky about id format). */
-  private static readonly PEER_PREFIX = 'lsparty';
-  private static readonly CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   private static readonly SESSION_KEY = 'luscreensWatchParty';
-  private static readonly SESSION_MAX_AGE_MS = 6 * 60 * 60 * 1000; // 6 hours
+  private static readonly SESSION_MAX_AGE_MS = 6 * 60 * 60 * 1000;
   private static readonly MAX_CHAT_LENGTH = 500;
-  private userId: string | null = null;
 
-  private peer: Peer | null = null;
-  private connections = new Map<string, DataConnection>();
+  private readonly http = inject(HttpClient);
+  private readonly apiBase = (environment.authApiUrl || '').replace(/\/$/, '');
+
+  private userId: string | null = null;
+  private memberId: string | null = null;
   private displayName = 'Guest';
   private mediaState: WatchPartyMediaState | null = null;
   private lastBroadcastAt = 0;
   private applyingRemote = false;
+  private pollAfterSeq = 0;
+  private pollActive = false;
+  private pollAbort = false;
 
   private readonly stateSubject = new BehaviorSubject<WatchPartyState>(INITIAL_STATE);
   readonly state$ = this.stateSubject.asObservable();
@@ -96,19 +120,19 @@ export class WatchPartyService implements OnDestroy {
   private readonly remoteCommandSubject = new Subject<WatchPartyCommand>();
   readonly remoteCommands$ = this.remoteCommandSubject.asObservable();
 
-  /** Host-only: fired when a guest connects and needs a playback snapshot. */
   private readonly syncRequestedSubject = new Subject<void>();
   readonly syncRequested$ = this.syncRequestedSubject.asObservable();
 
   private readonly chatSubject = new Subject<WatchPartyChatMessage>();
   readonly chatMessages$ = this.chatSubject.asObservable();
 
-  /** App-wide Join modal (header / ?party= invite links). */
   private readonly joinModalSubject = new BehaviorSubject<{
     open: boolean;
     code: string;
   }>({ open: false, code: '' });
   readonly joinModal$ = this.joinModalSubject.asObservable();
+
+  constructor(private ngZone: NgZone) {}
 
   openJoinModal(prefillCode?: string): void {
     const code = prefillCode?.trim()
@@ -132,6 +156,7 @@ export class WatchPartyService implements OnDestroy {
     if (this.mediaState?.mediaType && this.mediaState?.id) {
       return Promise.resolve(this.mediaState);
     }
+
     return new Promise((resolve) => {
       let settled = false;
       const finish = (media: WatchPartyMediaState | null): void => {
@@ -143,16 +168,17 @@ export class WatchPartyService implements OnDestroy {
         sub.unsubscribe();
         resolve(media);
       };
+
       const sub = this.remoteCommands$.subscribe((command) => {
         if (command.media?.mediaType && command.media?.id) {
           finish(command.media);
         }
       });
+
       const timer = setTimeout(() => finish(this.mediaState), timeoutMs);
     });
   }
 
-  /** Scope party session restore to the logged-in user. */
   bindToUser(userId: string | null): void {
     this.userId = userId;
   }
@@ -188,9 +214,9 @@ export class WatchPartyService implements OnDestroy {
       return;
     }
 
-    // Guests follow the host — only host broadcasts media by default
     const shouldBroadcast = options?.broadcast ?? this.isHost;
-    if (shouldBroadcast) {
+    if (shouldBroadcast && this.isHost) {
+      void this.postMedia(media);
       this.broadcast({
         action: 'media',
         media,
@@ -207,54 +233,64 @@ export class WatchPartyService implements OnDestroy {
   }
 
   async createParty(displayName?: string, existingRoomCode?: string): Promise<string> {
+    if (!this.apiBase) {
+      throw new Error('Auth API is not configured');
+    }
     if (displayName) {
       this.setDisplayName(displayName);
     }
 
-    await this.resetPeer();
-    this.patchState({ connecting: true, error: null, role: 'host', roomCode: null });
-
-    const roomCode = existingRoomCode
-      ? this.normalizeRoomCode(existingRoomCode)
-      : this.generateRoomCode();
-    if (!roomCode) {
-      throw new Error('Invalid room code');
-    }
-    const peerId = this.toPeerId(roomCode);
+    this.stopPolling();
+    this.patchState({
+      connecting: true,
+      error: null,
+      role: 'host',
+      roomCode: null,
+      connected: false,
+      members: [],
+      inviteUrl: null,
+    });
 
     try {
-      // After reload the old PeerJS id can linger briefly — retry a few times
-      await this.openPeerWithRetry(peerId);
+      const res = await firstValueFrom(
+        this.http.post<PartyCreateResponse>(`${this.apiBase}/party/create`, {
+          displayName: this.displayName,
+          roomCode: existingRoomCode || undefined,
+        })
+      );
 
-      if (this.peer?.id !== peerId) {
-        throw new Error('Room id mismatch from signaling server. Please try again.');
-      }
-
-      this.peer.on('connection', (conn) => this.handleIncomingConnection(conn));
-      this.peer.on('error', (err) => this.onPeerError(err));
-
+      this.memberId = res.memberId;
+      this.pollAfterSeq = 0;
       this.patchState({
         role: 'host',
-        roomCode,
+        roomCode: res.code,
         connected: true,
         connecting: false,
-        members: [
-          {
-            peerId,
-            displayName: this.displayName || 'Host',
-            isHost: true,
-          },
-        ],
-        inviteUrl: this.buildInviteUrl(roomCode),
+        members: res.members?.length
+          ? res.members
+          : [
+              {
+                peerId: res.memberId,
+                displayName: this.displayName || 'Host',
+                isHost: true,
+              },
+            ],
+        inviteUrl: this.buildInviteUrl(res.code),
         error: null,
       });
 
-      this.persistSession('host', roomCode);
-      return roomCode;
+      if (this.mediaState) {
+        void this.postMedia(this.mediaState);
+      }
+
+      this.persistSession('host', res.code);
+      this.startPolling();
+      return res.code;
     } catch (error) {
-      await this.resetPeer();
+      this.memberId = null;
       this.patchState({
         ...INITIAL_STATE,
+        connecting: false,
         error: this.toErrorMessage(error, 'Failed to create watch party'),
       });
       throw error;
@@ -262,6 +298,9 @@ export class WatchPartyService implements OnDestroy {
   }
 
   async joinParty(roomCode: string, displayName?: string): Promise<void> {
+    if (!this.apiBase) {
+      throw new Error('Auth API is not configured');
+    }
     if (displayName) {
       this.setDisplayName(displayName);
     }
@@ -271,7 +310,7 @@ export class WatchPartyService implements OnDestroy {
       throw new Error('Enter a valid room code');
     }
 
-    await this.resetPeer();
+    this.stopPolling();
     this.patchState({
       connecting: true,
       error: null,
@@ -283,54 +322,50 @@ export class WatchPartyService implements OnDestroy {
     });
 
     try {
-      await this.openPeer();
-      this.peer!.on('error', (err) => this.onPeerError(err));
+      const res = await firstValueFrom(
+        this.http.post<PartyCreateResponse>(`${this.apiBase}/party/join`, {
+          code: normalized,
+          displayName: this.displayName,
+        })
+      );
 
-      const hostPeerId = this.toPeerId(normalized);
-      const conn = this.peer!.connect(hostPeerId, { reliable: true });
+      this.memberId = res.memberId;
+      this.pollAfterSeq = 0;
 
-      if (!conn) {
-        throw new Error('Could not start connection to host');
+      if (res.media?.mediaType && res.media?.id) {
+        this.applyGuestMedia(res.media);
+        this.ngZone.run(() => {
+          this.remoteCommandSubject.next({
+            action: 'media',
+            media: res.media!,
+            sentAt: Date.now(),
+          });
+        });
       }
-
-      await this.waitForConnection(conn);
-      this.registerConnection(conn, false);
-
-      this.send(conn, {
-        action: 'hello',
-        displayName: this.displayName,
-        sentAt: Date.now(),
-      });
 
       this.patchState({
         role: 'guest',
-        roomCode: normalized,
+        roomCode: res.code || normalized,
         connected: true,
         connecting: false,
-        inviteUrl: this.buildInviteUrl(normalized),
-        members: [
-          { peerId: hostPeerId, displayName: 'Host', isHost: true },
-          {
-            peerId: this.peer!.id,
-            displayName: this.displayName,
-            isHost: false,
-          },
-        ],
+        members: res.members || [],
+        inviteUrl: this.buildInviteUrl(res.code || normalized),
         error: null,
       });
 
-      this.persistSession('guest', normalized);
+      this.persistSession('guest', res.code || normalized);
+      this.startPolling();
     } catch (error) {
-      await this.resetPeer();
+      this.memberId = null;
       this.patchState({
         ...INITIAL_STATE,
+        connecting: false,
         error: this.toErrorMessage(error, 'Failed to join watch party'),
       });
       throw error;
     }
   }
 
-  /** Restore a party after page reload. Returns true if reconnect was attempted. */
   async restoreSession(): Promise<boolean> {
     const session = this.readSession();
     if (!session) {
@@ -339,10 +374,8 @@ export class WatchPartyService implements OnDestroy {
 
     this.setDisplayName(session.displayName);
 
-    // Peer survived SPA navigation — do not destroy/recreate (that drops guests)
     if (
-      this.peer &&
-      !this.peer.destroyed &&
+      this.pollActive &&
       this.snapshot.connected &&
       this.snapshot.roomCode === session.roomCode &&
       this.snapshot.role === session.role
@@ -358,7 +391,6 @@ export class WatchPartyService implements OnDestroy {
       }
       return true;
     } catch (error) {
-      // Guest may fail if host is briefly offline during reload — keep session for retry
       if (session.role === 'guest') {
         this.patchState({
           ...INITIAL_STATE,
@@ -377,23 +409,24 @@ export class WatchPartyService implements OnDestroy {
   }
 
   leaveParty(): void {
-    void this.resetPeer();
+    void this.leaveOnServer();
+    this.stopPolling();
+    this.memberId = null;
     this.applyingRemote = false;
     this.clearSession();
     this.stateSubject.next({ ...INITIAL_STATE });
   }
 
-  /** Tear down the peer without clearing the saved session (used on page unload). */
   disconnectKeepingSession(): void {
-    void this.resetPeer();
+    void this.leaveOnServer();
+    this.stopPolling();
+    this.memberId = null;
     this.applyingRemote = false;
-    // Keep role/room in UI state cleared, but sessionStorage stays for reload restore
     this.stateSubject.next({ ...INITIAL_STATE });
   }
 
-  /** Send a chat message to everyone in the party. */
   sendChat(text: string): boolean {
-    if (!this.isInParty || !this.peer) {
+    if (!this.isInParty || !this.memberId) {
       return false;
     }
 
@@ -407,7 +440,7 @@ export class WatchPartyService implements OnDestroy {
 
     this.chatSubject.next({
       id: messageId,
-      peerId: this.peer.id,
+      peerId: this.memberId,
       displayName: this.displayName,
       text: trimmed,
       sentAt,
@@ -425,17 +458,16 @@ export class WatchPartyService implements OnDestroy {
     return true;
   }
 
-  /** Anyone in the party can broadcast play/pause/seek. */
   broadcastPlayerEvent(event: 'play' | 'pause' | 'seeked', time: number): void {
     if (!this.isInParty) {
       return;
     }
 
-    const now = Date.now();
-    if (now - this.lastBroadcastAt < 80) {
+    const ts = Date.now();
+    if (ts - this.lastBroadcastAt < 80) {
       return;
     }
-    this.lastBroadcastAt = now;
+    this.lastBroadcastAt = ts;
 
     const action = event === 'seeked' ? 'seek' : event;
     this.broadcast({
@@ -444,11 +476,10 @@ export class WatchPartyService implements OnDestroy {
       playing: action === 'play',
       media: this.mediaState ?? undefined,
       displayName: this.displayName,
-      sentAt: now,
+      sentAt: ts,
     });
   }
 
-  /** Push your current playback state so everyone can catch up. */
   broadcastSync(time: number, playing: boolean): void {
     if (!this.isInParty) {
       return;
@@ -483,72 +514,224 @@ export class WatchPartyService implements OnDestroy {
     this.stateSubject.complete();
   }
 
-  private async openPeer(peerId?: string): Promise<void> {
-    await new Promise<void>((resolve, reject) => {
-      const peer = peerId
-        ? new Peer(peerId, { debug: 1 })
-        : new Peer({ debug: 1 });
-      this.peer = peer;
+  private broadcast(command: WatchPartyCommand): void {
+    const code = this.snapshot.roomCode;
+    const memberId = this.memberId;
+    if (!this.apiBase || !code || !memberId) {
+      return;
+    }
 
-      let settled = false;
-
-      const onOpen = (id: string): void => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        cleanup();
-        if (peerId && id !== peerId) {
-          reject(new Error('Signaling server assigned a different room id'));
-          return;
-        }
-        resolve();
-      };
-
-      const onError = (err: PeerError<string>): void => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        cleanup();
-        reject(err);
-      };
-
-      const cleanup = (): void => {
-        peer.off('open', onOpen);
-        peer.off('error', onError);
-      };
-
-      peer.on('open', onOpen);
-      peer.on('error', onError);
-    });
+    void firstValueFrom(
+      this.http.post(`${this.apiBase}/party/send`, {
+        code,
+        memberId,
+        command,
+      })
+    ).catch((err) => console.warn('Watch party send failed:', err));
   }
 
-  private async openPeerWithRetry(peerId: string, attempts = 4): Promise<void> {
-    let lastError: unknown;
-    for (let i = 0; i < attempts; i++) {
+  private async postMedia(media: WatchPartyMediaState): Promise<void> {
+    const code = this.snapshot.roomCode;
+    const memberId = this.memberId;
+    if (!this.apiBase || !code || !memberId || !this.isHost) {
+      return;
+    }
+    try {
+      await firstValueFrom(
+        this.http.post(`${this.apiBase}/party/media`, {
+          code,
+          memberId,
+          media,
+        })
+      );
+    } catch (err) {
+      console.warn('Watch party media update failed:', err);
+    }
+  }
+
+  private startPolling(): void {
+    if (this.pollActive) {
+      return;
+    }
+    this.pollActive = true;
+    this.pollAbort = false;
+    void this.pollLoop();
+  }
+
+  private stopPolling(): void {
+    this.pollAbort = true;
+    this.pollActive = false;
+  }
+
+  private async pollLoop(): Promise<void> {
+    while (!this.pollAbort && this.pollActive) {
+      const code = this.snapshot.roomCode;
+      const memberId = this.memberId;
+      if (!this.apiBase || !code || !memberId) {
+        break;
+      }
+
       try {
-        if (i > 0) {
-          await this.resetPeer();
-          await new Promise((r) => setTimeout(r, 500 * i));
+        const res = await firstValueFrom(
+          this.http.get<PartyPollResponse>(`${this.apiBase}/party/poll`, {
+            params: {
+              code,
+              memberId,
+              after: String(this.pollAfterSeq),
+              waitMs: '12000',
+            },
+          })
+        );
+
+        if (this.pollAbort) {
+          break;
         }
-        await this.openPeer(peerId);
-        return;
-      } catch (error) {
-        lastError = error;
-        const type =
-          error && typeof error === 'object' && 'type' in error
-            ? String((error as { type: string }).type)
-            : '';
-        // Only retry when the previous host session still holds the id
-        if (type !== 'unavailable-id' && i === 0) {
-          // first failure might still be unavailable-id under a generic Error
+
+        if (res.closed) {
+          this.ngZone.run(() => {
+            this.stopPolling();
+            this.memberId = null;
+            this.patchState({
+              ...INITIAL_STATE,
+              error: 'Party ended or host left',
+            });
+          });
+          break;
+        }
+
+        this.ngZone.run(() => this.applyPoll(res));
+      } catch (err) {
+        if (this.pollAbort) {
+          break;
+        }
+        const status = (err as { status?: number })?.status;
+        if (status === 404 || status === 403) {
+          this.ngZone.run(() => {
+            this.stopPolling();
+            this.memberId = null;
+            this.patchState({
+              ...INITIAL_STATE,
+              error: 'Disconnected from party',
+            });
+          });
+          break;
+        }
+        // Cold start / network blip
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    }
+    this.pollActive = false;
+  }
+
+  private applyPoll(res: PartyPollResponse): void {
+    if (Array.isArray(res.members) && res.members.length) {
+      this.patchState({ members: res.members });
+    }
+
+    if (res.media?.mediaType && res.media?.id) {
+      if (this.isGuest) {
+        const prev = this.mediaState;
+        this.applyGuestMedia(res.media);
+        if (
+          !prev ||
+          prev.mediaType !== res.media.mediaType ||
+          String(prev.id) !== String(res.media.id) ||
+          prev.season !== res.media.season ||
+          prev.episode !== res.media.episode
+        ) {
+          this.remoteCommandSubject.next({
+            action: 'media',
+            media: res.media,
+            sentAt: Date.now(),
+          });
+        }
+      } else {
+        this.mediaState = res.media;
+      }
+    }
+
+    for (const event of res.events || []) {
+      if (event.seq > this.pollAfterSeq) {
+        this.pollAfterSeq = event.seq;
+      }
+      if (!event.command || event.from === this.memberId) {
+        continue;
+      }
+      this.handleRemoteCommand(event.from, event.command);
+    }
+
+    if (typeof res.seq === 'number' && res.seq > this.pollAfterSeq) {
+      this.pollAfterSeq = res.seq;
+    }
+  }
+
+  private handleRemoteCommand(fromId: string, command: WatchPartyCommand): void {
+    if (command.action === 'chat') {
+      const text = (command.text || '').trim().slice(0, WatchPartyService.MAX_CHAT_LENGTH);
+      if (text) {
+        this.chatSubject.next({
+          id: command.messageId || `${command.sentAt || Date.now()}-${fromId}`,
+          peerId: fromId,
+          displayName: command.displayName || 'Guest',
+          text,
+          sentAt: command.sentAt || Date.now(),
+          isLocal: false,
+        });
+      }
+      return;
+    }
+
+    if (command.action === 'hello') {
+      if (command.media && this.isGuest) {
+        this.applyGuestMedia(command.media);
+      }
+      if (this.isHost) {
+        this.syncRequestedSubject.next();
+        if (this.mediaState) {
+          void this.postMedia(this.mediaState);
         }
       }
     }
-    throw lastError instanceof Error
-      ? lastError
-      : new Error('Could not reclaim watch party room after reload');
+
+    if (command.media && this.isGuest) {
+      this.applyGuestMedia(command.media);
+    }
+
+    this.remoteCommandSubject.next(command);
+  }
+
+  private applyGuestMedia(media: WatchPartyMediaState): void {
+    if (!media?.mediaType || media.id == null || media.id === '') {
+      return;
+    }
+    this.mediaState = {
+      mediaType: media.mediaType,
+      id: String(media.id),
+      season: media.season,
+      episode: media.episode,
+      title: media.title,
+      posterPath: media.posterPath ?? null,
+    };
+    const role = this.snapshot.role;
+    const roomCode = this.snapshot.roomCode;
+    if ((role === 'host' || role === 'guest') && roomCode) {
+      this.persistSession(role, roomCode);
+    }
+  }
+
+  private async leaveOnServer(): Promise<void> {
+    const code = this.snapshot.roomCode;
+    const memberId = this.memberId;
+    if (!this.apiBase || !code || !memberId) {
+      return;
+    }
+    try {
+      await firstValueFrom(
+        this.http.post(`${this.apiBase}/party/leave`, { code, memberId })
+      );
+    } catch {
+      // ignore
+    }
   }
 
   private sessionKey(): string {
@@ -563,6 +746,7 @@ export class WatchPartyService implements OnDestroy {
         role,
         roomCode,
         displayName: this.displayName,
+        memberId: this.memberId || undefined,
         mediaType: this.mediaState?.mediaType,
         id: this.mediaState?.id,
         season: this.mediaState?.season,
@@ -572,7 +756,7 @@ export class WatchPartyService implements OnDestroy {
       };
       sessionStorage.setItem(this.sessionKey(), JSON.stringify(session));
     } catch {
-      // ignore quota / private mode
+      // ignore
     }
   }
 
@@ -605,308 +789,6 @@ export class WatchPartyService implements OnDestroy {
     }
   }
 
-  /**
-   * PeerJS often emits peer-unavailable on the Peer, not the DataConnection.
-   * Listen to both so join fails fast instead of hanging / acting weird.
-   */
-  private waitForConnection(conn: DataConnection): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const peer = this.peer;
-      if (!peer) {
-        reject(new Error('Peer not ready'));
-        return;
-      }
-
-      let settled = false;
-
-      const timeout = setTimeout(() => {
-        finish(() =>
-          reject(
-            new Error(
-              'Timed out connecting to host. Make sure the host party is still open and the code is correct.'
-            )
-          )
-        );
-      }, 12000);
-
-      const onOpen = (): void => {
-        finish(() => resolve());
-      };
-
-      const onConnError = (err: Error): void => {
-        finish(() => reject(err));
-      };
-
-      const onPeerError = (err: PeerError<string>): void => {
-        const type = (err as PeerError<string> & { type?: string }).type;
-        if (type === 'peer-unavailable') {
-          finish(() =>
-            reject(
-              new Error(
-                'Room not found. Ask the host to start the party again and use the new code.'
-              )
-            )
-          );
-          return;
-        }
-        finish(() => reject(err));
-      };
-
-      const finish = (cb: () => void): void => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        clearTimeout(timeout);
-        conn.off('open', onOpen);
-        conn.off('error', onConnError);
-        peer.off('error', onPeerError);
-        cb();
-      };
-
-      conn.on('open', onOpen);
-      conn.on('error', onConnError);
-      peer.on('error', onPeerError);
-    });
-  }
-
-  private onPeerError(err: PeerError<string>): void {
-    const type = (err as PeerError<string> & { type?: string }).type;
-    if (type === 'peer-unavailable') {
-      return;
-    }
-    if (type === 'network' || type === 'server-error' || type === 'socket-error') {
-      this.patchState({
-        error: this.toErrorMessage(err, 'Watch party connection error'),
-        connected: false,
-      });
-    }
-  }
-
-  private handleIncomingConnection(conn: DataConnection): void {
-    conn.on('open', () => {
-      this.registerConnection(conn, true);
-
-      this.send(conn, {
-        action: 'hello',
-        displayName: this.displayName || 'Host',
-        media: this.mediaState ?? undefined,
-        sentAt: Date.now(),
-      });
-
-      if (this.mediaState) {
-        this.send(conn, {
-          action: 'media',
-          media: this.mediaState,
-          sentAt: Date.now(),
-        });
-      }
-
-      this.syncRequestedSubject.next();
-    });
-  }
-
-  private registerConnection(conn: DataConnection, fromHostSide: boolean): void {
-    this.connections.set(conn.peer, conn);
-
-    conn.on('data', (data) => this.onConnectionData(conn, data, fromHostSide));
-    conn.on('close', () => this.onConnectionClosed(conn.peer));
-    conn.on('error', () => this.onConnectionClosed(conn.peer));
-
-    this.refreshMembers();
-  }
-
-  private onConnectionData(
-    conn: DataConnection,
-    data: unknown,
-    fromHostSide: boolean
-  ): void {
-    const command = data as WatchPartyCommand;
-    if (!command?.action) {
-      return;
-    }
-
-    if (command.action === 'hello') {
-      const members = [...this.snapshot.members];
-      const existing = members.find((m) => m.peerId === conn.peer);
-      if (existing) {
-        existing.displayName = command.displayName || existing.displayName;
-      } else {
-        members.push({
-          peerId: conn.peer,
-          displayName: command.displayName || (fromHostSide ? 'Guest' : 'Host'),
-          isHost: !fromHostSide,
-        });
-      }
-      this.patchState({ members });
-
-      // Guest hello: re-send host media after the guest is listening
-      if (fromHostSide && this.mediaState) {
-        this.send(conn, {
-          action: 'media',
-          media: this.mediaState,
-          sentAt: Date.now(),
-        });
-      }
-
-      // Host hello may include media — surface it for guests
-      if (!fromHostSide && command.media) {
-        this.mediaState = command.media;
-        this.remoteCommandSubject.next({
-          action: 'media',
-          media: command.media,
-          sentAt: command.sentAt || Date.now(),
-        });
-      }
-      return;
-    }
-
-    if (command.action === 'chat') {
-      const text = (command.text || '')
-        .trim()
-        .slice(0, WatchPartyService.MAX_CHAT_LENGTH);
-      if (text) {
-        this.chatSubject.next({
-          id: command.messageId || `${command.sentAt || Date.now()}-${conn.peer}`,
-          peerId: conn.peer,
-          displayName: command.displayName || 'Guest',
-          text,
-          sentAt: command.sentAt || Date.now(),
-          isLocal: false,
-        });
-      }
-      if (this.isHost) {
-        this.relayExcept(conn.peer, command);
-      }
-      return;
-    }
-
-    // Apply remote playback/media for everyone (host and guests)
-    if (command.media && !fromHostSide) {
-      this.mediaState = command.media;
-    }
-    this.remoteCommandSubject.next(command);
-
-    // Star topology: host relays guest controls to the other guests
-    if (
-      this.isHost &&
-      (command.action === 'play' ||
-        command.action === 'pause' ||
-        command.action === 'seek' ||
-        command.action === 'sync' ||
-        command.action === 'media')
-    ) {
-      this.relayExcept(conn.peer, command);
-    }
-  }
-
-  private relayExcept(excludePeerId: string, command: WatchPartyCommand): void {
-    for (const [peerId, conn] of this.connections) {
-      if (peerId !== excludePeerId) {
-        this.send(conn, command);
-      }
-    }
-  }
-
-  private onConnectionClosed(peerId: string): void {
-    this.connections.delete(peerId);
-    this.refreshMembers();
-
-    if (this.isGuest && this.connections.size === 0) {
-      this.patchState({
-        connected: false,
-        error: 'Disconnected from host',
-      });
-    }
-  }
-
-  private refreshMembers(): void {
-    const members: WatchPartyMember[] = [];
-
-    if (this.isHost && this.peer) {
-      members.push({
-        peerId: this.peer.id,
-        displayName: this.displayName || 'Host',
-        isHost: true,
-      });
-      for (const [peerId] of this.connections) {
-        const existing = this.snapshot.members.find((m) => m.peerId === peerId);
-        members.push({
-          peerId,
-          displayName: existing?.displayName || 'Guest',
-          isHost: false,
-        });
-      }
-    } else if (this.isGuest && this.peer) {
-      const host = this.snapshot.members.find((m) => m.isHost);
-      if (host) {
-        members.push(host);
-      }
-      members.push({
-        peerId: this.peer.id,
-        displayName: this.displayName,
-        isHost: false,
-      });
-      for (const [peerId] of this.connections) {
-        if (!members.some((m) => m.peerId === peerId)) {
-          members.push({
-            peerId,
-            displayName: 'Host',
-            isHost: true,
-          });
-        }
-      }
-    }
-
-    this.patchState({ members });
-  }
-
-  private broadcast(command: WatchPartyCommand): void {
-    for (const conn of this.connections.values()) {
-      this.send(conn, command);
-    }
-  }
-
-  private send(conn: DataConnection, command: WatchPartyCommand): void {
-    if (conn.open) {
-      conn.send(command);
-    }
-  }
-
-  private async resetPeer(): Promise<void> {
-    for (const conn of this.connections.values()) {
-      try {
-        conn.close();
-      } catch {
-        // ignore
-      }
-    }
-    this.connections.clear();
-
-    if (this.peer) {
-      const peer = this.peer;
-      this.peer = null;
-      try {
-        peer.destroy();
-      } catch {
-        // ignore
-      }
-      // Give the broker a moment to release the previous id
-      await new Promise((r) => setTimeout(r, 150));
-    }
-  }
-
-  private generateRoomCode(length = 6): string {
-    let code = '';
-    const alphabet = WatchPartyService.CODE_ALPHABET;
-    const values = crypto.getRandomValues(new Uint32Array(length));
-    for (let i = 0; i < length; i++) {
-      code += alphabet[values[i] % alphabet.length];
-    }
-    return code;
-  }
-
-  /** Accept raw codes or full invite URLs containing ?party=CODE */
   private normalizeRoomCode(input: string): string {
     const raw = (input || '').trim();
     if (!raw) {
@@ -915,26 +797,39 @@ export class WatchPartyService implements OnDestroy {
 
     try {
       if (raw.includes('party=')) {
-        const url = new URL(raw, typeof window !== 'undefined' ? window.location.origin : undefined);
+        const url = new URL(
+          raw,
+          typeof window !== 'undefined' ? window.location.origin : undefined
+        );
         const fromQuery = url.searchParams.get('party');
         if (fromQuery) {
           return fromQuery.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
         }
       }
     } catch {
-      // not a URL — fall through
+      // fall through
     }
 
     return raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
   }
 
-  private toPeerId(roomCode: string): string {
-    return `${WatchPartyService.PEER_PREFIX}${roomCode.trim().toUpperCase()}`;
-  }
-
   private buildInviteUrl(roomCode: string): string {
     if (typeof window === 'undefined') {
       return '';
+    }
+
+    const origin = window.location.origin;
+    const media = this.mediaState;
+    if (media?.mediaType && media.id) {
+      let path = `/frame/${media.mediaType}/${media.id}`;
+      if (
+        media.mediaType === 'tv' &&
+        media.season != null &&
+        media.episode != null
+      ) {
+        path += `/${media.season}/${media.episode}`;
+      }
+      return `${origin}${path}?party=${encodeURIComponent(roomCode)}`;
     }
 
     const url = new URL(window.location.href);
@@ -943,21 +838,24 @@ export class WatchPartyService implements OnDestroy {
   }
 
   private patchState(partial: Partial<WatchPartyState>): void {
-    this.stateSubject.next({ ...this.stateSubject.value, ...partial });
+    const next = { ...this.stateSubject.value, ...partial };
+    if (NgZone.isInAngularZone()) {
+      this.stateSubject.next(next);
+    } else {
+      this.ngZone.run(() => this.stateSubject.next(next));
+    }
   }
 
   private toErrorMessage(error: unknown, fallback: string): string {
-    if (error && typeof error === 'object' && 'type' in error) {
-      const type = String((error as { type: string }).type);
-      if (type === 'peer-unavailable') {
-        return 'Room not found. Check the code or ask the host to restart the party.';
-      }
-      if (type === 'unavailable-id') {
-        return 'That room code is busy. Start a new party.';
-      }
+    const httpErr = error as {
+      error?: { error?: string };
+      message?: string;
+    };
+    if (httpErr?.error?.error) {
+      return String(httpErr.error.error);
     }
-    if (error instanceof Error && error.message) {
-      return error.message;
+    if (httpErr?.message) {
+      return httpErr.message;
     }
     return fallback;
   }

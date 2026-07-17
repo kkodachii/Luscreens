@@ -10,6 +10,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { connectMongo } = require('./db');
 const store = require('./store');
+const { mountPartyRoutes } = require('./party');
 
 const app = express();
 const PORT = process.env.PORT || 8788;
@@ -120,6 +121,11 @@ app.get('/', (_req, res) => {
       'GET /auth/admin/users',
       'GET /auth/admin/users/:userId/library',
       'POST /ai/recommend',
+      'POST /party/create',
+      'POST /party/join',
+      'POST /party/send',
+      'POST /party/leave',
+      'GET /party/poll',
       'GET /me/library',
       'PUT /me/library',
     ],
@@ -132,9 +138,12 @@ app.get('/health', (_req, res) => {
     service: 'auth-api',
     storage: store.storageMode(),
     ai: OPENROUTER_API_KEY ? 'configured' : 'missing',
+    party: 'relay',
     ts: Date.now(),
   });
 });
+
+mountPartyRoutes(app);
 
 function parseAiTitles(content) {
   let text = String(content || '').trim();
