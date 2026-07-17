@@ -1,6 +1,6 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
-import { Observable, catchError, map, of, tap, timeout } from 'rxjs';
+import { Observable, catchError, map, of, retry, tap, throwError, timeout, timer } from 'rxjs';
 import { environment } from '../../environments/environment';
 
 export interface AuthUser {
@@ -128,7 +128,8 @@ export class AuthService {
         headers: new HttpHeaders({ Authorization: `Bearer ${token}` }),
       })
       .pipe(
-        timeout(20000),
+        // Render free tier cold starts often need >20s; retries cover the rest.
+        timeout(25000),
         map((res) => {
           this.userSignal.set(res.user);
           try {
@@ -138,8 +139,24 @@ export class AuthService {
           }
           return res.user;
         }),
-        catchError(() => {
-          this.logout();
+        retry({
+          count: 2,
+          delay: (error, retryCount) => {
+            // Never retry a rejected credential — surface 401 immediately.
+            if (this.isUnauthorizedError(error)) {
+              return throwError(() => error);
+            }
+            // Backoff while the auth API wakes up (e.g. after ~1hr idle).
+            const waitMs = retryCount === 1 ? 2000 : 5000;
+            return timer(waitMs);
+          },
+        }),
+        catchError((err) => {
+          // Only clear the local session when the server rejects the token.
+          // Timeouts / network / 5xx keep the cached login so cold starts don't log users out.
+          if (this.isUnauthorizedError(err)) {
+            this.logout();
+          }
           return of(null);
         })
       );
@@ -247,6 +264,11 @@ export class AuthService {
     } catch {
       return null;
     }
+  }
+
+  /** True when the auth API rejected the credential (not a cold-start / network blip). */
+  private isUnauthorizedError(err: unknown): boolean {
+    return (err as { status?: number })?.status === 401;
   }
 
   private toError(err: unknown, fallback: string): string {
