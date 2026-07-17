@@ -71,8 +71,8 @@ Also verify `MONGODB_URI` is set (no quotes around the value in Render).
 
 - `GET /` — service info
 - `GET /health` — health + storage mode (`mongodb` | `json-file`)
-- `POST /auth/register` `{ email, password, name? }`
-- `POST /auth/login` `{ email, password }`
+- `POST /auth/register` `{ email, password, name?, rememberMe? }` — token lasts 30d if rememberMe (default), else 12h
+- `POST /auth/login` `{ email, password, rememberMe? }` — same token lifetimes
 - `GET /auth/me` `Authorization: Bearer <token>`
 - `GET /auth/admin/users` — admin only
 - `GET /auth/admin/users/:userId/library` — admin only, read another user's history/watchlist

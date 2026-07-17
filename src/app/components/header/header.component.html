@@ -279,6 +279,21 @@
         />
       </div>
 
+      <label class="flex items-center gap-2 cursor-pointer select-none pt-0.5">
+        <input
+          type="checkbox"
+          [(ngModel)]="rememberMe"
+          name="rememberMe"
+          class="rounded border-white/30 bg-transparent text-red-600 focus:ring-red-600 focus:ring-offset-0"
+        />
+        <span class="text-sm text-gray-300">Remember me</span>
+      </label>
+      <p class="text-[11px] text-gray-500 -mt-1">
+        {{ rememberMe
+          ? 'Stay signed in on this device (up to 30 days).'
+          : 'Sign out when you close this browser tab.' }}
+      </p>
+
       <p *ngIf="authError" class="text-sm text-red-400">{{ authError }}</p>
 
       <button

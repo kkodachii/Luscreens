@@ -1,5 +1,5 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
-import { HttpClient, HttpHeaders } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse, HttpHeaders } from '@angular/common/http';
 import { Observable, catchError, map, of, tap, timeout } from 'rxjs';
 import { environment } from '../../environments/environment';
 
@@ -26,6 +26,7 @@ export class AuthService {
   private readonly baseUrl = (environment.authApiUrl || '').replace(/\/$/, '');
   private readonly tokenKey = 'luscreensAuthToken';
   private readonly userKey = 'luscreensAuthUser';
+  private readonly rememberKey = 'luscreensAuthRemember';
 
   private readonly userSignal = signal<AuthUser | null>(this.readStoredUser());
   private readonly tokenSignal = signal<string | null>(this.readStoredToken());
@@ -76,44 +77,56 @@ export class AuthService {
     email: string;
     password: string;
     name?: string;
+    rememberMe?: boolean;
   }): Observable<{ ok: true } | { ok: false; error: string }> {
     if (!this.enabled) {
       return of({ ok: false, error: 'Auth API is not configured' });
     }
+    const rememberMe = input.rememberMe !== false;
     return this.http
-      .post<AuthResponse>(`${this.baseUrl}/auth/register`, input)
+      .post<AuthResponse>(`${this.baseUrl}/auth/register`, {
+        email: input.email,
+        password: input.password,
+        name: input.name,
+        rememberMe,
+      })
       .pipe(
-        timeout(30000),
-        tap((res) => this.persistSession(res)),
+        timeout(45000),
+        tap((res) => this.persistSession(res, rememberMe)),
         map(() => ({ ok: true as const })),
-        catchError((err) => of({ ok: false as const, error: this.toError(err, 'Could not create account') }))
+        catchError((err) =>
+          of({ ok: false as const, error: this.toError(err, 'Could not create account') })
+        )
       );
   }
 
   login(input: {
     email: string;
     password: string;
+    rememberMe?: boolean;
   }): Observable<{ ok: true } | { ok: false; error: string }> {
     if (!this.enabled) {
       return of({ ok: false, error: 'Auth API is not configured' });
     }
+    const rememberMe = input.rememberMe !== false;
     return this.http
-      .post<AuthResponse>(`${this.baseUrl}/auth/login`, input)
+      .post<AuthResponse>(`${this.baseUrl}/auth/login`, {
+        email: input.email,
+        password: input.password,
+        rememberMe,
+      })
       .pipe(
-        timeout(30000),
-        tap((res) => this.persistSession(res)),
+        timeout(45000),
+        tap((res) => this.persistSession(res, rememberMe)),
         map(() => ({ ok: true as const })),
-        catchError((err) => of({ ok: false as const, error: this.toError(err, 'Could not log in') }))
+        catchError((err) =>
+          of({ ok: false as const, error: this.toError(err, 'Could not log in') })
+        )
       );
   }
 
   logout(): void {
-    try {
-      localStorage.removeItem(this.tokenKey);
-      localStorage.removeItem(this.userKey);
-    } catch {
-      // ignore
-    }
+    this.clearStoredSession();
     this.tokenSignal.set(null);
     this.userSignal.set(null);
   }
@@ -128,19 +141,20 @@ export class AuthService {
         headers: new HttpHeaders({ Authorization: `Bearer ${token}` }),
       })
       .pipe(
-        timeout(20000),
+        // Render free tier cold-start can take 30–60s — don't cut the session early
+        timeout(60000),
         map((res) => {
           this.userSignal.set(res.user);
-          try {
-            localStorage.setItem(this.userKey, JSON.stringify(res.user));
-          } catch {
-            // ignore
-          }
+          this.writeUser(res.user);
           return res.user;
         }),
-        catchError(() => {
-          this.logout();
-          return of(null);
+        catchError((err: unknown) => {
+          // Only clear session on real auth rejection — not timeouts / wake-ups / 5xx
+          if (this.isAuthRejection(err)) {
+            this.logout();
+            return of(null);
+          }
+          return of(this.userSignal());
         })
       );
   }
@@ -218,12 +232,51 @@ export class AuthService {
       );
   }
 
-  private persistSession(res: AuthResponse): void {
+  private persistSession(res: AuthResponse, rememberMe: boolean): void {
+    this.clearStoredSession();
     this.tokenSignal.set(res.token);
     this.userSignal.set(res.user);
     try {
-      localStorage.setItem(this.tokenKey, res.token);
-      localStorage.setItem(this.userKey, JSON.stringify(res.user));
+      localStorage.setItem(this.rememberKey, rememberMe ? '1' : '0');
+      const storage = rememberMe ? localStorage : sessionStorage;
+      storage.setItem(this.tokenKey, res.token);
+      storage.setItem(this.userKey, JSON.stringify(res.user));
+    } catch {
+      // ignore
+    }
+  }
+
+  private writeUser(user: AuthUser): void {
+    try {
+      const storage = this.activeStorage();
+      storage.setItem(this.userKey, JSON.stringify(user));
+    } catch {
+      // ignore
+    }
+  }
+
+  private activeStorage(): Storage {
+    try {
+      if (localStorage.getItem(this.rememberKey) === '0') {
+        return sessionStorage;
+      }
+    } catch {
+      // fall through
+    }
+    return localStorage;
+  }
+
+  private clearStoredSession(): void {
+    try {
+      localStorage.removeItem(this.tokenKey);
+      localStorage.removeItem(this.userKey);
+      localStorage.removeItem(this.rememberKey);
+    } catch {
+      // ignore
+    }
+    try {
+      sessionStorage.removeItem(this.tokenKey);
+      sessionStorage.removeItem(this.userKey);
     } catch {
       // ignore
     }
@@ -231,7 +284,10 @@ export class AuthService {
 
   private readStoredToken(): string | null {
     try {
-      return localStorage.getItem(this.tokenKey);
+      if (localStorage.getItem(this.rememberKey) === '0') {
+        return sessionStorage.getItem(this.tokenKey) || localStorage.getItem(this.tokenKey);
+      }
+      return localStorage.getItem(this.tokenKey) || sessionStorage.getItem(this.tokenKey);
     } catch {
       return null;
     }
@@ -239,7 +295,10 @@ export class AuthService {
 
   private readStoredUser(): AuthUser | null {
     try {
-      const raw = localStorage.getItem(this.userKey);
+      const preferSession = localStorage.getItem(this.rememberKey) === '0';
+      const raw = preferSession
+        ? sessionStorage.getItem(this.userKey) || localStorage.getItem(this.userKey)
+        : localStorage.getItem(this.userKey) || sessionStorage.getItem(this.userKey);
       if (!raw) {
         return null;
       }
@@ -247,6 +306,11 @@ export class AuthService {
     } catch {
       return null;
     }
+  }
+
+  private isAuthRejection(err: unknown): boolean {
+    const status = (err as HttpErrorResponse)?.status;
+    return status === 401 || status === 403;
   }
 
   private toError(err: unknown, fallback: string): string {

@@ -32,6 +32,7 @@ export class HeaderComponent {
   name = '';
   email = '';
   password = '';
+  rememberMe = true;
   authError = '';
   authLoading = false;
 
@@ -129,11 +130,16 @@ export class HeaderComponent {
 
     const req$ =
       mode === 'login'
-        ? this.auth.login({ email: this.email, password: this.password })
+        ? this.auth.login({
+            email: this.email,
+            password: this.password,
+            rememberMe: this.rememberMe,
+          })
         : this.auth.register({
             email: this.email,
             password: this.password,
             name: this.name,
+            rememberMe: this.rememberMe,
           });
 
     req$.subscribe((result) => {

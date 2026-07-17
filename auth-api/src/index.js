@@ -8,7 +8,11 @@ const store = require('./store');
 const app = express();
 const PORT = process.env.PORT || 8788;
 const JWT_SECRET = process.env.JWT_SECRET || 'luscreens-dev-secret-change-me';
-const JWT_EXPIRES = process.env.JWT_EXPIRES || '7d';
+/** Default / remember-me token lifetime */
+const JWT_EXPIRES_REMEMBER =
+  process.env.JWT_EXPIRES_REMEMBER || process.env.JWT_EXPIRES || '30d';
+/** Session-only token when Remember me is unchecked */
+const JWT_EXPIRES_SESSION = process.env.JWT_EXPIRES_SESSION || '12h';
 const MONGODB_URI = process.env.MONGODB_URI || '';
 const hasMongoConfig = !!(
   MONGODB_URI ||
@@ -32,12 +36,22 @@ function publicUser(user) {
   };
 }
 
-function signToken(user) {
+function signToken(user, rememberMe = true) {
   return jwt.sign(
     { sub: user.id, email: user.email, name: user.name },
     JWT_SECRET,
-    { expiresIn: JWT_EXPIRES }
+    { expiresIn: rememberMe ? JWT_EXPIRES_REMEMBER : JWT_EXPIRES_SESSION }
   );
+}
+
+function wantsRememberMe(body) {
+  if (!body || typeof body !== 'object') {
+    return true;
+  }
+  if (body.rememberMe === false || body.rememberMe === 'false' || body.rememberMe === 0) {
+    return false;
+  }
+  return true;
 }
 
 function authMiddleware(req, res, next) {
@@ -132,8 +146,9 @@ app.post('/auth/register', async (req, res) => {
     };
     await store.createUser(user);
 
-    const token = signToken(user);
-    res.status(201).json({ token, user: publicUser(user) });
+    const rememberMe = wantsRememberMe(body);
+    const token = signToken(user, rememberMe);
+    res.status(201).json({ token, user: publicUser(user), rememberMe });
   } catch (err) {
     if (err && err.code === 11000) {
       return res.status(409).json({ error: 'An account with that email already exists' });
@@ -163,8 +178,9 @@ app.post('/auth/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    const token = signToken(user);
-    res.json({ token, user: publicUser(user) });
+    const rememberMe = wantsRememberMe(body);
+    const token = signToken(user, rememberMe);
+    res.json({ token, user: publicUser(user), rememberMe });
   } catch (err) {
     console.error('login failed', err);
     res.status(500).json({ error: 'Could not log in' });
