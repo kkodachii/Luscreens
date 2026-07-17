@@ -109,7 +109,10 @@ export class HeaderComponent {
     this.watchPartyService.remoteCommands$
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((command) => {
-        if (command.media && this.watchParty.role === 'guest') {
+        if (
+          command.media &&
+          this.watchPartyService.snapshot.role === 'guest'
+        ) {
           this.navigateToPartyMedia(command.media);
         }
       });
@@ -152,13 +155,27 @@ export class HeaderComponent {
   }
 
   async joinWatchParty(): Promise<void> {
+    const joinInput = this.joinRoomCode;
+    const mediaFromInvite = this.parseMediaFromInviteInput(joinInput);
+
     try {
       await this.watchPartyService.joinParty(
-        this.joinRoomCode,
+        joinInput,
         this.getWatchPartyDisplayName('Guest')
       );
       this.closeJoinPartyModal();
-      const media = this.watchPartyService.getMediaState();
+
+      // If they pasted a full /frame/...?party= invite, go there right away
+      if (mediaFromInvite) {
+        this.navigateToPartyMedia(mediaFromInvite);
+      }
+
+      // Then follow the host's live media (may refine season/episode/title)
+      const media =
+        (await this.watchPartyService.waitForMediaState(
+          mediaFromInvite ? 2500 : 4500
+        )) || this.watchPartyService.getMediaState();
+
       if (media) {
         this.navigateToPartyMedia(media);
       }
@@ -183,23 +200,69 @@ export class HeaderComponent {
     }
   }
 
+  /**
+   * If the user pasted a full invite link (/frame/...?party=CODE), recover the
+   * media path so we can navigate even before the host media packet arrives.
+   */
+  private parseMediaFromInviteInput(input: string): WatchPartyMediaState | null {
+    const raw = (input || '').trim();
+    if (!raw || !/party=/i.test(raw)) {
+      return null;
+    }
+
+    try {
+      const url = new URL(raw, window.location.origin);
+      const parts = url.pathname.split('/').filter(Boolean);
+      // /frame/:mediaType/:id[/:season/:episode]
+      if (parts[0] !== 'frame' || parts.length < 3) {
+        return null;
+      }
+
+      const mediaType = parts[1];
+      const id = parts[2];
+      if (!mediaType || !id) {
+        return null;
+      }
+
+      const season = parts[3] != null ? Number(parts[3]) : undefined;
+      const episode = parts[4] != null ? Number(parts[4]) : undefined;
+
+      return {
+        mediaType,
+        id,
+        season: Number.isFinite(season) ? season : undefined,
+        episode: Number.isFinite(episode) ? episode : undefined,
+      };
+    } catch {
+      return null;
+    }
+  }
+
   private navigateToPartyMedia(media: WatchPartyMediaState): void {
-    if (!media?.mediaType || !media.id) {
+    if (!media?.mediaType || media.id == null || media.id === '') {
       return;
     }
-    const queryParams = this.watchParty.roomCode
-      ? { party: this.watchParty.roomCode }
-      : {};
+
+    const roomCode =
+      this.watchPartyService.snapshot.roomCode || this.watchParty.roomCode;
+    const queryParams = roomCode ? { party: roomCode } : {};
 
     const target =
       media.mediaType === 'tv' && media.season && media.episode
         ? ['/frame', media.mediaType, media.id, media.season, media.episode]
         : ['/frame', media.mediaType, media.id];
 
-    const targetUrl = this.router
-      .createUrlTree(target, { queryParams })
-      .toString();
-    if (this.router.url.split('?')[0] === targetUrl.split('?')[0]) {
+    const currentPath = this.router.url.split('?')[0];
+    const targetPath = this.router.createUrlTree(target).toString();
+    if (currentPath === targetPath) {
+      // Same title — still ensure party query param is present
+      if (roomCode && !this.router.parseUrl(this.router.url).queryParams['party']) {
+        void this.router.navigate([], {
+          queryParams: { party: roomCode },
+          queryParamsHandling: 'merge',
+          replaceUrl: true,
+        });
+      }
       return;
     }
 

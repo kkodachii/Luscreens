@@ -131,6 +131,37 @@ export class WatchPartyService implements OnDestroy {
     return this.mediaState;
   }
 
+  /**
+   * Wait until the host has shared a title (media sync), or timeout.
+   * Used after Join from the header so guests navigate to the host's link.
+   */
+  waitForMediaState(timeoutMs = 4000): Promise<WatchPartyMediaState | null> {
+    if (this.mediaState?.mediaType && this.mediaState?.id) {
+      return Promise.resolve(this.mediaState);
+    }
+
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (media: WatchPartyMediaState | null): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timer);
+        sub.unsubscribe();
+        resolve(media);
+      };
+
+      const sub = this.remoteCommands$.subscribe((command) => {
+        if (command.media?.mediaType && command.media?.id) {
+          finish(command.media);
+        }
+      });
+
+      const timer = setTimeout(() => finish(this.mediaState), timeoutMs);
+    });
+  }
+
   /** Scope party session restore to the logged-in user. */
   bindToUser(userId: string | null): void {
     this.userId = userId;
@@ -775,6 +806,7 @@ export class WatchPartyService implements OnDestroy {
 
       // Host hello may include media — apply it on the guest
       if (!fromHostSide && command.media) {
+        this.applyGuestMedia(command.media);
         this.remoteCommandSubject.next({
           action: 'media',
           media: command.media,
@@ -804,6 +836,11 @@ export class WatchPartyService implements OnDestroy {
       return;
     }
 
+    // Guests store host media so Join-from-header can navigate to the title
+    if (!fromHostSide && command.media && command.action === 'media') {
+      this.applyGuestMedia(command.media);
+    }
+
     // Apply remote playback/media for everyone (host and guests)
     this.remoteCommandSubject.next(command);
 
@@ -817,6 +854,25 @@ export class WatchPartyService implements OnDestroy {
         command.action === 'media')
     ) {
       this.relayExcept(conn.peer, command);
+    }
+  }
+
+  private applyGuestMedia(media: WatchPartyMediaState): void {
+    if (!media?.mediaType || media.id == null || media.id === '') {
+      return;
+    }
+    this.mediaState = {
+      mediaType: media.mediaType,
+      id: String(media.id),
+      season: media.season,
+      episode: media.episode,
+      title: media.title,
+      posterPath: media.posterPath ?? null,
+    };
+    const role = this.snapshot.role;
+    const roomCode = this.snapshot.roomCode;
+    if ((role === 'host' || role === 'guest') && roomCode) {
+      this.persistSession(role, roomCode);
     }
   }
 
@@ -955,6 +1011,21 @@ export class WatchPartyService implements OnDestroy {
   private buildInviteUrl(roomCode: string): string {
     if (typeof window === 'undefined') {
       return '';
+    }
+
+    const origin = window.location.origin;
+    const media = this.mediaState;
+    // Prefer host media path so invite links open the correct title
+    if (media?.mediaType && media.id) {
+      let path = `/frame/${media.mediaType}/${media.id}`;
+      if (
+        media.mediaType === 'tv' &&
+        media.season != null &&
+        media.episode != null
+      ) {
+        path += `/${media.season}/${media.episode}`;
+      }
+      return `${origin}${path}?party=${encodeURIComponent(roomCode)}`;
     }
 
     const url = new URL(window.location.href);
