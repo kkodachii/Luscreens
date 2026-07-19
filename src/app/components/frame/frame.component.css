@@ -17,6 +17,127 @@ video.player-embed {
   background: #000;
 }
 
+.kean-fill-host {
+  overflow: hidden;
+  background: #000;
+}
+
+/* Kean: allow taps through to Vidlove for unmuted play */
+.player-embed.kean-interactive {
+  pointer-events: auto !important;
+  touch-action: manipulation;
+  user-select: auto;
+}
+
+/* Mask Vidlove's built-in top/bottom chrome under Luscreens controls */
+.kean-chrome-cover {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 15;
+  pointer-events: none;
+  background: #000;
+}
+
+.kean-chrome-cover-top {
+  top: 0;
+  height: 64px;
+}
+
+.kean-chrome-cover-bottom {
+  bottom: 0;
+  height: 64px;
+}
+
+@media (min-width: 640px) {
+  .kean-chrome-cover-top {
+    height: 11px;
+  }
+  .kean-chrome-cover-bottom {
+    height: 40px;
+  }
+}
+
+.kean-controls-bar {
+  position: relative;
+  z-index: 50;
+  background: linear-gradient(to top, #000 55%, rgba(0, 0, 0, 0.92) 78%, transparent);
+  /* iOS: composited overlay so the bar wins hit-testing over the iframe */
+  -webkit-transform: translateZ(0);
+  transform: translateZ(0);
+  touch-action: manipulation;
+}
+
+/*
+ * Mobile web can't always lock orientation. In portrait fullscreen, rotate the
+ * player so it fills the screen like landscape (same idea as the native app).
+ */
+.player-fs-force-landscape {
+  position: fixed !important;
+  top: 50% !important;
+  left: 50% !important;
+  right: auto !important;
+  bottom: auto !important;
+  width: 100dvh !important;
+  height: 100dvw !important;
+  max-width: none !important;
+  z-index: 50;
+  transform: translate(-50%, -50%) rotate(90deg);
+  transform-origin: center center;
+}
+
+/* While waiting for unmuted tap: keep Luscreens edges tappable, center open for Vidlove */
+.kean-pass-edge {
+  position: absolute;
+  z-index: 22;
+  pointer-events: auto;
+  -webkit-transform: translateZ(0);
+  transform: translateZ(0);
+  touch-action: manipulation;
+  background: transparent;
+}
+
+.kean-pass-edge-top {
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 18%;
+}
+
+.kean-pass-edge-bottom {
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 22%;
+}
+
+.kean-pass-edge-left {
+  top: 18%;
+  bottom: 22%;
+  left: 0;
+  width: 14%;
+}
+
+.kean-pass-edge-right {
+  top: 18%;
+  bottom: 22%;
+  right: 0;
+  width: 14%;
+}
+
+.kean-tap-play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 23;
+  transform: translate(-50%, -50%);
+}
+
+.kean-pause-poster {
+  background-color: #111;
+  filter: grayscale(1);
+}
+
 /* Provider / server ping signal bars */
 .provider-signal {
   display: inline-flex;

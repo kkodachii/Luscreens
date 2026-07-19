@@ -22,7 +22,8 @@
           #playerContainer
           class="w-full bg-black relative"
           [class.fixed]="isFullscreen"
-          [class.inset-0]="isFullscreen"
+          [class.inset-0]="isFullscreen && !forceLandscapeFullscreen"
+          [class.player-fs-force-landscape]="forceLandscapeFullscreen"
           [class.z-50]="isFullscreen"
           [class.flex]="isFullscreen"
           [class.flex-col]="isFullscreen"
@@ -57,19 +58,59 @@
             ></video>
 
             <!-- Remote iframe embeds. referrerpolicy must stay a static attribute (Angular NG0910). -->
-            <iframe
+            <div
               *ngIf="usesRemoteIframe && embedUrl"
-              #playerIframe
-              [src]="embedUrl"
-              (load)="onPlayerIframeLoad()"
-              frameborder="0"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; cast; fullscreen"
-              allowfullscreen
-              referrerpolicy="no-referrer"
-              loading="eager"
-              class="player-embed w-full h-full shadow-xl absolute inset-0"
+              #keanFillHost
+              class="absolute inset-0"
+              [class.kean-fill-host]="isMovies111Provider"
+              [class.overflow-hidden]="isMovies111Provider || isFullscreen"
               [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-lg'"
-            ></iframe>
+            >
+              <iframe
+                #playerIframe
+                [src]="embedUrl"
+                (load)="onPlayerIframeLoad()"
+                frameborder="0"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; cast; fullscreen"
+                allowfullscreen
+                referrerpolicy="no-referrer"
+                loading="eager"
+                class="player-embed shadow-xl absolute"
+                [class.kean-interactive]="keanIframeInteractive"
+                [class.inset-0]="!isMovies111Provider"
+                [class.w-full]="!isMovies111Provider"
+                [class.h-full]="!isMovies111Provider"
+                [ngStyle]="isMovies111Provider ? keanIframeFillStyle : null"
+                [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-lg'"
+              ></iframe>
+            </div>
+
+            <!-- Cover Vidlove's native chrome so only Luscreens controls show -->
+            <div
+              *ngIf="isMovies111Provider"
+              class="kean-chrome-cover kean-chrome-cover-top"
+              [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-t-lg'"
+              aria-hidden="true"
+            ></div>
+            <div
+              *ngIf="isMovies111Provider"
+              class="kean-chrome-cover kean-chrome-cover-bottom"
+              [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-b-lg'"
+              aria-hidden="true"
+            ></div>
+
+            <!-- Kean paused: TMDB backdrop/poster instead of Vidlove's frame -->
+            <div
+              *ngIf="showKeanPausePoster"
+              class="kean-pause-poster absolute inset-0 z-[18] pointer-events-none bg-black"
+              [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-lg'"
+              [ngStyle]="{
+                'background-image': 'linear-gradient(rgba(40,40,40,.45), rgba(20,20,20,.7)), url(' + keanPausePosterUrl + ')',
+                'background-size': 'cover',
+                'background-position': 'center'
+              }"
+              aria-hidden="true"
+            ></div>
 
             <!-- CC overlay for local HLS + CinemaOS -->
             <div
@@ -80,10 +121,47 @@
               <span class="player-subtitle-cue">{{ activeSubtitleText }}</span>
             </div>
 
-            <!-- Full-surface shield: one tap toggles controls; center toggles play/pause. -->
+            <!--
+              Kean unmuted path: after Play, chrome hides and the iframe becomes interactive.
+              Edge strips keep a way to re-show Luscreens controls without covering the center tap.
+            -->
+            <ng-container *ngIf="keanIframeInteractive">
+              <div
+                class="kean-pass-edge kean-pass-edge-top"
+                (pointerup)="onPlayerSurfacePointerUp($event)"
+                aria-hidden="true"
+              ></div>
+              <div
+                class="kean-pass-edge kean-pass-edge-left"
+                (pointerup)="onPlayerSurfacePointerUp($event)"
+                aria-hidden="true"
+              ></div>
+              <div
+                class="kean-pass-edge kean-pass-edge-right"
+                (pointerup)="onPlayerSurfacePointerUp($event)"
+                aria-hidden="true"
+              ></div>
+              <div
+                class="kean-pass-edge kean-pass-edge-bottom"
+                (pointerup)="onPlayerSurfacePointerUp($event)"
+                aria-hidden="true"
+              ></div>
+              <!-- Visual-only play; pointer-events none so the tap reaches Vidlove (unmuted). -->
+              <span
+                class="kean-tap-play flex items-center justify-center w-14 h-14 sm:w-20 sm:h-20 rounded-full bg-red-600/90 text-white shadow-xl pointer-events-none"
+                aria-hidden="true"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="currentColor" class="ml-1">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              </span>
+            </ng-container>
+
+            <!-- Shield (disabled while Kean iframe is the tap target). -->
             <div
               class="player-click-shield absolute inset-0 z-20 flex items-center justify-center select-none"
               [class.menus-open]="showServerMenu || showProviderMenu || showCcMenu"
+              [class.pass-through]="keanIframeInteractive"
               [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-lg'"
               (pointerup)="onPlayerSurfacePointerUp($event)"
               (mousemove)="onPlayerSurfaceMove($event)"
@@ -93,6 +171,7 @@
               (auxclick)="$event.preventDefault()"
             >
               <button
+                *ngIf="!keanIframeInteractive"
                 type="button"
                 class="player-center-hit flex items-center justify-center w-20 h-20 sm:w-28 sm:h-28 rounded-full cursor-pointer"
                 (pointerup)="onCenterPlayPauseTap($event)"
@@ -111,18 +190,21 @@
               </button>
             </div>
 
-            <!-- Shared overlay controller -->
+            <!-- Shared overlay — Kean uses the same Luscreens play/seek controls. -->
             <div
               class="player-controls absolute inset-0 flex flex-col justify-between pointer-events-none transition-opacity duration-300"
-              [class.z-30]="!isPlayerReloading && !showServerMenu && !showProviderMenu && !showCcMenu"
-              [class.z-[60]]="isPlayerReloading || showServerMenu || showProviderMenu || showCcMenu"
+              [class.z-30]="!isMovies111Provider && !forceControlsVisible && !showServerMenu && !showProviderMenu && !showCcMenu"
+              [class.z-[60]]="isMovies111Provider || forceControlsVisible || showServerMenu || showProviderMenu || showCcMenu"
               [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-lg'"
-              [class.opacity-0]="!showPlayerControls && !isPlayerReloading"
-              [class.opacity-100]="showPlayerControls || isPlayerReloading"
-              [class.invisible]="!showPlayerControls && !isPlayerReloading"
+              [class.opacity-0]="!showPlayerControls && !forceControlsVisible"
+              [class.opacity-100]="showPlayerControls || forceControlsVisible"
+              [class.invisible]="!showPlayerControls && !forceControlsVisible"
             >
               <!-- Top: cloud server (left) + title -->
-              <div class="relative bg-gradient-to-b from-black/80 via-black/40 to-transparent px-2.5 sm:px-4 pt-2.5 sm:pt-4 pb-8 sm:pb-12 pointer-events-none">
+              <div
+                class="relative px-2.5 sm:px-4 pt-2.5 sm:pt-4 pb-8 sm:pb-12 pointer-events-none"
+                [ngClass]="isMovies111Provider ? '' : 'bg-gradient-to-b from-black/80 via-black/40 to-transparent'"
+              >
                 <div class="relative flex items-start">
                   <div
                     class="player-toolbar-menus relative shrink-0 flex items-start gap-0.5"
@@ -163,7 +245,19 @@
                           [class.text-red-400]="selectedProvider === provider.id"
                           [class.font-semibold]="selectedProvider === provider.id"
                         >
-                          <span>{{ provider.label }}</span>
+                          <span class="inline-flex items-center gap-1.5 min-w-0">
+                            <span class="truncate">{{ provider.label }}</span>
+                            <span
+                              *ngIf="provider.recommended"
+                              class="inline-flex items-center gap-0.5 shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide bg-emerald-500/20 text-emerald-300"
+                              title="Recommended"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                <path d="M12 2l2.4 7.4H22l-6 4.4 2.3 7.2L12 16.8 5.7 21l2.3-7.2-6-4.4h7.6L12 2z" />
+                              </svg>
+                              Rec
+                            </span>
+                          </span>
                           <span
                             class="inline-flex items-center gap-1.5 shrink-0 tabular-nums"
                             [ngClass]="providerPingTone(provider.id)"
@@ -234,12 +328,17 @@
                 </div>
               </div>
 
-              <!-- Bottom: seek + buttons -->
+              <!-- Bottom: seek + buttons (Kean: solid bar covers Vidlove chrome) -->
               <div
-                class="bg-gradient-to-t from-black/90 via-black/55 to-transparent px-2 sm:px-4 pt-8 sm:pt-14 pb-2 sm:pb-4 space-y-1.5 sm:space-y-2.5"
-                [class.pointer-events-auto]="showPlayerControls || isPlayerReloading"
+                class="px-2 sm:px-4 pt-8 sm:pt-14 pb-2 sm:pb-4 space-y-1.5 sm:space-y-2.5"
+                [class.kean-controls-bar]="isMovies111Provider"
+                [class.pointer-events-auto]="showPlayerControls || forceControlsVisible"
+                [ngClass]="isMovies111Provider ? '' : 'bg-gradient-to-t from-black/90 via-black/55 to-transparent'"
+                (pointerdown)="$event.stopPropagation()"
+                (pointerup)="$event.stopPropagation()"
                 (click)="$event.stopPropagation()"
                 (touchstart)="$event.stopPropagation()"
+                (touchend)="$event.stopPropagation()"
                 (mousemove)="revealPlayerControls()"
               >
                 <input
@@ -531,9 +630,9 @@
               </form>
             </div>
 
-            <!-- Reload splash — visual only; does not block provider/server controls -->
+            <!-- Reload / Kean boot splash — hides Vidlove's native loader until ready -->
             <div
-              *ngIf="isPlayerReloading"
+              *ngIf="isPlayerReloading || keanBootCover"
               class="absolute inset-0 z-40 flex flex-col items-center justify-center gap-3 bg-cover bg-center pointer-events-none"
               [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-lg'"
               [ngStyle]="{
