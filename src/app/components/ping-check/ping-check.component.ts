@@ -164,7 +164,7 @@ export class PingCheckComponent implements OnInit {
       { id: 'peachify', label: 'Peachify', url: 'https://peachify.top/favicon.ico' },
       { id: 'vidup', label: 'VidUP', url: 'https://vidup.to/favicon.ico' },
       { id: 'videasy', label: 'Videasy', url: 'https://player.videasy.net/favicon.ico' },
-      { id: 'movies111', label: '111Movies', url: 'https://player.vidlove.cc/favicon.ico' },
+      { id: 'movies111', label: '111Movies', url: 'https://111movies.net/favicon.ico' },
     ];
 
     const hosts: { id: string; label: string; url: string }[] = [
@@ -175,7 +175,7 @@ export class PingCheckComponent implements OnInit {
       { id: 'peachify-root', label: 'peachify.top', url: 'https://peachify.top/' },
       { id: 'vidup-root', label: 'vidup.to', url: 'https://vidup.to/' },
       { id: 'videasy-root', label: 'player.videasy.net', url: 'https://player.videasy.net/' },
-      { id: 'movies111-root', label: 'player.vidlove.cc', url: 'https://player.vidlove.cc/' },
+      { id: 'movies111-root', label: '111movies.net', url: 'https://111movies.net/' },
       { id: 'tmdb', label: 'TMDB API', url: 'https://api.themoviedb.org/3/' },
     ];
 

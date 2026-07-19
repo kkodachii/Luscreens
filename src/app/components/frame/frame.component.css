@@ -17,13 +17,6 @@ video.player-embed {
   background: #000;
 }
 
-/* 111Movies / Vidlove: native plugs + chrome need real pointer hits */
-.player-embed.movies111-interactive {
-  pointer-events: auto !important;
-  touch-action: manipulation;
-  user-select: auto;
-}
-
 /* Provider / server ping signal bars */
 .provider-signal {
   display: inline-flex;

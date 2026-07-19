@@ -32,10 +32,6 @@ export const environment = {
    */
   openRouterApiKey: '',
   openRouterModel: 'google/gemma-4-31b-it:free',
-  /**
-   * Local auth-api for web/dev. Render is Cloudflare-blocked for 111Movies
-   * token fetch ("Just a moment..." / 403) — use: cd auth-api && npm start
-   * Production builds use environment.prod.ts → luscreens.onrender.com
-   */
-  authApiUrl: 'http://127.0.0.1:8788',
+  /** Auth API on Render (Root Directory: auth-api) */
+  authApiUrl: 'https://luscreens.onrender.com',
 };

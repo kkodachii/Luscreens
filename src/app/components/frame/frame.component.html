@@ -38,7 +38,7 @@
             [class.z-30]="!isFullscreen && (showCcMenu || showProviderMenu || showServerMenu)"
             [attr.data-provider]="selectedProvider"
           >
-            <!-- ApiPlayer / VidPhantom / 111Movies: direct stream in <video> -->
+            <!-- ApiPlayer / VidPhantom: direct stream in <video> -->
             <video
               *ngIf="usesLocalHls && apiplayerSurfaceActive"
               #playerVideo
@@ -56,11 +56,7 @@
               (loadedmetadata)="onVideoLoadedMetadata()"
             ></video>
 
-            <!--
-              Remote iframe embeds.
-              referrerpolicy must stay a static attribute (Angular NG0910).
-              111Movies plays via local <video> + auth-api /movies111/resolve (not iframe).
-            -->
+            <!-- Remote iframe embeds. referrerpolicy must stay a static attribute (Angular NG0910). -->
             <iframe
               *ngIf="usesRemoteIframe && embedUrl"
               #playerIframe

@@ -12,7 +12,6 @@ import { WatchProgressService } from '../../services/watch-progress.service';
 import { AuthService } from '../../services/auth.service';
 import { ApiplayerStreamService } from '../../services/apiplayer-stream.service';
 import { VidphantomStreamService } from '../../services/vidphantom-stream.service';
-import { Movies111StreamService } from '../../services/movies111-stream.service';
 import { SubtitleCue, SubtitleService } from '../../services/subtitle.service';
 import {
   WatchPartyChatMessage,
@@ -126,19 +125,12 @@ export class FrameComponent implements OnInit, OnDestroy {
     'https://www.videasy.to',
   ];
 
-  /**
-   * https://111movies.net/ redirects embeds to player.vidlove.cc/embed/...
-   * Listen on both hosts for any PLAYER_EVENT / progress messages.
-   */
+  /** 111Movies iframe embed — listen for PLAYER_EVENT / progress postMessage. */
   private readonly movies111Origins = [
     'https://111movies.net',
     'https://www.111movies.net',
     'https://111movies.com',
     'https://www.111movies.com',
-    'https://player.vidlove.cc',
-    'https://vidlove.cc',
-    'https://www.vidlove.cc',
-    'https://luscreens.onrender.com',
   ];
 
   private readonly onPlayerMessage = (event: MessageEvent): void => {
@@ -274,7 +266,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     peachify: 'https://peachify.top/favicon.ico',
     vidup: 'https://vidup.to/favicon.ico',
     videasy: 'https://player.videasy.net/favicon.ico',
-    movies111: 'https://player.vidlove.cc/favicon.ico',
+    movies111: 'https://111movies.net/favicon.ico',
   };
   private lastProviderPingAt = 0;
 
@@ -361,15 +353,10 @@ export class FrameComponent implements OnInit, OnDestroy {
   }
 
   /**
-   * Local media + Luscreens controller.
-   * ApiPlayer / VidPhantom / 111Movies (iframe plugs fail cross-origin — play resolved streams here).
+   * Local media + Luscreens controller (ApiPlayer / VidPhantom only).
    */
   get usesLocalHls(): boolean {
-    return (
-      this.isApiplayerProvider ||
-      this.isVidphantomProvider ||
-      this.isMovies111Provider
-    );
+    return this.isApiplayerProvider || this.isVidphantomProvider;
   }
 
   /** Iframe embeds (PLAYER_EVENT and/or progress postMessage). */
@@ -379,7 +366,8 @@ export class FrameComponent implements OnInit, OnDestroy {
       this.isCinemaosProvider ||
       this.isPeachifyProvider ||
       this.isVidupProvider ||
-      this.isVideasyProvider
+      this.isVideasyProvider ||
+      this.isMovies111Provider
     );
   }
 
@@ -496,7 +484,6 @@ export class FrameComponent implements OnInit, OnDestroy {
     private authService: AuthService,
     private apiplayerStream: ApiplayerStreamService,
     private vidphantomStream: VidphantomStreamService,
-    private movies111Stream: Movies111StreamService,
     private subtitleService: SubtitleService,
     private cdr: ChangeDetectorRef,
   ) {}
@@ -1081,10 +1068,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     return this.sanitizer.bypassSecurityTrustResourceUrl(url);
   }
 
-  /**
-   * Embed via auth-api same-origin proxy — direct player.vidlove.cc iframes
-   * fail stream plugs in third-party context.
-   */
+  /** Remote iframe on https://111movies.net/ — movie/{id} or tv/{id}/{season}/{episode}. */
   private buildMovies111EmbedUrl(_resumeAt?: number): SafeResourceUrl {
     this.pendingSeekSeconds = null;
     if (!this.id || !this.mediaType) {
@@ -1092,14 +1076,9 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
     const path =
       this.mediaType === 'tv'
-        ? `embed/tv/${this.id}/${this.selectedSeason}/${this.selectedEpisode}`
-        : `embed/movie/${this.id}`;
-    const apiBase = String(
-      (environment as { authApiUrl?: string }).authApiUrl || ''
-    ).replace(/\/$/, '');
-    const url = apiBase
-      ? `${apiBase}/vidlove-proxy/${path}`
-      : `https://player.vidlove.cc/${path}`;
+        ? `tv/${this.id}/${this.selectedSeason}/${this.selectedEpisode}`
+        : `movie/${this.id}`;
+    const url = `https://111movies.net/${path}`;
     return this.sanitizer.bypassSecurityTrustResourceUrl(url);
   }
 
@@ -1147,18 +1126,6 @@ export class FrameComponent implements OnInit, OnDestroy {
           episode,
         });
         masterUrl = stream.masterUrl;
-      } else if (provider === 'movies111') {
-        const stream = await this.movies111Stream.resolveStream({
-          mediaType,
-          id: this.id,
-          season,
-          episode,
-        });
-        if (stream.imdbId) {
-          this.cachedImdbId = stream.imdbId;
-        }
-        masterUrl = stream.masterUrl;
-        mediaKind = stream.type === 'mp4' ? 'mp4' : 'hls';
       } else {
         const stream = await this.apiplayerStream.resolveStream({
           mediaType,
@@ -1222,13 +1189,13 @@ export class FrameComponent implements OnInit, OnDestroy {
    * Failed / unknown pings sort last among the ping-ranked group.
    */
   private getProviderFailoverOrder(): StreamProvider[] {
-    // Exclude movies111 from auto-failover until proxy embed is proven stable in prod.
     const byPing: StreamProvider[] = [
       'cinemaos',
       'vidphantom',
       'peachify',
       'vidup',
       'videasy',
+      'movies111',
     ];
     const ranked = [...byPing].sort((a, b) => {
       const am =
@@ -1601,7 +1568,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.clearPlayerReloading();
     this.beginClearedBootstrapIfNeeded();
     this.requestPlayerStatus();
-    // 111Movies proxied embed: treat load as OK; native chrome + PLAYER_EVENT
+    // 111Movies remote iframe: treat load as OK; PLAYER_EVENT drives scrubber when available
     if (this.isMovies111Provider) {
       this.serverPlaybackOk = true;
       this.clearServerFailoverWatch();
@@ -2165,15 +2132,9 @@ export class FrameComponent implements OnInit, OnDestroy {
   }
 
   private isMovies111Origin(origin: string): boolean {
-    const apiBase = String(
-      (environment as { authApiUrl?: string }).authApiUrl || ''
-    ).replace(/\/$/, '');
     return (
       this.movies111Origins.includes(origin) ||
-      (!!apiBase && origin === apiBase) ||
-      /111movies\./i.test(origin || '') ||
-      /vidlove\./i.test(origin || '') ||
-      /onrender\.com$/i.test(origin || '')
+      /111movies\./i.test(origin || '')
     );
   }
 
@@ -2962,7 +2923,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     if (!win) {
       return;
     }
-    // Vidlove resume listener accepts `{ time }` / `{ data: { time } }` (seconds > 0)
+    // Best-effort postMessage — 111Movies may accept `{ time }` / `{ data: { time } }` for resume
     const payloads: unknown[] = [
       { command },
       { command, time },
@@ -2985,7 +2946,9 @@ export class FrameComponent implements OnInit, OnDestroy {
     for (const payload of payloads) {
       try {
         win.postMessage(payload, '*');
-        win.postMessage(payload, 'https://player.vidlove.cc');
+        for (const origin of this.movies111Origins) {
+          win.postMessage(payload, origin);
+        }
       } catch {
         // ignore cross-origin / closed frame
       }
