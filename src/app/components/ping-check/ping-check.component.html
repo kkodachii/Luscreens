@@ -1,0 +1,70 @@
+<div class="ping-page">
+  <header class="ping-header">
+    <div>
+      <p class="ping-eyebrow">Temporary · delete later</p>
+      <h1>Server ping check</h1>
+      <p class="ping-sub">
+        Latency to stream hosts (no-cors favicon / root fetch). Open anytime at
+        <code>/ping-check</code>.
+      </p>
+    </div>
+    <div class="ping-actions">
+      <a routerLink="/" class="btn ghost">Home</a>
+      <button type="button" class="btn primary" (click)="pingAll()" [disabled]="isPingingAll">
+        {{ isPingingAll ? 'Pinging…' : 'Ping all' }}
+      </button>
+    </div>
+  </header>
+
+  <form class="ping-add" (ngSubmit)="addCustomUrl()">
+    <input
+      type="url"
+      name="customUrl"
+      [(ngModel)]="customUrl"
+      placeholder="Add custom URL (e.g. https://example.com/favicon.ico)"
+      autocomplete="off"
+    />
+    <button type="submit" class="btn primary" [disabled]="!customUrl.trim()">Add</button>
+  </form>
+
+  <p class="ping-meta" *ngIf="lastRunAt">
+    Last run {{ lastRunAt | date: 'mediumTime' }} · {{ targets.length }} targets
+  </p>
+
+  <div class="ping-table">
+    <div class="ping-row head">
+      <span>Target</span>
+      <span>Group</span>
+      <span>Signal</span>
+      <span>Latency</span>
+      <span></span>
+    </div>
+
+    <div class="ping-row" *ngFor="let t of sortedTargets">
+      <div class="ping-label">
+        <strong>{{ t.label }}</strong>
+        <small>{{ t.url }}</small>
+      </div>
+      <span class="ping-group">{{ t.group }}</span>
+      <span class="ping-signal" [attr.data-level]="signalLevel(t.ms, t.pending)" aria-hidden="true">
+        <i></i><i></i><i></i><i></i>
+      </span>
+      <span class="ping-ms" [ngClass]="tone(t.ms, t.pending)">
+        {{ formatMs(t.ms, t.pending) }}
+      </span>
+      <div class="ping-row-actions">
+        <button type="button" class="btn ghost sm" (click)="pingOne(t)" [disabled]="t.pending">
+          Ping
+        </button>
+        <button
+          *ngIf="t.group === 'custom'"
+          type="button"
+          class="btn ghost sm danger"
+          (click)="removeCustom(t)"
+        >
+          Remove
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

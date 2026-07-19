@@ -1,9 +1,9 @@
 export const environment = {
   production: true,
   tmdbApiKey: 'c646ab9e5209d5c5c8d42ab3f653b61a',
-  streamProvider: 'apiplayer' as 'apiplayer' | 'cinemaos' | 'vidfast',
-  streamProviders: ['apiplayer', 'cinemaos', 'vidfast'] as Array<
-    'apiplayer' | 'cinemaos' | 'vidfast'
+  streamProvider: 'apiplayer' as 'apiplayer' | 'cinemaos' | 'vidphantom' | 'vidfast',
+  streamProviders: ['apiplayer', 'cinemaos', 'vidphantom', 'vidfast'] as Array<
+    'apiplayer' | 'cinemaos' | 'vidphantom' | 'vidfast'
   >,
   streamServer: 'vEdge',
   streamServers: ['vEdge', 'Beta', 'Bravo', 'vFast', 'Cobra', 'Charlie'],

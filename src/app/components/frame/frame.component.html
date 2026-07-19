@@ -38,9 +38,9 @@
             [class.z-30]="!isFullscreen && (showCcMenu || showProviderMenu || showServerMenu)"
             [attr.data-provider]="selectedProvider"
           >
-            <!-- ApiPlayer: direct HLS in <video>, driven by the same Luscreens controller -->
+            <!-- ApiPlayer / VidPhantom: direct HLS in <video>, same Luscreens controller -->
             <video
-              *ngIf="isApiplayerProvider && apiplayerSurfaceActive"
+              *ngIf="usesLocalHls && apiplayerSurfaceActive"
               #playerVideo
               class="player-embed w-full h-full shadow-xl absolute inset-0 object-contain bg-black"
               [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-lg'"
@@ -73,7 +73,7 @@
               [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-lg'"
             ></iframe>
 
-            <!-- CinemaOS CC overlay (iframe can't receive our track elements) -->
+            <!-- CC overlay for local HLS + CinemaOS -->
             <div
               *ngIf="activeSubtitleText"
               class="player-subtitle-overlay absolute inset-x-0 bottom-[18%] z-[25] px-4 sm:px-8 pointer-events-none text-center"
@@ -83,8 +83,7 @@
             </div>
 
             <!--
-              Hard click shield above the media. Custom controls own play/pause/seek
-              for both ApiPlayer (<video>) and VidFast (iframe).
+              Hard click shield above the media. Custom controls own play/pause/seek.
             -->
             <div
               class="player-click-shield absolute inset-0 z-20 flex items-center justify-center cursor-pointer select-none"
@@ -108,7 +107,7 @@
               </span>
             </div>
 
-            <!-- Shared overlay controller (same for ApiPlayer + VidFast) -->
+            <!-- Shared overlay controller -->
             <div
               class="player-controls absolute inset-0 z-30 flex flex-col justify-between pointer-events-none transition-opacity duration-300"
               [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-lg'"

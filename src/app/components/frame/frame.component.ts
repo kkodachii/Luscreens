@@ -11,6 +11,7 @@ import { environment, StreamProvider } from '../../../environments/environment';
 import { WatchProgressService } from '../../services/watch-progress.service';
 import { AuthService } from '../../services/auth.service';
 import { ApiplayerStreamService } from '../../services/apiplayer-stream.service';
+import { VidphantomStreamService } from '../../services/vidphantom-stream.service';
 import { SubtitleCue, SubtitleService } from '../../services/subtitle.service';
 import {
   WatchPartyChatMessage,
@@ -83,6 +84,17 @@ export class FrameComponent implements OnInit, OnDestroy {
     'https://cinemaos-v3.vercel.app',
   ];
 
+  /** VidPhantom docs: https://vidphantom.com/ */
+  private readonly vidphantomOrigins = [
+    'https://vidphantom.com',
+    'https://www.vidphantom.com',
+    'https://vidphantom.live',
+    'https://vidphantom.online',
+    'https://vidphantom.site',
+    'https://vidphantom.website',
+    'https://vidphantom.xyz',
+  ];
+
   private readonly apiplayerOrigins = [
     'https://apiplayer.ru',
     'https://www.apiplayer.ru',
@@ -151,6 +163,7 @@ export class FrameComponent implements OnInit, OnDestroy {
   readonly providerOptions: { id: StreamProvider; label: string }[] = [
     { id: 'apiplayer', label: 'ApiPlayer' },
     { id: 'cinemaos', label: 'CinemaOS' },
+    { id: 'vidphantom', label: 'VidPhantom' },
     { id: 'vidfast', label: 'VidFast' },
   ];
   selectedProvider: StreamProvider =
@@ -181,16 +194,19 @@ export class FrameComponent implements OnInit, OnDestroy {
   providerPingMs: Record<StreamProvider, number | null> = {
     apiplayer: null,
     cinemaos: null,
+    vidphantom: null,
     vidfast: null,
   };
   providerPingPending: Record<StreamProvider, boolean> = {
     apiplayer: false,
     cinemaos: false,
+    vidphantom: false,
     vidfast: false,
   };
   private readonly providerPingUrls: Record<StreamProvider, string> = {
     apiplayer: 'https://apiplayer.ru/favicon.ico',
     cinemaos: 'https://cinemaos.tech/favicon.ico',
+    vidphantom: 'https://vidphantom.com/favicon.ico',
     vidfast: 'https://vidfast.vc/favicon.ico',
   };
   private lastProviderPingAt = 0;
@@ -212,18 +228,30 @@ export class FrameComponent implements OnInit, OnDestroy {
     return this.selectedProvider === 'cinemaos';
   }
 
+  get isVidphantomProvider(): boolean {
+    return this.selectedProvider === 'vidphantom';
+  }
+
   get isApiplayerProvider(): boolean {
     return this.selectedProvider === 'apiplayer';
   }
 
-  /** Local HLS + shared controller (ApiPlayer approach). */
-  get usesLocalHls(): boolean {
-    return this.isApiplayerProvider;
+  /** Embed hosts with a real subtitle query param (reload to apply). */
+  get usesEmbedSubParam(): boolean {
+    return this.isVidfastProvider;
   }
 
   /**
-   * Iframe embeds that speak PLAYER_EVENT / { command } — same Luscreens controller.
-   * CinemaOS docs: https://cinemaos.tech/embed
+   * Local HLS + Luscreens controller.
+   * ApiPlayer + VidPhantom (no inbound postMessage play/seek — play their HLS here).
+   */
+  get usesLocalHls(): boolean {
+    return this.isApiplayerProvider || this.isVidphantomProvider;
+  }
+
+  /**
+   * Iframe embeds that speak PLAYER_EVENT / { command }.
+   * CinemaOS: https://cinemaos.tech/embed
    */
   get usesRemoteIframe(): boolean {
     return this.isVidfastProvider || this.isCinemaosProvider;
@@ -309,6 +337,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     private watchProgress: WatchProgressService,
     private authService: AuthService,
     private apiplayerStream: ApiplayerStreamService,
+    private vidphantomStream: VidphantomStreamService,
     private subtitleService: SubtitleService,
     private cdr: ChangeDetectorRef,
   ) {}
@@ -547,11 +576,11 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
   }
 
-  /** Mount ApiPlayer (HLS) or CinemaOS/VidFast (iframe + remote controller). */
+  /** Mount local HLS (ApiPlayer / VidPhantom) or CinemaOS/VidFast iframe. */
   private openPlayer(resumeAt?: number): void {
     if (this.usesLocalHls) {
       this.embedUrl = null;
-      void this.loadApiplayerVideo(resumeAt);
+      void this.loadLocalHlsVideo(resumeAt);
       return;
     }
 
@@ -583,7 +612,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     if (this.isCinemaosProvider) {
       return this.buildCinemaosEmbedUrl(resumeAt);
     }
-    if (this.isApiplayerProvider) {
+    if (this.isApiplayerProvider || this.isVidphantomProvider) {
       return this.buildApiplayerEmbedUrl(path, resumeAt);
     }
     return this.buildVidfastEmbedUrl(path, resumeAt);
@@ -668,11 +697,12 @@ export class FrameComponent implements OnInit, OnDestroy {
     return this.sanitizer.bypassSecurityTrustResourceUrl(url);
   }
 
-  private async loadApiplayerVideo(resumeAt?: number): Promise<void> {
-    if (!this.id || !this.mediaType) {
+  private async loadLocalHlsVideo(resumeAt?: number): Promise<void> {
+    if (!this.id || !this.mediaType || !this.usesLocalHls) {
       return;
     }
 
+    const provider = this.selectedProvider;
     const loadToken = ++this.apiplayerLoadToken;
     this.playerReloadLabel = 'Loading…';
     this.isPlayerReloading = true;
@@ -681,22 +711,37 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.cdr.detectChanges();
 
     try {
-      const stream = await this.apiplayerStream.resolveStream({
-        mediaType: this.mediaType === 'tv' ? 'tv' : 'movie',
-        id: this.id,
-        season: this.mediaType === 'tv' ? this.selectedSeason : undefined,
-        episode: this.mediaType === 'tv' ? this.selectedEpisode : undefined,
-      });
+      const mediaType = this.mediaType === 'tv' ? 'tv' : 'movie';
+      const season = this.mediaType === 'tv' ? this.selectedSeason : undefined;
+      const episode = this.mediaType === 'tv' ? this.selectedEpisode : undefined;
 
-      if (loadToken !== this.apiplayerLoadToken || !this.isApiplayerProvider) {
+      let masterUrl: string;
+      if (provider === 'vidphantom') {
+        const stream = await this.vidphantomStream.resolveStream({
+          mediaType,
+          id: this.id,
+          season,
+          episode,
+        });
+        masterUrl = stream.masterUrl;
+      } else {
+        const stream = await this.apiplayerStream.resolveStream({
+          mediaType,
+          id: this.id,
+          season,
+          episode,
+        });
+        if (stream.imdbId) {
+          this.cachedImdbId = stream.imdbId;
+        }
+        masterUrl = stream.masterUrl;
+      }
+
+      if (loadToken !== this.apiplayerLoadToken || this.selectedProvider !== provider) {
         return;
       }
 
-      if (stream.imdbId) {
-        this.cachedImdbId = stream.imdbId;
-      }
-
-      await this.attachHlsToVideo(stream.masterUrl, resumeAt);
+      await this.attachHlsToVideo(masterUrl, resumeAt);
 
       if (loadToken !== this.apiplayerLoadToken) {
         return;
@@ -710,12 +755,12 @@ export class FrameComponent implements OnInit, OnDestroy {
       }
       this.cdr.detectChanges();
     } catch (error) {
-      console.error('ApiPlayer stream failed:', error);
+      console.error(`${provider} stream failed:`, error);
       if (loadToken !== this.apiplayerLoadToken) {
         return;
       }
-      this.providersTriedThisTitle.add('apiplayer');
-      const next = this.nextFailoverProvider('apiplayer');
+      this.providersTriedThisTitle.add(provider);
+      const next = this.nextFailoverProvider(provider);
       if (next) {
         this.selectedProvider = next;
         if (next === 'vidfast') {
@@ -732,7 +777,7 @@ export class FrameComponent implements OnInit, OnDestroy {
   }
 
   private nextFailoverProvider(from: StreamProvider): StreamProvider | null {
-    const order: StreamProvider[] = ['apiplayer', 'cinemaos', 'vidfast'];
+    const order: StreamProvider[] = ['apiplayer', 'cinemaos', 'vidphantom', 'vidfast'];
     const start = order.indexOf(from);
     for (let i = 1; i < order.length; i++) {
       const candidate = order[(start + i) % order.length];
@@ -928,7 +973,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.isPlayerReloading = true;
 
     if (this.usesLocalHls) {
-      void this.loadApiplayerVideo(time > 5 ? time : undefined);
+      void this.loadLocalHlsVideo(time > 5 ? time : undefined);
       return;
     }
 
@@ -948,7 +993,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.beginClearedBootstrapIfNeeded();
     this.requestPlayerStatus();
     this.armServerFailoverWatch();
-    if (this.selectedSubtitle && !this.isVidfastProvider) {
+    if (this.selectedSubtitle && !this.usesEmbedSubParam) {
       void this.applySubtitleSelection(this.selectedSubtitle, false);
     }
   }
@@ -1091,8 +1136,8 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.selectedSubtitle = code;
     this.showCcMenu = false;
 
-    // VidFast: `sub=` is a real embed param — soft-reload to apply it.
-    if (this.isVidfastProvider) {
+    // VidFast (`sub=`) / VidPhantom (`sub_lang=`) — soft-reload to apply.
+    if (this.usesEmbedSubParam) {
       this.reloadPlayer(
         this.currentTime,
         code ? 'Applying subtitles…' : 'Turning off subtitles…'
@@ -1177,7 +1222,7 @@ export class FrameComponent implements OnInit, OnDestroy {
 
     this.providersTriedThisTitle.add(this.selectedProvider);
 
-    // HLS / CinemaOS: if playback never starts, try the next provider once each
+    // HLS / CinemaOS / VidPhantom: if playback never starts, try the next provider
     if (this.usesLocalHls || this.isCinemaosProvider) {
       this.serverFailoverTimer = setTimeout(() => {
         if (this.serverPlaybackOk || this.isPlayerReloading) {
@@ -1456,8 +1501,16 @@ export class FrameComponent implements OnInit, OnDestroy {
     return this.cinemaosOrigins.includes(origin) || /cinemaos\./i.test(origin || '');
   }
 
+  private isVidphantomOrigin(origin: string): boolean {
+    return this.vidphantomOrigins.includes(origin) || /vidphantom\./i.test(origin || '');
+  }
+
   private isRemoteIframeOrigin(origin: string): boolean {
-    return this.isVidfastOrigin(origin) || this.isCinemaosOrigin(origin);
+    return (
+      this.isVidfastOrigin(origin) ||
+      this.isCinemaosOrigin(origin) ||
+      this.isVidphantomOrigin(origin)
+    );
   }
 
   private isApiplayerOrigin(origin: string): boolean {
@@ -1593,7 +1646,7 @@ export class FrameComponent implements OnInit, OnDestroy {
   }
 
   private handleRemoteIframeMessage(event: MessageEvent): void {
-    // VidFast + CinemaOS share PLAYER_EVENT / { command } remote control
+    // VidFast + CinemaOS + VidPhantom share PLAYER_EVENT
     if (!this.isRemoteIframeOrigin(event.origin || '')) {
       return;
     }
@@ -1603,13 +1656,28 @@ export class FrameComponent implements OnInit, OnDestroy {
     const data = payload?.data ?? payload?.payload ?? payload;
 
     if (type === 'PLAYER_EVENT' && data) {
-      this.onPlayerEvent(data as PlayerEventData);
+      const eventData = { ...(data as PlayerEventData) };
+      // VidPhantom omits `playing` — derive it from the event name
+      if (typeof eventData.playing !== 'boolean') {
+        const name = String(eventData.event || '').toLowerCase();
+        if (name === 'play') {
+          eventData.playing = true;
+        } else if (name === 'pause' || name === 'ended') {
+          eventData.playing = false;
+        }
+      }
+      this.onPlayerEvent(eventData);
       return;
     }
 
     if (type === 'MEDIA_DATA' && data) {
-      // Ignore VidFast's stored progress map — it re-imports cleared history/timestamps.
-      // Our PLAYER_EVENT upsertPlayback is the only progress source.
+      // Ignore embed progress maps — PLAYER_EVENT upsertPlayback is our source.
+      return;
+    }
+
+    // VidPhantom next-episode hook (when nextbutton=true)
+    if (type === 'PLAYER_NEXT_EPISODE') {
+      this.nextEpisode();
       return;
     }
 
@@ -1843,7 +1911,7 @@ export class FrameComponent implements OnInit, OnDestroy {
 
   /**
    * Same Luscreens controller for every provider:
-   * - ApiPlayer → direct <video> / HLS commands
+   * - ApiPlayer / VidPhantom → direct <video> / HLS commands
    * - CinemaOS / VidFast → iframe postMessage `{ command }` (PLAYER_EVENT bridge)
    */
   private postPlayerCommand(command: PlayerCommand, time?: number): void {
