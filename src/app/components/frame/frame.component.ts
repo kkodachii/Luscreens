@@ -168,6 +168,9 @@ export class FrameComponent implements OnInit, OnDestroy {
   ];
   selectedProvider: StreamProvider =
     (environment as { streamProvider?: StreamProvider }).streamProvider || 'apiplayer';
+  /** True after lowest-ping primary (+ VidFast #2) has been applied for this page. */
+  private providerPriorityApplied = false;
+  private providerPriorityPromise: Promise<void> | null = null;
   selectedSubtitle: string | null = null;
   /** Active cue text for CinemaOS (and ApiPlayer fallback) overlay. */
   activeSubtitleText = '';
@@ -363,6 +366,8 @@ export class FrameComponent implements OnInit, OnDestroy {
     window.addEventListener('beforeunload', this.onBeforeUnload);
     this.setupWatchParty();
     this.startProgressTimer();
+    // Warm provider RTT so the first open can pick lowest-ping primary
+    void this.refreshProviderPings(true);
 
     this.mediaType = this.route.snapshot.paramMap.get('media_type') || '';
     this.id = this.route.snapshot.paramMap.get('id') || '';
@@ -578,6 +583,12 @@ export class FrameComponent implements OnInit, OnDestroy {
 
   /** Mount local HLS (ApiPlayer / VidPhantom) or CinemaOS/VidFast iframe. */
   private openPlayer(resumeAt?: number): void {
+    void this.openPlayerAsync(resumeAt);
+  }
+
+  private async openPlayerAsync(resumeAt?: number): Promise<void> {
+    await this.ensureProviderPriority();
+
     if (this.usesLocalHls) {
       this.embedUrl = null;
       void this.loadLocalHlsVideo(resumeAt);
@@ -776,9 +787,48 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
   }
 
+  /**
+   * Priority: #1 lowest-ping (non-VidFast), #2 VidFast, then remaining by ping.
+   * Failed / unknown pings sort last.
+   */
+  private getProviderFailoverOrder(): StreamProvider[] {
+    const others: StreamProvider[] = ['apiplayer', 'cinemaos', 'vidphantom'];
+    const ranked = [...others].sort((a, b) => {
+      const am =
+        this.providerPingMs[a] == null || this.providerPingMs[a]! < 0
+          ? Number.POSITIVE_INFINITY
+          : this.providerPingMs[a]!;
+      const bm =
+        this.providerPingMs[b] == null || this.providerPingMs[b]! < 0
+          ? Number.POSITIVE_INFINITY
+          : this.providerPingMs[b]!;
+      return am - bm;
+    });
+    const primary = ranked[0] ?? 'apiplayer';
+    return [primary, 'vidfast', ...ranked.filter((id) => id !== primary)];
+  }
+
+  /** Pick primary once from current pings (does not override manual choice). */
+  private ensureProviderPriority(): Promise<void> {
+    if (!this.providerPriorityPromise) {
+      this.providerPriorityPromise = this.resolveProviderPriority();
+    }
+    return this.providerPriorityPromise;
+  }
+
+  private async resolveProviderPriority(): Promise<void> {
+    await this.refreshProviderPings(true);
+    if (this.providerPriorityApplied) {
+      return;
+    }
+    this.providerPriorityApplied = true;
+    this.selectedProvider = this.getProviderFailoverOrder()[0] ?? 'apiplayer';
+    this.cdr.detectChanges();
+  }
+
   private nextFailoverProvider(from: StreamProvider): StreamProvider | null {
-    const order: StreamProvider[] = ['apiplayer', 'cinemaos', 'vidphantom', 'vidfast'];
-    const start = order.indexOf(from);
+    const order = this.getProviderFailoverOrder();
+    const start = Math.max(0, order.indexOf(from));
     for (let i = 1; i < order.length; i++) {
       const candidate = order[(start + i) % order.length];
       if (!this.providersTriedThisTitle.has(candidate)) {
@@ -993,6 +1043,11 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.beginClearedBootstrapIfNeeded();
     this.requestPlayerStatus();
     this.armServerFailoverWatch();
+    // CinemaOS autoPlay starts muted (browser policy) — unmute once the embed is ready
+    if (this.isCinemaosProvider) {
+      setTimeout(() => this.unmuteRemotePlayer(), 400);
+      setTimeout(() => this.unmuteRemotePlayer(), 1200);
+    }
     if (this.selectedSubtitle && !this.usesEmbedSubParam) {
       void this.applySubtitleSelection(this.selectedSubtitle, false);
     }
@@ -1136,8 +1191,9 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.selectedSubtitle = code;
     this.showCcMenu = false;
 
-    // VidFast (`sub=`) / VidPhantom (`sub_lang=`) — soft-reload to apply.
+    // VidFast (`sub=`) — soft-reload; clear our overlay so it doesn't stack on embed CC.
     if (this.usesEmbedSubParam) {
+      this.clearSubtitles(false);
       this.reloadPlayer(
         this.currentTime,
         code ? 'Applying subtitles…' : 'Turning off subtitles…'
@@ -1145,7 +1201,7 @@ export class FrameComponent implements OnInit, OnDestroy {
       return;
     }
 
-    // ApiPlayer + CinemaOS: load cues ourselves (no working CC URL / postMessage).
+    // ApiPlayer / VidPhantom / CinemaOS: load cues ourselves (overlay only).
     void this.applySubtitleSelection(code);
   }
 
@@ -1162,10 +1218,15 @@ export class FrameComponent implements OnInit, OnDestroy {
       this.showProviderMenu = false;
       return;
     }
+    this.providerPriorityApplied = true; // keep manual choice
     this.selectedProvider = provider;
     this.showProviderMenu = false;
     this.showServerMenu = false;
     this.resetServerFailoverState();
+    // VidFast owns CC via `sub=` — drop our cue overlay so it doesn't double up
+    if (this.usesEmbedSubParam) {
+      this.clearSubtitles(false);
+    }
     this.reloadPlayer(
       this.currentTime,
       `Switching to ${this.activeProviderLabel}…`
@@ -1368,7 +1429,8 @@ export class FrameComponent implements OnInit, OnDestroy {
 
       this.subtitleCues = loaded.cues;
       this.subtitleVttUrl = loaded.vttUrl;
-      this.attachSubtitleTrackToVideo(loaded.vttUrl, code);
+      // Overlay only — never enable native <track> (that stacked a second cue on screen)
+      this.removeNativeSubtitleTracks();
       this.syncSubtitleOverlay();
     } catch (error) {
       console.error('Subtitle load failed:', error);
@@ -1387,12 +1449,11 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
   }
 
-  private attachSubtitleTrackToVideo(vttUrl: string, lang: string): void {
+  private removeNativeSubtitleTracks(): void {
     const video = this.playerVideo?.nativeElement;
     if (!video) {
       return;
     }
-
     Array.from(video.querySelectorAll('track[data-luscreens-sub="1"]')).forEach((el) => {
       el.remove();
     });
@@ -1402,38 +1463,16 @@ export class FrameComponent implements OnInit, OnDestroy {
         track.mode = 'disabled';
       }
     }
-
-    const trackEl = document.createElement('track');
-    trackEl.kind = 'subtitles';
-    trackEl.label = lang.toUpperCase();
-    trackEl.srclang = lang;
-    trackEl.src = vttUrl;
-    trackEl.default = true;
-    trackEl.dataset['luscreensSub'] = '1';
-    video.appendChild(trackEl);
-
-    const activate = (): void => {
-      try {
-        if (trackEl.track) {
-          trackEl.track.mode = 'showing';
-        }
-      } catch {
-        // Overlay fallback still works via subtitleCues
-      }
-    };
-    trackEl.addEventListener('load', activate);
-    setTimeout(activate, 50);
-    setTimeout(activate, 300);
   }
 
   private syncSubtitleOverlay(): void {
-    if (!this.selectedSubtitle || this.subtitleCues.length === 0) {
+    // VidFast uses embed `sub=` — never draw our overlay on top of theirs
+    if (this.usesEmbedSubParam || !this.selectedSubtitle || this.subtitleCues.length === 0) {
       if (this.activeSubtitleText) {
         this.activeSubtitleText = '';
       }
       return;
     }
-    // Overlay for CinemaOS iframe + ApiPlayer (HLS.js can drop <track> cues)
     this.activeSubtitleText = this.subtitleService.findActiveCueText(
       this.subtitleCues,
       this.currentTime
@@ -1445,18 +1484,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.subtitleCues = [];
     this.subtitleService.revokeUrl(this.subtitleVttUrl);
     this.subtitleVttUrl = null;
-    const video = this.playerVideo?.nativeElement;
-    if (video) {
-      Array.from(video.querySelectorAll('track[data-luscreens-sub="1"]')).forEach((el) => {
-        el.remove();
-      });
-      for (let i = 0; i < video.textTracks.length; i++) {
-        const track = video.textTracks[i];
-        if (track.kind === 'subtitles' || track.kind === 'captions') {
-          track.mode = 'disabled';
-        }
-      }
-    }
+    this.removeNativeSubtitleTracks();
   }
 
   private beginClearedBootstrapIfNeeded(): void {
@@ -1601,9 +1629,10 @@ export class FrameComponent implements OnInit, OnDestroy {
 
     if (eventName === 'error') {
       if (this.usesLocalHls && !this.serverPlaybackOk) {
-        const next = this.nextFailoverProvider('apiplayer');
+        const failed = this.selectedProvider;
+        const next = this.nextFailoverProvider(failed);
         if (next) {
-          this.providersTriedThisTitle.add('apiplayer');
+          this.providersTriedThisTitle.add(failed);
           this.selectedProvider = next;
           if (next === 'vidfast') {
             this.useAutoServer = true;
@@ -1744,6 +1773,10 @@ export class FrameComponent implements OnInit, OnDestroy {
     switch (data.event) {
       case 'play':
         this.isPlaying = true;
+        // CinemaOS forces muted=true on autoPlay — lift it as soon as playback starts
+        if (this.isCinemaosProvider) {
+          this.unmuteRemotePlayer();
+        }
         this.broadcastWatchPartyEvent('play', data.currentTime);
         this.persistLocalProgress(true);
         break;
@@ -1925,7 +1958,39 @@ export class FrameComponent implements OnInit, OnDestroy {
       return;
     }
 
+    // CinemaOS: unmute before play (autoPlay path always starts muted)
+    if (command === 'play' && this.isCinemaosProvider) {
+      this.unmuteRemotePlayer();
+    }
+
     contentWindow.postMessage(this.toRemoteIframeCommand(command, time), '*');
+  }
+
+  /**
+   * CinemaOS postMessage API: `{ command: 'mute'|'volume', muted?, level? }`.
+   * Volume scale is 0.0–1.0 (1 = 100% / max). AutoPlay starts muted — clear that and max volume.
+   * https://cinemaos.tech/embed
+   */
+  private unmuteRemotePlayer(): void {
+    if (!this.isCinemaosProvider) {
+      return;
+    }
+    const contentWindow = this.playerIframe?.nativeElement?.contentWindow;
+    if (!contentWindow) {
+      return;
+    }
+    const maxVolume = 1; // docs: 0.0–1.0; 1 = 100%
+    contentWindow.postMessage({ command: 'mute', muted: false }, '*');
+    contentWindow.postMessage({ command: 'volume', level: maxVolume }, '*');
+    // Re-assert after autoPlay mute race
+    setTimeout(() => {
+      const win = this.playerIframe?.nativeElement?.contentWindow;
+      if (!win || !this.isCinemaosProvider) {
+        return;
+      }
+      win.postMessage({ command: 'mute', muted: false }, '*');
+      win.postMessage({ command: 'volume', level: maxVolume }, '*');
+    }, 150);
   }
 
   private controlApiplayerVideo(command: PlayerCommand, time?: number): void {

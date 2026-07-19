@@ -4,6 +4,7 @@ export const environment = {
   production: false,
   tmdbApiKey: 'c646ab9e5209d5c5c8d42ab3f653b61a',
   /** Active embed host — controllers adapt via postMessage / HLS per provider */
+  /** Fallback only — runtime picks lowest-ping provider first, VidFast second. */
   streamProvider: 'apiplayer' as StreamProvider,
   streamProviders: ['apiplayer', 'cinemaos', 'vidphantom', 'vidfast'] as StreamProvider[],
   streamServer: 'vEdge',
