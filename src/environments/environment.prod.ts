@@ -9,7 +9,8 @@ export const environment = {
     | 'vidphantom'
     | 'peachify'
     | 'vidup'
-    | 'videasy',
+    | 'videasy'
+    | 'movies111',
   streamProviders: [
     'apiplayer',
     'vidfast',
@@ -18,6 +19,7 @@ export const environment = {
     'peachify',
     'vidup',
     'videasy',
+    'movies111',
   ] as Array<
     | 'apiplayer'
     | 'vidfast'
@@ -26,6 +28,7 @@ export const environment = {
     | 'peachify'
     | 'vidup'
     | 'videasy'
+    | 'movies111'
   >,
   streamServer: 'vEdge',
   streamServers: ['vEdge', 'Beta', 'Bravo', 'vFast', 'Cobra', 'Charlie'],

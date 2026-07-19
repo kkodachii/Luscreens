@@ -5,6 +5,13 @@
   user-select: none;
 }
 
+/* 111Movies / Vidlove: native plugs + chrome need real pointer hits */
+.player-embed.movies111-interactive {
+  pointer-events: auto !important;
+  touch-action: manipulation;
+  user-select: auto;
+}
+
 /* Provider / server ping signal bars */
 .provider-signal {
   display: inline-flex;
@@ -57,8 +64,10 @@
 }
 
 /* Menus sit above the shield; disable shield so dropdown clicks don't fall through. */
-.player-click-shield.menus-open {
+.player-click-shield.menus-open,
+.player-click-shield.pass-through {
   pointer-events: none !important;
+  background: transparent;
 }
 
 .player-menu-dropdown {

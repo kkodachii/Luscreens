@@ -5,6 +5,7 @@ import { initFlowbite } from 'flowbite';
 import { RouterModule, Router, NavigationEnd } from '@angular/router';
 import { UserLibraryService } from './services/user-library.service';
 import { AiBubblePreferenceService } from './services/ai-bubble-preference.service';
+import { CapacitorInitService } from './services/capacitor-init.service';
 
 interface AiBubblePosition {
   left: number;
@@ -44,8 +45,10 @@ export class AppComponent implements AfterViewInit {
 
   private readonly _userLibrary = inject(UserLibraryService);
   private readonly aiBubblePref = inject(AiBubblePreferenceService);
+  private readonly capacitorInit = inject(CapacitorInitService);
 
   constructor(private router: Router) {
+    void this.capacitorInit.init();
     this.router.events.subscribe((event) => {
       if (event instanceof NavigationEnd) {
         const url = event.urlAfterRedirects || event.url;

@@ -12,6 +12,7 @@ import { WatchProgressService } from '../../services/watch-progress.service';
 import { AuthService } from '../../services/auth.service';
 import { ApiplayerStreamService } from '../../services/apiplayer-stream.service';
 import { VidphantomStreamService } from '../../services/vidphantom-stream.service';
+import { Movies111StreamService } from '../../services/movies111-stream.service';
 import { SubtitleCue, SubtitleService } from '../../services/subtitle.service';
 import {
   WatchPartyChatMessage,
@@ -19,6 +20,8 @@ import {
   WatchPartyService,
   WatchPartyState,
 } from '../../services/watch-party.service';
+import { Capacitor } from '@capacitor/core';
+import { ScreenOrientation } from '@capacitor/screen-orientation';
 
 /** Chromium Document Picture-in-Picture (not on Window by default in TS libs). */
 interface DocumentPictureInPicture {
@@ -123,6 +126,21 @@ export class FrameComponent implements OnInit, OnDestroy {
     'https://www.videasy.to',
   ];
 
+  /**
+   * https://111movies.net/ redirects embeds to player.vidlove.cc/embed/...
+   * Listen on both hosts for any PLAYER_EVENT / progress messages.
+   */
+  private readonly movies111Origins = [
+    'https://111movies.net',
+    'https://www.111movies.net',
+    'https://111movies.com',
+    'https://www.111movies.com',
+    'https://player.vidlove.cc',
+    'https://vidlove.cc',
+    'https://www.vidlove.cc',
+    'https://luscreens.onrender.com',
+  ];
+
   private readonly onPlayerMessage = (event: MessageEvent): void => {
     this.handlePlayerMessage(event);
   };
@@ -193,6 +211,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     { id: 'peachify', label: 'Peachify' },
     { id: 'vidup', label: 'VidUP' },
     { id: 'videasy', label: 'Videasy' },
+    { id: 'movies111', label: '111Movies' },
   ];
   selectedProvider: StreamProvider =
     (environment as { streamProvider?: StreamProvider }).streamProvider || 'apiplayer';
@@ -233,6 +252,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     peachify: null,
     vidup: null,
     videasy: null,
+    movies111: null,
   };
   providerPingPending: Record<StreamProvider, boolean> = {
     apiplayer: false,
@@ -242,6 +262,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     peachify: false,
     vidup: false,
     videasy: false,
+    movies111: false,
   };
   private readonly providerPingUrls: Record<StreamProvider, string> = {
     apiplayer: 'https://apiplayer.ru/favicon.ico',
@@ -251,6 +272,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     peachify: 'https://peachify.top/favicon.ico',
     vidup: 'https://vidup.to/favicon.ico',
     videasy: 'https://player.videasy.net/favicon.ico',
+    movies111: 'https://player.vidlove.cc/favicon.ico',
   };
   private lastProviderPingAt = 0;
 
@@ -270,6 +292,18 @@ export class FrameComponent implements OnInit, OnDestroy {
   private peachifyEmbedNonce = 0;
   /** Ignore outbound play/pause events while our URL control settles. */
   private peachifyIgnorePlayingUntil = 0;
+
+  /**
+   * 111Movies has no public control docs — best-effort via URL remount + postMessage.
+   * Local ticker keeps Luscreens scrubber moving when PLAYER_EVENT is missing.
+   */
+  private movies111WantAutoPlay = true;
+  private movies111ControlTimer: ReturnType<typeof setTimeout> | null = null;
+  private movies111RemountTimer: ReturnType<typeof setTimeout> | null = null;
+  private movies111EmbedNonce = 0;
+  private movies111IgnorePlayingUntil = 0;
+  private movies111TickTimer: ReturnType<typeof setInterval> | null = null;
+  private movies111LastTickAt = 0;
   /** Avoid reload loops when Peachify reports a mismatched season/episode. */
   private peachifyEpisodeReassertUntil = 0;
 
@@ -310,6 +344,10 @@ export class FrameComponent implements OnInit, OnDestroy {
     return this.selectedProvider === 'videasy';
   }
 
+  get isMovies111Provider(): boolean {
+    return this.selectedProvider === 'movies111';
+  }
+
   /** Embed hosts with a real subtitle query param (reload to apply). */
   get usesEmbedSubParam(): boolean {
     return this.isVidfastProvider || this.isVidupProvider || this.isPeachifyProvider;
@@ -321,11 +359,15 @@ export class FrameComponent implements OnInit, OnDestroy {
   }
 
   /**
-   * Local HLS + Luscreens controller.
-   * ApiPlayer + VidPhantom (no inbound postMessage play/seek — play their HLS here).
+   * Local media + Luscreens controller.
+   * ApiPlayer / VidPhantom / 111Movies (iframe plugs fail cross-origin — play resolved streams here).
    */
   get usesLocalHls(): boolean {
-    return this.isApiplayerProvider || this.isVidphantomProvider;
+    return (
+      this.isApiplayerProvider ||
+      this.isVidphantomProvider ||
+      this.isMovies111Provider
+    );
   }
 
   /** Iframe embeds (PLAYER_EVENT and/or progress postMessage). */
@@ -430,6 +472,7 @@ export class FrameComponent implements OnInit, OnDestroy {
       return;
     }
     this.isFullscreen = !!document.fullscreenElement;
+    void this.syncNativeOrientation(this.isFullscreen);
     this.revealPlayerControls();
   };
   
@@ -451,6 +494,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     private authService: AuthService,
     private apiplayerStream: ApiplayerStreamService,
     private vidphantomStream: VidphantomStreamService,
+    private movies111Stream: Movies111StreamService,
     private subtitleService: SubtitleService,
     private cdr: ChangeDetectorRef,
   ) {}
@@ -504,6 +548,15 @@ export class FrameComponent implements OnInit, OnDestroy {
       clearTimeout(this.peachifyRemountTimer);
       this.peachifyRemountTimer = null;
     }
+    if (this.movies111ControlTimer != null) {
+      clearTimeout(this.movies111ControlTimer);
+      this.movies111ControlTimer = null;
+    }
+    if (this.movies111RemountTimer != null) {
+      clearTimeout(this.movies111RemountTimer);
+      this.movies111RemountTimer = null;
+    }
+    this.stopMovies111Ticker();
     this.playerSurfaceLocked = false;
     this.apiplayerLoadToken++;
     this.subtitleLoadToken++;
@@ -511,6 +564,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     window.removeEventListener('message', this.onPlayerMessage);
     document.removeEventListener('fullscreenchange', this.onFullscreenChange);
     window.removeEventListener('beforeunload', this.onBeforeUnload);
+    void this.syncNativeOrientation(false);
     this.closePictureInPicture();
     this.routeParamsSub?.unsubscribe();
     this.routeParamsSub = null;
@@ -747,6 +801,8 @@ export class FrameComponent implements OnInit, OnDestroy {
     if (this.mediaType === 'tv') {
       this.resetPlayerState();
       this.peachifyWantAutoPlay = true;
+      this.movies111WantAutoPlay = true;
+      this.stopMovies111Ticker();
       this.openPlayer();
       this.syncWatchPartyMedia();
     }
@@ -790,6 +846,8 @@ export class FrameComponent implements OnInit, OnDestroy {
         return this.buildPeachifyEmbedUrl(resumeAt);
       case 'videasy':
         return this.buildVideasyEmbedUrl(resumeAt);
+      case 'movies111':
+        return this.buildMovies111EmbedUrl(resumeAt);
       case 'vidup': {
         const path = this.getEmbedPath();
         return path
@@ -815,6 +873,9 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
     if (this.isVideasyProvider) {
       return this.buildVideasyEmbedUrl(resumeAt);
+    }
+    if (this.isMovies111Provider) {
+      return this.buildMovies111EmbedUrl(resumeAt);
     }
     if (this.isVidupProvider) {
       return this.buildVidupEmbedUrl(path, resumeAt);
@@ -1015,6 +1076,28 @@ export class FrameComponent implements OnInit, OnDestroy {
     return this.sanitizer.bypassSecurityTrustResourceUrl(url);
   }
 
+  /**
+   * Embed via auth-api same-origin proxy — direct player.vidlove.cc iframes
+   * fail stream plugs in third-party context.
+   */
+  private buildMovies111EmbedUrl(_resumeAt?: number): SafeResourceUrl {
+    this.pendingSeekSeconds = null;
+    if (!this.id || !this.mediaType) {
+      return this.sanitizer.bypassSecurityTrustResourceUrl('about:blank');
+    }
+    const path =
+      this.mediaType === 'tv'
+        ? `embed/tv/${this.id}/${this.selectedSeason}/${this.selectedEpisode}`
+        : `embed/movie/${this.id}`;
+    const apiBase = String(
+      (environment as { authApiUrl?: string }).authApiUrl || ''
+    ).replace(/\/$/, '');
+    const url = apiBase
+      ? `${apiBase}/vidlove-proxy/${path}`
+      : `https://player.vidlove.cc/${path}`;
+    return this.sanitizer.bypassSecurityTrustResourceUrl(url);
+  }
+
   private buildApiplayerEmbedUrl(path: string, _resumeAt?: number): SafeResourceUrl {
     // Kept for reference / provider switch fallback; ApiPlayer plays via direct HLS.
     const params = new URLSearchParams({
@@ -1050,6 +1133,7 @@ export class FrameComponent implements OnInit, OnDestroy {
       const episode = this.mediaType === 'tv' ? this.selectedEpisode : undefined;
 
       let masterUrl: string;
+      let mediaKind: 'hls' | 'mp4' = 'hls';
       if (provider === 'vidphantom') {
         const stream = await this.vidphantomStream.resolveStream({
           mediaType,
@@ -1058,6 +1142,18 @@ export class FrameComponent implements OnInit, OnDestroy {
           episode,
         });
         masterUrl = stream.masterUrl;
+      } else if (provider === 'movies111') {
+        const stream = await this.movies111Stream.resolveStream({
+          mediaType,
+          id: this.id,
+          season,
+          episode,
+        });
+        if (stream.imdbId) {
+          this.cachedImdbId = stream.imdbId;
+        }
+        masterUrl = stream.masterUrl;
+        mediaKind = stream.type === 'mp4' ? 'mp4' : 'hls';
       } else {
         const stream = await this.apiplayerStream.resolveStream({
           mediaType,
@@ -1075,7 +1171,7 @@ export class FrameComponent implements OnInit, OnDestroy {
         return;
       }
 
-      await this.attachHlsToVideo(masterUrl, resumeAt);
+      await this.attachHlsToVideo(masterUrl, resumeAt, mediaKind);
 
       if (loadToken !== this.apiplayerLoadToken) {
         return;
@@ -1115,6 +1211,7 @@ export class FrameComponent implements OnInit, OnDestroy {
    * Failed / unknown pings sort last among the ping-ranked group.
    */
   private getProviderFailoverOrder(): StreamProvider[] {
+    // Exclude movies111 from auto-failover until proxy embed is proven stable in prod.
     const byPing: StreamProvider[] = [
       'cinemaos',
       'vidphantom',
@@ -1167,7 +1264,11 @@ export class FrameComponent implements OnInit, OnDestroy {
     return null;
   }
 
-  private attachHlsToVideo(masterUrl: string, resumeAt?: number): Promise<void> {
+  private attachHlsToVideo(
+    masterUrl: string,
+    resumeAt?: number,
+    mediaKind: 'hls' | 'mp4' = 'hls'
+  ): Promise<void> {
     return new Promise((resolve, reject) => {
       const tryAttach = (attempt: number): void => {
         const video = this.playerVideo?.nativeElement;
@@ -1190,6 +1291,15 @@ export class FrameComponent implements OnInit, OnDestroy {
           });
           resolve();
         };
+
+        if (mediaKind === 'mp4' || /\.mp4(\?|$)/i.test(masterUrl)) {
+          video.src = masterUrl;
+          video.addEventListener('loadedmetadata', () => onReady(), { once: true });
+          video.addEventListener('error', () => reject(new Error('MP4 playback failed')), {
+            once: true,
+          });
+          return;
+        }
 
         if (Hls.isSupported()) {
           const hls = new Hls({
@@ -1398,7 +1508,15 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.clearPlayerReloading();
     this.beginClearedBootstrapIfNeeded();
     this.requestPlayerStatus();
-    this.armServerFailoverWatch();
+    // 111Movies proxied embed: treat load as OK; native chrome + PLAYER_EVENT
+    if (this.isMovies111Provider) {
+      this.serverPlaybackOk = true;
+      this.clearServerFailoverWatch();
+      this.showPlayerControls = false;
+      this.stopMovies111Ticker();
+    } else {
+      this.armServerFailoverWatch();
+    }
     // CinemaOS autoPlay starts muted (browser policy) — unmute once the embed is ready
     if (this.isCinemaosProvider) {
       setTimeout(() => this.unmuteRemotePlayer(), 400);
@@ -1585,6 +1703,8 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.providerPriorityApplied = true; // keep manual choice
     this.selectedProvider = provider;
     this.peachifyWantAutoPlay = true;
+    this.movies111WantAutoPlay = true;
+    this.stopMovies111Ticker();
     this.showProviderMenu = false;
     this.showServerMenu = false;
     this.resetServerFailoverState();
@@ -1939,6 +2059,19 @@ export class FrameComponent implements OnInit, OnDestroy {
     return this.vidupOrigins.includes(origin) || /vidup\./i.test(origin || '');
   }
 
+  private isMovies111Origin(origin: string): boolean {
+    const apiBase = String(
+      (environment as { authApiUrl?: string }).authApiUrl || ''
+    ).replace(/\/$/, '');
+    return (
+      this.movies111Origins.includes(origin) ||
+      (!!apiBase && origin === apiBase) ||
+      /111movies\./i.test(origin || '') ||
+      /vidlove\./i.test(origin || '') ||
+      /onrender\.com$/i.test(origin || '')
+    );
+  }
+
   private isVideasyOrigin(origin: string): boolean {
     return this.videasyOrigins.includes(origin) || /videasy\./i.test(origin || '');
   }
@@ -1950,7 +2083,8 @@ export class FrameComponent implements OnInit, OnDestroy {
       this.isVidphantomOrigin(origin) ||
       this.isPeachifyOrigin(origin) ||
       this.isVidupOrigin(origin) ||
-      this.isVideasyOrigin(origin)
+      this.isVideasyOrigin(origin) ||
+      this.isMovies111Origin(origin)
     );
   }
 
@@ -2139,12 +2273,26 @@ export class FrameComponent implements OnInit, OnDestroy {
 
     if (type === 'PLAYER_EVENT' && data) {
       const eventData = { ...(data as unknown as PlayerEventData) };
+      const name = String(eventData.event || '').toLowerCase();
+      // Vidsrc-style aliases some clones use
+      if (name === 'time') {
+        eventData.event = 'timeupdate';
+      } else if (name === 'complete') {
+        eventData.event = 'ended';
+      }
       if (typeof eventData.playing !== 'boolean') {
-        const name = String(eventData.event || '').toLowerCase();
-        if (name === 'play') {
+        const normalized = String(eventData.event || '').toLowerCase();
+        if (normalized === 'play') {
           eventData.playing = true;
-        } else if (name === 'pause' || name === 'ended') {
+        } else if (normalized === 'pause' || normalized === 'ended') {
           eventData.playing = false;
+        }
+      }
+      // Real events from 111Movies — drop synthetic ticker
+      if (this.isMovies111Provider) {
+        this.stopMovies111Ticker();
+        if (eventData.playing) {
+          this.startMovies111Ticker();
         }
       }
       this.onPlayerEvent(eventData);
@@ -2214,8 +2362,17 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
     const wasPlaying = this.isPlaying;
     const peachifyLockPlaying = this.isPeachifyProvider && Date.now() < this.peachifyIgnorePlayingUntil;
-    if (typeof data.playing === 'boolean' && !peachifyLockPlaying) {
+    const movies111LockPlaying =
+      this.isMovies111Provider && Date.now() < this.movies111IgnorePlayingUntil;
+    if (typeof data.playing === 'boolean' && !peachifyLockPlaying && !movies111LockPlaying) {
       this.isPlaying = data.playing;
+      if (this.isMovies111Provider) {
+        if (this.isPlaying) {
+          this.startMovies111Ticker();
+        } else {
+          this.stopMovies111Ticker();
+        }
+      }
     }
 
     // Peachify may restore a different S/E from its own progress cache — pin ours
@@ -2236,8 +2393,11 @@ export class FrameComponent implements OnInit, OnDestroy {
 
     switch (data.event) {
       case 'play':
-        if (!peachifyLockPlaying) {
+        if (!peachifyLockPlaying && !movies111LockPlaying) {
           this.isPlaying = true;
+        }
+        if (this.isMovies111Provider && this.isPlaying) {
+          this.startMovies111Ticker();
         }
         // CinemaOS forces muted=true on autoPlay — lift it as soon as playback starts
         if (this.isCinemaosProvider) {
@@ -2247,14 +2407,20 @@ export class FrameComponent implements OnInit, OnDestroy {
         this.persistLocalProgress(true);
         break;
       case 'pause':
-        if (!peachifyLockPlaying) {
+        if (!peachifyLockPlaying && !movies111LockPlaying) {
           this.isPlaying = false;
+        }
+        if (this.isMovies111Provider) {
+          this.stopMovies111Ticker();
         }
         this.broadcastWatchPartyEvent('pause', data.currentTime);
         this.persistLocalProgress(true);
         break;
       case 'ended':
         this.isPlaying = false;
+        if (this.isMovies111Provider) {
+          this.stopMovies111Ticker();
+        }
         this.clearSeekGuard();
         this.persistLocalProgress(true);
         // Peachify auto-next is off — advance with Luscreens episode list
@@ -2416,9 +2582,9 @@ export class FrameComponent implements OnInit, OnDestroy {
 
   /**
    * Same Luscreens controller for every provider:
-   * - ApiPlayer / VidPhantom → direct <video> / HLS commands
+   * - ApiPlayer / VidPhantom / 111Movies → direct <video> / HLS commands
    * - Peachify → URL reload (inbound postMessage disabled by host)
-   * - CinemaOS / VidFast → iframe postMessage `{ command }` (PLAYER_EVENT bridge)
+   * - CinemaOS / VidFast / VidUP / Videasy → iframe postMessage `{ command }`
    */
   private postPlayerCommand(command: PlayerCommand, time?: number): void {
     if (this.usesLocalHls) {
@@ -2428,6 +2594,11 @@ export class FrameComponent implements OnInit, OnDestroy {
 
     if (this.isPeachifyProvider) {
       this.controlPeachifyViaUrl(command, time);
+      return;
+    }
+
+    if (this.isMovies111Provider) {
+      this.controlMovies111(command, time);
       return;
     }
 
@@ -2599,6 +2770,159 @@ export class FrameComponent implements OnInit, OnDestroy {
   }
 
   /**
+   * Best-effort 111Movies / Vidlove control:
+   * Prefer postMessage first. Only remount on seek (startAt) — play/pause remounts
+   * kill the stream because the host has no reliable autoPlay bridge.
+   */
+  private controlMovies111(command: PlayerCommand, time?: number): void {
+    if (command === 'getStatus') {
+      this.tryMovies111PostMessage(command, Math.max(0, Math.floor(this.currentTime)));
+      return;
+    }
+
+    const at = Math.max(0, Math.floor(time ?? this.currentTime));
+
+    if (command === 'play') {
+      this.movies111WantAutoPlay = true;
+      this.isPlaying = true;
+      this.startMovies111Ticker();
+      this.tryMovies111PostMessage('play', at);
+      return;
+    }
+
+    if (command === 'pause') {
+      this.movies111WantAutoPlay = false;
+      this.isPlaying = false;
+      this.stopMovies111Ticker();
+      this.tryMovies111PostMessage('pause', at);
+      return;
+    }
+
+    // seek — remount with startAt so playback resumes near the scrubber position
+    this.currentTime = at;
+    this.lastSeekTarget = at;
+    this.seekGuardUntil = Date.now() + FrameComponent.SEEK_GUARD_MS;
+    this.movies111IgnorePlayingUntil = Date.now() + 2800;
+    this.movies111WantAutoPlay = true;
+    this.tryMovies111PostMessage('seek', at);
+
+    if (this.movies111ControlTimer != null) {
+      clearTimeout(this.movies111ControlTimer);
+    }
+    this.movies111ControlTimer = setTimeout(() => {
+      this.movies111ControlTimer = null;
+      this.movies111EmbedNonce++;
+      this.remountMovies111Embed(at);
+    }, 220);
+  }
+
+  private remountMovies111Embed(startAt: number): void {
+    if (!this.isMovies111Provider) {
+      return;
+    }
+    if (this.movies111RemountTimer != null) {
+      clearTimeout(this.movies111RemountTimer);
+      this.movies111RemountTimer = null;
+    }
+
+    const stayFullscreen = this.isFullscreen || !!document.fullscreenElement;
+
+    this.playerReloadLabel = 'Loading…';
+    this.isPlayerReloading = true;
+    this.showPlayerControls = true;
+    this.armReloadOverlayTimeout();
+    this.destroyApiplayerVideo();
+    this.stopMovies111Ticker();
+
+    this.playerSurfaceLocked = true;
+    this.embedUrl = null;
+    this.cdr.detectChanges();
+
+    this.movies111RemountTimer = setTimeout(() => {
+      this.movies111RemountTimer = null;
+      if (!this.isMovies111Provider) {
+        this.playerSurfaceLocked = false;
+        return;
+      }
+      this.embedUrl = this.buildMovies111EmbedUrl(startAt);
+      this.isPlaying = this.movies111WantAutoPlay;
+      this.playerSurfaceLocked = false;
+      this.cdr.detectChanges();
+      this.ensureFullscreenPreserved(stayFullscreen);
+      if (this.movies111WantAutoPlay) {
+        this.startMovies111Ticker();
+      }
+    }, 30);
+  }
+
+  private tryMovies111PostMessage(command: PlayerCommand, time: number): void {
+    const win = this.playerIframe?.nativeElement?.contentWindow;
+    if (!win) {
+      return;
+    }
+    // Vidlove resume listener accepts `{ time }` / `{ data: { time } }` (seconds > 0)
+    const payloads: unknown[] = [
+      { command },
+      { command, time },
+      this.toRemoteIframeCommand(command, time),
+      { time },
+      { data: { time } },
+      { type: 'PLAYER_COMMAND', command, time },
+      { type: 'command', command, time },
+    ];
+    if (command === 'seek') {
+      payloads.push(
+        { command: 'seek', time },
+        { type: 'seek', time },
+        { action: 'seek', time }
+      );
+    }
+    if (command === 'play' || command === 'pause') {
+      payloads.push({ type: command }, { action: command }, { event: command });
+    }
+    for (const payload of payloads) {
+      try {
+        win.postMessage(payload, '*');
+        win.postMessage(payload, 'https://player.vidlove.cc');
+      } catch {
+        // ignore cross-origin / closed frame
+      }
+    }
+  }
+
+  private startMovies111Ticker(): void {
+    if (!this.isMovies111Provider) {
+      return;
+    }
+    this.stopMovies111Ticker();
+    this.movies111LastTickAt = Date.now();
+    this.movies111TickTimer = setInterval(() => {
+      if (!this.isMovies111Provider || !this.isPlaying || this.isSeeking) {
+        return;
+      }
+      const now = Date.now();
+      const delta = (now - this.movies111LastTickAt) / 1000;
+      this.movies111LastTickAt = now;
+      if (delta <= 0 || delta > 2) {
+        return;
+      }
+      this.currentTime = Math.max(0, this.currentTime + delta);
+      if (this.duration > 1) {
+        this.currentTime = Math.min(this.currentTime, this.duration);
+      }
+      this.syncSubtitleOverlay();
+      this.cdr.detectChanges();
+    }, 500);
+  }
+
+  private stopMovies111Ticker(): void {
+    if (this.movies111TickTimer != null) {
+      clearInterval(this.movies111TickTimer);
+      this.movies111TickTimer = null;
+    }
+  }
+
+  /**
    * CinemaOS postMessage API: `{ command: 'mute'|'volume', muted?, level? }`.
    * Volume scale is 0.0–1.0 (1 = 100% / max). AutoPlay starts muted — clear that and max volume.
    * https://cinemaos.tech/embed
@@ -2677,9 +3001,16 @@ export class FrameComponent implements OnInit, OnDestroy {
       return;
     }
     const nextPlaying = !this.isPlaying;
-    // Peachify: set autoPlay intent before remount (inbound postMessage is disabled)
+    // Peachify / 111Movies: set autoPlay intent before remount
     if (this.isPeachifyProvider) {
       this.peachifyWantAutoPlay = nextPlaying;
+      this.isPlaying = nextPlaying;
+      this.postPlayerCommand(nextPlaying ? 'play' : 'pause');
+      this.onPlaybackStateChanged();
+      return;
+    }
+    if (this.isMovies111Provider) {
+      this.movies111WantAutoPlay = nextPlaying;
       this.isPlaying = nextPlaying;
       this.postPlayerCommand(nextPlaying ? 'play' : 'pause');
       this.onPlaybackStateChanged();
@@ -2889,13 +3220,31 @@ export class FrameComponent implements OnInit, OnDestroy {
 
     try {
       if (!document.fullscreenElement) {
+        await this.syncNativeOrientation(true);
         await container.requestFullscreen();
       } else {
         await document.exitFullscreen();
+        await this.syncNativeOrientation(false);
       }
       this.revealPlayerControls();
     } catch (error) {
       console.error('Fullscreen toggle failed:', error);
+    }
+  }
+
+  /** Lock landscape while the player is fullscreen on native devices. */
+  private async syncNativeOrientation(fullscreen: boolean): Promise<void> {
+    if (!Capacitor.isNativePlatform()) {
+      return;
+    }
+    try {
+      if (fullscreen) {
+        await ScreenOrientation.lock({ orientation: 'landscape' });
+      } else {
+        await ScreenOrientation.unlock();
+      }
+    } catch {
+      // Orientation lock may be unavailable on some devices.
     }
   }
 

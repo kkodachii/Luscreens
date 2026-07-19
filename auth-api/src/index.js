@@ -11,6 +11,8 @@ const jwt = require('jsonwebtoken');
 const { connectMongo } = require('./db');
 const store = require('./store');
 const { mountPartyRoutes } = require('./party');
+const { mountVidloveProxy } = require('./vidlove-proxy');
+const { mountMovies111Resolve } = require('./movies111-resolve');
 
 const app = express();
 const PORT = process.env.PORT || 8788;
@@ -128,9 +130,17 @@ app.get('/', (_req, res) => {
       'GET /party/poll',
       'GET /me/library',
       'PUT /me/library',
+      'GET /vidlove-proxy/*',
+      'GET /111movies-proxy/*',
+      'GET /movies111/resolve',
+      'GET /m3u8-proxy/*',
     ],
   });
 });
+
+// 111Movies / Vidlove embed proxy + stream resolve (before JSON-only 404s)
+mountVidloveProxy(app);
+mountMovies111Resolve(app);
 
 app.get('/health', (_req, res) => {
   res.json({

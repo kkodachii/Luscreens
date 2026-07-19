@@ -5,7 +5,8 @@ export type StreamProvider =
   | 'vidphantom'
   | 'peachify'
   | 'vidup'
-  | 'videasy';
+  | 'videasy'
+  | 'movies111';
 
 export const environment = {
   production: false,
@@ -20,6 +21,7 @@ export const environment = {
     'peachify',
     'vidup',
     'videasy',
+    'movies111',
   ] as StreamProvider[],
   streamServer: 'vEdge',
   /** VidFast `server=` query values shown in the custom Server picker */

@@ -38,7 +38,7 @@
             [class.z-30]="!isFullscreen && (showCcMenu || showProviderMenu || showServerMenu)"
             [attr.data-provider]="selectedProvider"
           >
-            <!-- ApiPlayer / VidPhantom: direct HLS in <video>, same Luscreens controller -->
+            <!-- ApiPlayer / VidPhantom / 111Movies: direct stream in <video> -->
             <video
               *ngIf="usesLocalHls && apiplayerSurfaceActive"
               #playerVideo
@@ -55,7 +55,11 @@
               (loadedmetadata)="onVideoLoadedMetadata()"
             ></video>
 
-            <!-- CinemaOS / VidFast: iframe + PLAYER_EVENT remote controller -->
+            <!--
+              Remote iframe embeds.
+              referrerpolicy must stay a static attribute (Angular NG0910).
+              111Movies plays via local <video> + auth-api /movies111/resolve (not iframe).
+            -->
             <iframe
               *ngIf="usesRemoteIframe && embedUrl"
               #playerIframe
@@ -66,9 +70,6 @@
               allowfullscreen
               referrerpolicy="no-referrer"
               loading="eager"
-              tabindex="-1"
-              aria-hidden="true"
-              inert
               class="player-embed w-full h-full shadow-xl absolute inset-0"
               [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-lg'"
             ></iframe>
@@ -82,10 +83,7 @@
               <span class="player-subtitle-cue">{{ activeSubtitleText }}</span>
             </div>
 
-            <!--
-              Full-surface shield: one tap toggles controls; center toggles play/pause.
-              pointerup avoids the mobile mousemove→click double-toggle race.
-            -->
+            <!-- Full-surface shield: one tap toggles controls; center toggles play/pause. -->
             <div
               class="player-click-shield absolute inset-0 z-20 flex items-center justify-center select-none"
               [class.menus-open]="showServerMenu || showProviderMenu || showCcMenu"
@@ -116,7 +114,7 @@
               </button>
             </div>
 
-            <!-- Shared overlay controller (stays above reload spinner so provider/server stay usable) -->
+            <!-- Shared overlay controller -->
             <div
               class="player-controls absolute inset-0 flex flex-col justify-between pointer-events-none transition-opacity duration-300"
               [class.z-30]="!isPlayerReloading && !showServerMenu && !showProviderMenu && !showCcMenu"
