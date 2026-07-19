@@ -6,9 +6,12 @@ import { TmdbService } from '../../services/tmdb.service';
 import { FormsModule } from '@angular/forms';
 import { Subscription } from 'rxjs';
 import { inject } from '@vercel/analytics';
-import { environment } from '../../../environments/environment';
+import Hls from 'hls.js';
+import { environment, StreamProvider } from '../../../environments/environment';
 import { WatchProgressService } from '../../services/watch-progress.service';
 import { AuthService } from '../../services/auth.service';
+import { ApiplayerStreamService } from '../../services/apiplayer-stream.service';
+import { SubtitleCue, SubtitleService } from '../../services/subtitle.service';
 import {
   WatchPartyChatMessage,
   WatchPartyCommand,
@@ -22,6 +25,7 @@ interface DocumentPictureInPicture {
 }
 
 type PlayerEventName = 'play' | 'pause' | 'seeked' | 'ended' | 'timeupdate' | 'playerstatus';
+type PlayerCommand = 'play' | 'pause' | 'seek' | 'getStatus';
 
 interface PlayerEventData {
   event: PlayerEventName;
@@ -34,6 +38,20 @@ interface PlayerEventData {
   playing: boolean;
   muted: boolean;
   volume: number;
+}
+
+interface ApiplayerMessage {
+  type?: string;
+  event?: string;
+  action?: string;
+  currentTime?: number;
+  duration?: number;
+  paused?: boolean;
+  muted?: boolean;
+  volume?: number;
+  message?: string;
+  position?: number;
+  percent?: number;
 }
 
 @Component({
@@ -57,8 +75,21 @@ export class FrameComponent implements OnInit, OnDestroy {
     'https://vidfast.bz',
   ];
 
+  /** CinemaOS uses the same PLAYER_EVENT / { command } bridge as VidFast. */
+  private readonly cinemaosOrigins = [
+    'https://cinemaos.tech',
+    'https://cinemaos.live',
+    'https://cinemaos.me',
+    'https://cinemaos-v3.vercel.app',
+  ];
+
+  private readonly apiplayerOrigins = [
+    'https://apiplayer.ru',
+    'https://www.apiplayer.ru',
+  ];
+
   private readonly onPlayerMessage = (event: MessageEvent): void => {
-    this.handleVidfastMessage(event);
+    this.handlePlayerMessage(event);
   };
 
   embedUrl: SafeResourceUrl | null = null;
@@ -81,11 +112,17 @@ export class FrameComponent implements OnInit, OnDestroy {
   details: string = '';
   isLoading: boolean = true;
 
-  // Custom player state (driven by VidFast PLAYER_EVENT)
+  // Custom player state (driven by provider postMessage events)
   isPlaying = false;
   currentTime = 0;
   duration = 0;
   isSeeking = false;
+  /** Sticky seek target so CinemaOS can't snap the scrubber / stream back to 0. */
+  private lastSeekTarget: number | null = null;
+  private seekGuardUntil = 0;
+  private seekRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly SEEK_GUARD_MS = 5000;
+  private static readonly SEEK_RETRY_MS = 350;
   isFullscreen = false;
   /** Overlay controls — visible on tap; auto-hide after 4s while playing. */
   showPlayerControls = true;
@@ -98,7 +135,7 @@ export class FrameComponent implements OnInit, OnDestroy {
   private pipWindow: Window | null = null;
   private pipPlaceholder: HTMLElement | null = null;
 
-  // Subtitles / server (VidFast URL params)
+  // Subtitles / provider / server (URL params differ per embed host)
   readonly subtitleOptions: { code: string | null; label: string }[] = [
     { code: null, label: 'Off' },
     { code: 'en', label: 'English' },
@@ -111,21 +148,91 @@ export class FrameComponent implements OnInit, OnDestroy {
     { code: 'ko', label: 'Korean' },
     { code: 'zh', label: 'Chinese' },
   ];
+  readonly providerOptions: { id: StreamProvider; label: string }[] = [
+    { id: 'apiplayer', label: 'ApiPlayer' },
+    { id: 'cinemaos', label: 'CinemaOS' },
+    { id: 'vidfast', label: 'VidFast' },
+  ];
+  selectedProvider: StreamProvider =
+    (environment as { streamProvider?: StreamProvider }).streamProvider || 'apiplayer';
   selectedSubtitle: string | null = null;
+  /** Active cue text for CinemaOS (and ApiPlayer fallback) overlay. */
+  activeSubtitleText = '';
+  isSubtitleLoading = false;
+  private subtitleCues: SubtitleCue[] = [];
+  private subtitleVttUrl: string | null = null;
+  private subtitleLoadToken = 0;
+  private cachedImdbId: string | null = null;
   selectedServer: string = environment.streamServer || 'vEdge';
   /** When true, omit `server=` so VidFast can pick a working source itself. */
   useAutoServer = false;
   showCcMenu = false;
+  showProviderMenu = false;
   showServerMenu = false;
   isPlayerReloading = false;
   playerReloadLabel = 'Loading…';
+  /** True while the local HLS <video> surface should be mounted (ApiPlayer). */
+  apiplayerSurfaceActive = false;
+  private pendingSeekSeconds: number | null = null;
+  private hlsPlayer: Hls | null = null;
+  private apiplayerLoadToken = 0;
+
+  /** Latency probe results for provider rows (ms). `null` = measuring / unknown. */
+  providerPingMs: Record<StreamProvider, number | null> = {
+    apiplayer: null,
+    cinemaos: null,
+    vidfast: null,
+  };
+  providerPingPending: Record<StreamProvider, boolean> = {
+    apiplayer: false,
+    cinemaos: false,
+    vidfast: false,
+  };
+  private readonly providerPingUrls: Record<StreamProvider, string> = {
+    apiplayer: 'https://apiplayer.ru/favicon.ico',
+    cinemaos: 'https://cinemaos.tech/favicon.ico',
+    vidfast: 'https://vidfast.vc/favicon.ico',
+  };
+  private lastProviderPingAt = 0;
 
   /** Auto-failover: try next server if current one never starts playback. */
   private static readonly SERVER_FAILOVER_MS = 12000;
+  private static readonly APIPLAYER_FAILOVER_MS = 8000;
   private static readonly AUTO_SERVER_ID = 'auto';
   private serverFailoverTimer: ReturnType<typeof setTimeout> | null = null;
   private serversTriedThisTitle = new Set<string>();
+  private providersTriedThisTitle = new Set<StreamProvider>();
   private serverPlaybackOk = false;
+
+  get isVidfastProvider(): boolean {
+    return this.selectedProvider === 'vidfast';
+  }
+
+  get isCinemaosProvider(): boolean {
+    return this.selectedProvider === 'cinemaos';
+  }
+
+  get isApiplayerProvider(): boolean {
+    return this.selectedProvider === 'apiplayer';
+  }
+
+  /** Local HLS + shared controller (ApiPlayer approach). */
+  get usesLocalHls(): boolean {
+    return this.isApiplayerProvider;
+  }
+
+  /**
+   * Iframe embeds that speak PLAYER_EVENT / { command } — same Luscreens controller.
+   * CinemaOS docs: https://cinemaos.tech/embed
+   */
+  get usesRemoteIframe(): boolean {
+    return this.isVidfastProvider || this.isCinemaosProvider;
+  }
+
+  /** Player chrome is mounted for either embed provider. */
+  get hasPlayerSurface(): boolean {
+    return this.usesLocalHls || !!this.embedUrl;
+  }
 
   get serverOptions(): { id: string; label: string }[] {
     const fromEnv = (environment as { streamServers?: string[] }).streamServers ?? [];
@@ -138,7 +245,15 @@ export class FrameComponent implements OnInit, OnDestroy {
     ];
   }
 
+  get activeProviderLabel(): string {
+    return this.providerOptions.find((p) => p.id === this.selectedProvider)?.label
+      ?? this.selectedProvider;
+  }
+
   get activeServerLabel(): string {
+    if (this.isApiplayerProvider) {
+      return this.activeProviderLabel;
+    }
     return this.useAutoServer ? 'Auto' : this.selectedServer || 'Auto';
   }
 
@@ -181,6 +296,7 @@ export class FrameComponent implements OnInit, OnDestroy {
   @ViewChild('seasonScroll') seasonScroll!: ElementRef;
   @ViewChild('episodeScroll') episodeScroll!: ElementRef;
   @ViewChild('playerIframe') playerIframe!: ElementRef<HTMLIFrameElement>;
+  @ViewChild('playerVideo') playerVideo?: ElementRef<HTMLVideoElement>;
   @ViewChild('playerContainer') playerContainer!: ElementRef<HTMLDivElement>;
   @ViewChild('partyChatScroll') partyChatScroll?: ElementRef<HTMLDivElement>;
 
@@ -192,6 +308,8 @@ export class FrameComponent implements OnInit, OnDestroy {
     private watchPartyService: WatchPartyService,
     private watchProgress: WatchProgressService,
     private authService: AuthService,
+    private apiplayerStream: ApiplayerStreamService,
+    private subtitleService: SubtitleService,
     private cdr: ChangeDetectorRef,
   ) {}
 
@@ -251,6 +369,11 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.stopProgressTimer();
     this.clearControlsHideTimer();
     this.clearServerFailoverWatch();
+    this.clearSeekGuard();
+    this.clearSubtitles();
+    this.apiplayerLoadToken++;
+    this.subtitleLoadToken++;
+    this.destroyApiplayerVideo();
     window.removeEventListener('message', this.onPlayerMessage);
     document.removeEventListener('fullscreenchange', this.onFullscreenChange);
     window.removeEventListener('beforeunload', this.onBeforeUnload);
@@ -324,7 +447,7 @@ export class FrameComponent implements OnInit, OnDestroy {
         this.details = data.overview || 'No details available.';
         this.isLoading = false; // Mark loading as complete
 
-        this.embedUrl = this.buildEmbedUrl(`movie/${this.id}`);
+        this.openPlayer();
         this.syncWatchPartyMedia();
         this.watchProgress.enrichMetadata({
           mediaType: 'movie',
@@ -419,14 +542,83 @@ export class FrameComponent implements OnInit, OnDestroy {
   updateEmbedUrl(): void {
     if (this.mediaType === 'tv') {
       this.resetPlayerState();
-      this.embedUrl = this.buildEmbedUrl(
-        `tv/${this.id}/${this.selectedSeason}/${this.selectedEpisode}`
-      );
+      this.openPlayer();
       this.syncWatchPartyMedia();
     }
   }
 
+  /** Mount ApiPlayer (HLS) or CinemaOS/VidFast (iframe + remote controller). */
+  private openPlayer(resumeAt?: number): void {
+    if (this.usesLocalHls) {
+      this.embedUrl = null;
+      void this.loadApiplayerVideo(resumeAt);
+      return;
+    }
+
+    this.destroyApiplayerVideo();
+    if (this.isCinemaosProvider) {
+      this.embedUrl = this.buildCinemaosEmbedUrl(resumeAt);
+      return;
+    }
+
+    const path = this.getEmbedPath();
+    if (!path) {
+      return;
+    }
+    this.embedUrl = this.buildVidfastEmbedUrl(path, resumeAt);
+  }
+
+  private resolveStartAt(resumeAt?: number): number {
+    const cleared = this.watchProgress.isSuppressed(this.mediaType, this.id);
+    if (cleared) {
+      return 0;
+    }
+    if (resumeAt != null && resumeAt > 0) {
+      return resumeAt;
+    }
+    return this.getSavedStartAt();
+  }
+
   private buildEmbedUrl(path: string, resumeAt?: number): SafeResourceUrl {
+    if (this.isCinemaosProvider) {
+      return this.buildCinemaosEmbedUrl(resumeAt);
+    }
+    if (this.isApiplayerProvider) {
+      return this.buildApiplayerEmbedUrl(path, resumeAt);
+    }
+    return this.buildVidfastEmbedUrl(path, resumeAt);
+  }
+
+  private buildCinemaosEmbedUrl(resumeAt?: number): SafeResourceUrl {
+    this.pendingSeekSeconds = null;
+    if (!this.id || !this.mediaType) {
+      return this.sanitizer.bypassSecurityTrustResourceUrl('about:blank');
+    }
+
+    const path =
+      this.mediaType === 'tv'
+        ? `player/${this.id}/${this.selectedSeason}/${this.selectedEpisode}`
+        : `player/${this.id}`;
+
+    const params = new URLSearchParams({
+      autoPlay: 'true',
+      theme: 'e50914',
+      showTitle: 'false',
+      nextButton: this.mediaType === 'tv' ? 'true' : 'false',
+      autoNext: this.mediaType === 'tv' ? 'true' : 'false',
+    });
+
+    const startAt = Math.max(0, Math.floor(this.resolveStartAt(resumeAt)));
+    if (startAt > 0) {
+      params.set('startTime', String(startAt));
+    }
+
+    const url = `https://cinemaos.tech/${path}?${params.toString()}`;
+    return this.sanitizer.bypassSecurityTrustResourceUrl(url);
+  }
+
+  private buildVidfastEmbedUrl(path: string, resumeAt?: number): SafeResourceUrl {
+    this.pendingSeekSeconds = null;
     const params = new URLSearchParams({
       autoPlay: 'true',
       theme: 'red',
@@ -446,12 +638,7 @@ export class FrameComponent implements OnInit, OnDestroy {
       params.set('sub', this.selectedSubtitle);
     }
 
-    const cleared = this.watchProgress.isSuppressed(this.mediaType, this.id);
-    const startAt = cleared
-      ? 0
-      : resumeAt != null && resumeAt > 0
-        ? resumeAt
-        : this.getSavedStartAt();
+    const startAt = this.resolveStartAt(resumeAt);
     // Always set startAt — omitting it lets VidFast resume from its own iframe cache
     // (which brought back cleared history timestamps).
     params.set('startAt', String(Math.max(0, Math.floor(startAt))));
@@ -463,6 +650,263 @@ export class FrameComponent implements OnInit, OnDestroy {
 
     const url = `https://vidfast.vc/${path}?${params.toString()}`;
     return this.sanitizer.bypassSecurityTrustResourceUrl(url);
+  }
+
+  private buildApiplayerEmbedUrl(path: string, _resumeAt?: number): SafeResourceUrl {
+    // Kept for reference / provider switch fallback; ApiPlayer plays via direct HLS.
+    const params = new URLSearchParams({
+      autoplay: '1',
+      resume: '0',
+    });
+    if (this.selectedSubtitle) {
+      params.set('lang', this.selectedSubtitle);
+    }
+    if (this.mediaType === 'tv') {
+      params.set('autonext', '1');
+    }
+    const url = `https://apiplayer.ru/embed/${path}?${params.toString()}`;
+    return this.sanitizer.bypassSecurityTrustResourceUrl(url);
+  }
+
+  private async loadApiplayerVideo(resumeAt?: number): Promise<void> {
+    if (!this.id || !this.mediaType) {
+      return;
+    }
+
+    const loadToken = ++this.apiplayerLoadToken;
+    this.playerReloadLabel = 'Loading…';
+    this.isPlayerReloading = true;
+    this.destroyApiplayerVideo(false);
+    this.apiplayerSurfaceActive = true;
+    this.cdr.detectChanges();
+
+    try {
+      const stream = await this.apiplayerStream.resolveStream({
+        mediaType: this.mediaType === 'tv' ? 'tv' : 'movie',
+        id: this.id,
+        season: this.mediaType === 'tv' ? this.selectedSeason : undefined,
+        episode: this.mediaType === 'tv' ? this.selectedEpisode : undefined,
+      });
+
+      if (loadToken !== this.apiplayerLoadToken || !this.isApiplayerProvider) {
+        return;
+      }
+
+      if (stream.imdbId) {
+        this.cachedImdbId = stream.imdbId;
+      }
+
+      await this.attachHlsToVideo(stream.masterUrl, resumeAt);
+
+      if (loadToken !== this.apiplayerLoadToken) {
+        return;
+      }
+
+      this.isPlayerReloading = false;
+      this.beginClearedBootstrapIfNeeded();
+      this.armServerFailoverWatch();
+      if (this.selectedSubtitle) {
+        void this.applySubtitleSelection(this.selectedSubtitle, false);
+      }
+      this.cdr.detectChanges();
+    } catch (error) {
+      console.error('ApiPlayer stream failed:', error);
+      if (loadToken !== this.apiplayerLoadToken) {
+        return;
+      }
+      this.providersTriedThisTitle.add('apiplayer');
+      const next = this.nextFailoverProvider('apiplayer');
+      if (next) {
+        this.selectedProvider = next;
+        if (next === 'vidfast') {
+          this.useAutoServer = true;
+        }
+        this.reloadPlayer(
+          resumeAt ?? this.currentTime,
+          `Trying ${this.activeProviderLabel}…`
+        );
+        return;
+      }
+      this.showNoServerFound();
+    }
+  }
+
+  private nextFailoverProvider(from: StreamProvider): StreamProvider | null {
+    const order: StreamProvider[] = ['apiplayer', 'cinemaos', 'vidfast'];
+    const start = order.indexOf(from);
+    for (let i = 1; i < order.length; i++) {
+      const candidate = order[(start + i) % order.length];
+      if (!this.providersTriedThisTitle.has(candidate)) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  private attachHlsToVideo(masterUrl: string, resumeAt?: number): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const tryAttach = (attempt: number): void => {
+        const video = this.playerVideo?.nativeElement;
+        if (!video) {
+          if (attempt < 10) {
+            setTimeout(() => tryAttach(attempt + 1), 50);
+            return;
+          }
+          reject(new Error('Video element not ready'));
+          return;
+        }
+
+        const startAt = Math.max(0, Math.floor(this.resolveStartAt(resumeAt)));
+        const onReady = (): void => {
+          if (startAt > 5) {
+            video.currentTime = startAt;
+          }
+          void video.play().catch(() => {
+            // Autoplay may be blocked until the user taps — controller still works.
+          });
+          resolve();
+        };
+
+        if (Hls.isSupported()) {
+          const hls = new Hls({
+            enableWorker: true,
+            lowLatencyMode: false,
+          });
+          this.hlsPlayer = hls;
+          hls.loadSource(masterUrl);
+          hls.attachMedia(video);
+          hls.on(Hls.Events.MANIFEST_PARSED, () => onReady());
+          hls.on(Hls.Events.ERROR, (_event, data) => {
+            if (data.fatal) {
+              reject(data);
+            }
+          });
+          return;
+        }
+
+        if (video.canPlayType('application/vnd.apple.mpegurl')) {
+          video.src = masterUrl;
+          video.addEventListener('loadedmetadata', () => onReady(), { once: true });
+          video.addEventListener('error', () => reject(new Error('Native HLS failed')), {
+            once: true,
+          });
+          return;
+        }
+
+        reject(new Error('HLS is not supported in this browser'));
+      };
+
+      tryAttach(0);
+    });
+  }
+
+  private destroyApiplayerVideo(clearSurface = true): void {
+    if (this.hlsPlayer) {
+      this.hlsPlayer.destroy();
+      this.hlsPlayer = null;
+    }
+    const video = this.playerVideo?.nativeElement;
+    if (video) {
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+    }
+    if (clearSurface) {
+      this.apiplayerSurfaceActive = false;
+    }
+  }
+
+  onVideoPlay(): void {
+    this.onPlayerEvent({
+      event: 'play',
+      currentTime: this.playerVideo?.nativeElement.currentTime ?? this.currentTime,
+      duration: this.playerVideo?.nativeElement.duration || this.duration,
+      tmdbId: +this.id || 0,
+      mediaType: this.mediaType === 'tv' ? 'tv' : 'movie',
+      season: this.selectedSeason,
+      episode: this.selectedEpisode,
+      playing: true,
+      muted: !!this.playerVideo?.nativeElement.muted,
+      volume: this.playerVideo?.nativeElement.volume ?? 1,
+    });
+  }
+
+  onVideoPause(): void {
+    this.onPlayerEvent({
+      event: 'pause',
+      currentTime: this.playerVideo?.nativeElement.currentTime ?? this.currentTime,
+      duration: this.playerVideo?.nativeElement.duration || this.duration,
+      tmdbId: +this.id || 0,
+      mediaType: this.mediaType === 'tv' ? 'tv' : 'movie',
+      season: this.selectedSeason,
+      episode: this.selectedEpisode,
+      playing: false,
+      muted: !!this.playerVideo?.nativeElement.muted,
+      volume: this.playerVideo?.nativeElement.volume ?? 1,
+    });
+  }
+
+  onVideoTimeUpdate(): void {
+    const video = this.playerVideo?.nativeElement;
+    if (!video) {
+      return;
+    }
+    this.onPlayerEvent({
+      event: 'timeupdate',
+      currentTime: video.currentTime,
+      duration: video.duration || this.duration,
+      tmdbId: +this.id || 0,
+      mediaType: this.mediaType === 'tv' ? 'tv' : 'movie',
+      season: this.selectedSeason,
+      episode: this.selectedEpisode,
+      playing: !video.paused,
+      muted: video.muted,
+      volume: video.volume,
+    });
+  }
+
+  onVideoSeeked(): void {
+    const video = this.playerVideo?.nativeElement;
+    if (!video) {
+      return;
+    }
+    this.onPlayerEvent({
+      event: 'seeked',
+      currentTime: video.currentTime,
+      duration: video.duration || this.duration,
+      tmdbId: +this.id || 0,
+      mediaType: this.mediaType === 'tv' ? 'tv' : 'movie',
+      season: this.selectedSeason,
+      episode: this.selectedEpisode,
+      playing: !video.paused,
+      muted: video.muted,
+      volume: video.volume,
+    });
+  }
+
+  onVideoEnded(): void {
+    const video = this.playerVideo?.nativeElement;
+    this.onPlayerEvent({
+      event: 'ended',
+      currentTime: video?.currentTime ?? this.currentTime,
+      duration: video?.duration || this.duration,
+      tmdbId: +this.id || 0,
+      mediaType: this.mediaType === 'tv' ? 'tv' : 'movie',
+      season: this.selectedSeason,
+      episode: this.selectedEpisode,
+      playing: false,
+      muted: !!video?.muted,
+      volume: video?.volume ?? 1,
+    });
+  }
+
+  onVideoLoadedMetadata(): void {
+    const video = this.playerVideo?.nativeElement;
+    if (!video) {
+      return;
+    }
+    this.duration = Number.isFinite(video.duration) ? video.duration : this.duration;
+    this.markServerPlaybackOk();
   }
 
   private getEmbedPath(): string | null {
@@ -479,16 +923,23 @@ export class FrameComponent implements OnInit, OnDestroy {
   }
 
   private reloadPlayer(resumeAt?: number, label = 'Loading…'): void {
-    const path = this.getEmbedPath();
-    if (!path) {
-      return;
-    }
     const time = resumeAt ?? this.currentTime;
     this.playerReloadLabel = label;
     this.isPlayerReloading = true;
+
+    if (this.usesLocalHls) {
+      void this.loadApiplayerVideo(time > 5 ? time : undefined);
+      return;
+    }
+
+    this.destroyApiplayerVideo();
     // Keep previous frame painted under the overlay; swap src on next tick
     setTimeout(() => {
-      this.embedUrl = this.buildEmbedUrl(path, time > 5 ? time : undefined);
+      this.openPlayer(time > 5 ? time : undefined);
+      // openPlayer clears reloading only via iframe load / HLS path
+      if (this.usesRemoteIframe) {
+        // iframe (load) handler clears the overlay
+      }
     }, 50);
   }
 
@@ -497,18 +948,139 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.beginClearedBootstrapIfNeeded();
     this.requestPlayerStatus();
     this.armServerFailoverWatch();
+    if (this.selectedSubtitle && !this.isVidfastProvider) {
+      void this.applySubtitleSelection(this.selectedSubtitle, false);
+    }
   }
 
   toggleCcMenu(): void {
     this.showCcMenu = !this.showCcMenu;
+    this.showProviderMenu = false;
     this.showServerMenu = false;
     this.revealPlayerControls();
   }
 
-  toggleServerMenu(): void {
-    this.showServerMenu = !this.showServerMenu;
+  toggleProviderMenu(): void {
+    this.showProviderMenu = !this.showProviderMenu;
+    this.showServerMenu = false;
     this.showCcMenu = false;
     this.revealPlayerControls();
+    if (this.showProviderMenu) {
+      void this.refreshProviderPings();
+    }
+  }
+
+  toggleServerMenu(): void {
+    if (!this.isVidfastProvider) {
+      return;
+    }
+    this.showServerMenu = !this.showServerMenu;
+    this.showProviderMenu = false;
+    this.showCcMenu = false;
+    this.revealPlayerControls();
+  }
+
+  /** 0–4 bars from RTT; 0 = error / unknown while idle. */
+  getProviderSignalLevel(provider: StreamProvider): number {
+    if (this.providerPingPending[provider]) {
+      return -1;
+    }
+    const ms = this.providerPingMs[provider];
+    if (ms == null || ms < 0) {
+      return 0;
+    }
+    if (ms < 120) {
+      return 4;
+    }
+    if (ms < 250) {
+      return 3;
+    }
+    if (ms < 450) {
+      return 2;
+    }
+    return 1;
+  }
+
+  formatProviderPing(provider: StreamProvider): string {
+    if (this.providerPingPending[provider]) {
+      return '…';
+    }
+    const ms = this.providerPingMs[provider];
+    if (ms == null) {
+      return '—';
+    }
+    if (ms < 0) {
+      return 'fail';
+    }
+    return `${ms}ms`;
+  }
+
+  providerPingTone(provider: StreamProvider): string {
+    const level = this.getProviderSignalLevel(provider);
+    if (level >= 4) {
+      return 'text-emerald-400';
+    }
+    if (level === 3) {
+      return 'text-lime-400';
+    }
+    if (level === 2) {
+      return 'text-amber-400';
+    }
+    if (level === 1) {
+      return 'text-orange-400';
+    }
+    if (level === -1) {
+      return 'text-white/40';
+    }
+    return 'text-red-400';
+  }
+
+  private async refreshProviderPings(force = false): Promise<void> {
+    const now = Date.now();
+    if (!force && now - this.lastProviderPingAt < 8000) {
+      // Still refresh UI if we have nothing yet
+      const missing = this.providerOptions.some(
+        (p) => this.providerPingMs[p.id] == null && !this.providerPingPending[p.id]
+      );
+      if (!missing) {
+        return;
+      }
+    }
+    this.lastProviderPingAt = now;
+
+    await Promise.all(
+      this.providerOptions.map((provider) => this.pingProvider(provider.id))
+    );
+    this.cdr.detectChanges();
+  }
+
+  private async pingProvider(provider: StreamProvider): Promise<void> {
+    this.providerPingPending[provider] = true;
+    this.cdr.detectChanges();
+
+    const url = `${this.providerPingUrls[provider]}?_=${Date.now()}`;
+    const started = performance.now();
+    let ms = -1;
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 4000);
+      await fetch(url, {
+        method: 'GET',
+        mode: 'no-cors',
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      ms = Math.max(1, Math.round(performance.now() - started));
+    } catch {
+      // Abort / network error — still record elapsed if the attempt ran briefly
+      const elapsed = Math.round(performance.now() - started);
+      ms = elapsed > 50 ? elapsed : -1;
+    }
+
+    this.providerPingMs[provider] = ms;
+    this.providerPingPending[provider] = false;
   }
 
   selectSubtitle(code: string | null): void {
@@ -518,11 +1090,48 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
     this.selectedSubtitle = code;
     this.showCcMenu = false;
-    // Soft-reload with sub= URL param (VidFast's supported way) — overlay avoids black flash
-    this.reloadPlayer(this.currentTime, code ? 'Applying subtitles…' : 'Turning off subtitles…');
+
+    // VidFast: `sub=` is a real embed param — soft-reload to apply it.
+    if (this.isVidfastProvider) {
+      this.reloadPlayer(
+        this.currentTime,
+        code ? 'Applying subtitles…' : 'Turning off subtitles…'
+      );
+      return;
+    }
+
+    // ApiPlayer + CinemaOS: load cues ourselves (no working CC URL / postMessage).
+    void this.applySubtitleSelection(code);
+  }
+
+  /** Scrubber max — never 0 or the range input can only seek to 0. */
+  get seekBarMax(): number {
+    if (this.duration > 1) {
+      return this.duration;
+    }
+    return Math.max(this.currentTime + 600, 7200);
+  }
+
+  selectProvider(provider: StreamProvider): void {
+    if (this.selectedProvider === provider) {
+      this.showProviderMenu = false;
+      return;
+    }
+    this.selectedProvider = provider;
+    this.showProviderMenu = false;
+    this.showServerMenu = false;
+    this.resetServerFailoverState();
+    this.reloadPlayer(
+      this.currentTime,
+      `Switching to ${this.activeProviderLabel}…`
+    );
   }
 
   selectServer(server: string): void {
+    if (!this.isVidfastProvider) {
+      this.showServerMenu = false;
+      return;
+    }
     const wantsAuto = server === FrameComponent.AUTO_SERVER_ID;
     if (wantsAuto) {
       if (this.useAutoServer) {
@@ -549,6 +1158,7 @@ export class FrameComponent implements OnInit, OnDestroy {
   private resetServerFailoverState(): void {
     this.clearServerFailoverWatch();
     this.serversTriedThisTitle.clear();
+    this.providersTriedThisTitle.clear();
     this.serverPlaybackOk = false;
   }
 
@@ -562,6 +1172,28 @@ export class FrameComponent implements OnInit, OnDestroy {
   private armServerFailoverWatch(): void {
     this.clearServerFailoverWatch();
     if (this.serverPlaybackOk) {
+      return;
+    }
+
+    this.providersTriedThisTitle.add(this.selectedProvider);
+
+    // HLS / CinemaOS: if playback never starts, try the next provider once each
+    if (this.usesLocalHls || this.isCinemaosProvider) {
+      this.serverFailoverTimer = setTimeout(() => {
+        if (this.serverPlaybackOk || this.isPlayerReloading) {
+          return;
+        }
+        const next = this.nextFailoverProvider(this.selectedProvider);
+        if (!next) {
+          this.showNoServerFound();
+          return;
+        }
+        this.selectedProvider = next;
+        if (next === 'vidfast') {
+          this.useAutoServer = true;
+        }
+        this.reloadPlayer(this.currentTime, `Trying ${this.activeProviderLabel}…`);
+      }, FrameComponent.APIPLAYER_FAILOVER_MS);
       return;
     }
 
@@ -587,9 +1219,24 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
   }
 
-  /** Current server never started — try the next one, then VidFast Auto. */
+  private showNoServerFound(): void {
+    this.playerReloadLabel = 'No working server found';
+    this.isPlayerReloading = true;
+    setTimeout(() => {
+      if (!this.serverPlaybackOk) {
+        this.isPlayerReloading = false;
+        this.cdr.detectChanges();
+      }
+    }, 2500);
+  }
+
+  /** Current VidFast server never started — try next pin, then Auto. Do not bounce to ApiPlayer. */
   private tryNextServerFailover(): void {
     if (this.serverPlaybackOk || this.isPlayerReloading) {
+      return;
+    }
+
+    if (!this.isVidfastProvider) {
       return;
     }
 
@@ -611,22 +1258,160 @@ export class FrameComponent implements OnInit, OnDestroy {
       return;
     }
 
-    this.playerReloadLabel = 'No working server found';
-    this.isPlayerReloading = true;
-    setTimeout(() => {
-      if (!this.serverPlaybackOk) {
-        this.isPlayerReloading = false;
-        this.cdr.detectChanges();
-      }
-    }, 2500);
+    this.showNoServerFound();
   }
 
   private resetPlayerState(): void {
     this.isPlaying = false;
     this.currentTime = 0;
     this.duration = 0;
-    this.isSeeking = false;
+    this.clearSeekGuard();
+    this.clearSubtitles();
+    this.cachedImdbId = null;
     this.beginClearedBootstrapIfNeeded();
+  }
+
+  private async applySubtitleSelection(
+    code: string | null,
+    showOverlay = true
+  ): Promise<void> {
+    const loadToken = ++this.subtitleLoadToken;
+    this.clearSubtitles(false);
+
+    if (!code) {
+      this.isSubtitleLoading = false;
+      this.cdr.detectChanges();
+      return;
+    }
+
+    if (showOverlay) {
+      this.playerReloadLabel = 'Loading subtitles…';
+      this.isPlayerReloading = true;
+    }
+    this.isSubtitleLoading = true;
+    this.cdr.detectChanges();
+
+    try {
+      const imdbId = await this.subtitleService.resolveImdbId({
+        mediaType: this.mediaType === 'tv' ? 'tv' : 'movie',
+        tmdbId: this.id,
+        tmdbApiKey: environment.tmdbApiKey,
+        fallbackImdbId: this.cachedImdbId,
+      });
+
+      if (loadToken !== this.subtitleLoadToken) {
+        return;
+      }
+      if (!imdbId) {
+        throw new Error('No IMDb id for subtitles');
+      }
+      this.cachedImdbId = imdbId;
+
+      const loaded = await this.subtitleService.loadCues({
+        imdbId,
+        lang: code,
+        season: this.mediaType === 'tv' ? this.selectedSeason : undefined,
+        episode: this.mediaType === 'tv' ? this.selectedEpisode : undefined,
+      });
+
+      if (loadToken !== this.subtitleLoadToken) {
+        return;
+      }
+      if (!loaded) {
+        throw new Error('No subtitles found');
+      }
+
+      this.subtitleCues = loaded.cues;
+      this.subtitleVttUrl = loaded.vttUrl;
+      this.attachSubtitleTrackToVideo(loaded.vttUrl, code);
+      this.syncSubtitleOverlay();
+    } catch (error) {
+      console.error('Subtitle load failed:', error);
+      if (loadToken === this.subtitleLoadToken) {
+        this.selectedSubtitle = null;
+        this.clearSubtitles(false);
+      }
+    } finally {
+      if (loadToken === this.subtitleLoadToken) {
+        this.isSubtitleLoading = false;
+        if (showOverlay) {
+          this.isPlayerReloading = false;
+        }
+        this.cdr.detectChanges();
+      }
+    }
+  }
+
+  private attachSubtitleTrackToVideo(vttUrl: string, lang: string): void {
+    const video = this.playerVideo?.nativeElement;
+    if (!video) {
+      return;
+    }
+
+    Array.from(video.querySelectorAll('track[data-luscreens-sub="1"]')).forEach((el) => {
+      el.remove();
+    });
+    for (let i = 0; i < video.textTracks.length; i++) {
+      const track = video.textTracks[i];
+      if (track.kind === 'subtitles' || track.kind === 'captions') {
+        track.mode = 'disabled';
+      }
+    }
+
+    const trackEl = document.createElement('track');
+    trackEl.kind = 'subtitles';
+    trackEl.label = lang.toUpperCase();
+    trackEl.srclang = lang;
+    trackEl.src = vttUrl;
+    trackEl.default = true;
+    trackEl.dataset['luscreensSub'] = '1';
+    video.appendChild(trackEl);
+
+    const activate = (): void => {
+      try {
+        if (trackEl.track) {
+          trackEl.track.mode = 'showing';
+        }
+      } catch {
+        // Overlay fallback still works via subtitleCues
+      }
+    };
+    trackEl.addEventListener('load', activate);
+    setTimeout(activate, 50);
+    setTimeout(activate, 300);
+  }
+
+  private syncSubtitleOverlay(): void {
+    if (!this.selectedSubtitle || this.subtitleCues.length === 0) {
+      if (this.activeSubtitleText) {
+        this.activeSubtitleText = '';
+      }
+      return;
+    }
+    // Overlay for CinemaOS iframe + ApiPlayer (HLS.js can drop <track> cues)
+    this.activeSubtitleText = this.subtitleService.findActiveCueText(
+      this.subtitleCues,
+      this.currentTime
+    );
+  }
+
+  private clearSubtitles(_keepSelection = true): void {
+    this.activeSubtitleText = '';
+    this.subtitleCues = [];
+    this.subtitleService.revokeUrl(this.subtitleVttUrl);
+    this.subtitleVttUrl = null;
+    const video = this.playerVideo?.nativeElement;
+    if (video) {
+      Array.from(video.querySelectorAll('track[data-luscreens-sub="1"]')).forEach((el) => {
+        el.remove();
+      });
+      for (let i = 0; i < video.textTracks.length; i++) {
+        const track = video.textTracks[i];
+        if (track.kind === 'subtitles' || track.kind === 'captions') {
+          track.mode = 'disabled';
+        }
+      }
+    }
   }
 
   private beginClearedBootstrapIfNeeded(): void {
@@ -640,15 +1425,176 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.clearedSessionReady = true;
   }
 
-  private handleVidfastMessage(event: MessageEvent): void {
+  private handlePlayerMessage(event: MessageEvent): void {
     if (!event.data) {
       return;
     }
-    // Allow known VidFast hosts; also accept if origin host contains "vidfast"
-    const originOk =
-      this.vidfastOrigins.includes(event.origin) ||
-      /vidfast\./i.test(event.origin || '');
-    if (!originOk) {
+
+    const type = String(event.data?.type || '');
+
+    // Live ApiPlayer build emits player:* / ended (docs' mplayer inbound API is not shipped)
+    if (
+      type === 'mplayer' ||
+      type === 'player:timeupdate' ||
+      type === 'player:play' ||
+      type === 'player:pause' ||
+      type === 'ended' ||
+      type.startsWith('player:')
+    ) {
+      this.handleApiplayerMessage(event);
+      return;
+    }
+
+    this.handleRemoteIframeMessage(event);
+  }
+
+  private isVidfastOrigin(origin: string): boolean {
+    return this.vidfastOrigins.includes(origin) || /vidfast\./i.test(origin || '');
+  }
+
+  private isCinemaosOrigin(origin: string): boolean {
+    return this.cinemaosOrigins.includes(origin) || /cinemaos\./i.test(origin || '');
+  }
+
+  private isRemoteIframeOrigin(origin: string): boolean {
+    return this.isVidfastOrigin(origin) || this.isCinemaosOrigin(origin);
+  }
+
+  private isApiplayerOrigin(origin: string): boolean {
+    return this.apiplayerOrigins.includes(origin) || /apiplayer\./i.test(origin || '');
+  }
+
+  private handleApiplayerMessage(event: MessageEvent): void {
+    if (event.origin && !this.isApiplayerOrigin(event.origin)) {
+      return;
+    }
+
+    const payload = event.data as ApiplayerMessage;
+    const type = String(payload?.type || '').toLowerCase();
+
+    // Documented mplayer envelope (if a future build ships it)
+    if (type === 'mplayer') {
+      this.handleApiplayerMplayerEnvelope(payload);
+      return;
+    }
+
+    // Shipped player.min.js outbound events
+    if (type === 'player:timeupdate') {
+      this.onPlayerEvent({
+        event: 'timeupdate',
+        currentTime: Number(payload.currentTime ?? this.currentTime) || this.currentTime,
+        duration: Number(payload.duration ?? this.duration) || this.duration,
+        tmdbId: +this.id || 0,
+        mediaType: this.mediaType === 'tv' ? 'tv' : 'movie',
+        season: this.selectedSeason,
+        episode: this.selectedEpisode,
+        playing: true,
+        muted: false,
+        volume: 1,
+      });
+      return;
+    }
+
+    if (type === 'player:play') {
+      this.onPlayerEvent({
+        event: 'play',
+        currentTime: Number(payload.currentTime ?? this.currentTime) || this.currentTime,
+        duration: Number(payload.duration ?? this.duration) || this.duration,
+        tmdbId: +this.id || 0,
+        mediaType: this.mediaType === 'tv' ? 'tv' : 'movie',
+        season: this.selectedSeason,
+        episode: this.selectedEpisode,
+        playing: true,
+        muted: false,
+        volume: 1,
+      });
+      return;
+    }
+
+    if (type === 'player:pause') {
+      this.onPlayerEvent({
+        event: 'pause',
+        currentTime: Number(payload.currentTime ?? this.currentTime) || this.currentTime,
+        duration: Number(payload.duration ?? this.duration) || this.duration,
+        tmdbId: +this.id || 0,
+        mediaType: this.mediaType === 'tv' ? 'tv' : 'movie',
+        season: this.selectedSeason,
+        episode: this.selectedEpisode,
+        playing: false,
+        muted: false,
+        volume: 1,
+      });
+      return;
+    }
+
+    if (type === 'ended') {
+      this.onPlayerEvent({
+        event: 'ended',
+        currentTime: Number(payload.currentTime ?? this.currentTime) || this.currentTime,
+        duration: Number(payload.duration ?? this.duration) || this.duration,
+        tmdbId: +this.id || 0,
+        mediaType: this.mediaType === 'tv' ? 'tv' : 'movie',
+        season: this.selectedSeason,
+        episode: this.selectedEpisode,
+        playing: false,
+        muted: false,
+        volume: 1,
+      });
+    }
+  }
+
+  private handleApiplayerMplayerEnvelope(payload: ApiplayerMessage): void {
+    const eventName = String(payload.event || '').toLowerCase();
+
+    if (eventName === 'error') {
+      if (this.usesLocalHls && !this.serverPlaybackOk) {
+        const next = this.nextFailoverProvider('apiplayer');
+        if (next) {
+          this.providersTriedThisTitle.add('apiplayer');
+          this.selectedProvider = next;
+          if (next === 'vidfast') {
+            this.useAutoServer = true;
+          }
+          this.reloadPlayer(this.currentTime, `Trying ${this.activeProviderLabel}…`);
+        }
+      }
+      return;
+    }
+
+    const playing =
+      eventName === 'play'
+        ? true
+        : eventName === 'pause' || eventName === 'ended'
+          ? false
+          : payload.paused === false
+            ? true
+            : this.isPlaying;
+
+    const mappedEvent: PlayerEventName =
+      eventName === 'play' ||
+      eventName === 'pause' ||
+      eventName === 'ended' ||
+      eventName === 'timeupdate'
+        ? eventName
+        : 'playerstatus';
+
+    this.onPlayerEvent({
+      event: mappedEvent,
+      currentTime: Number(payload.currentTime ?? this.currentTime) || this.currentTime,
+      duration: Number(payload.duration ?? this.duration) || this.duration,
+      tmdbId: +this.id || 0,
+      mediaType: this.mediaType === 'tv' ? 'tv' : 'movie',
+      season: this.selectedSeason,
+      episode: this.selectedEpisode,
+      playing,
+      muted: !!payload.muted,
+      volume: Number(payload.volume ?? 1),
+    });
+  }
+
+  private handleRemoteIframeMessage(event: MessageEvent): void {
+    // VidFast + CinemaOS share PLAYER_EVENT / { command } remote control
+    if (!this.isRemoteIframeOrigin(event.origin || '')) {
       return;
     }
 
@@ -690,11 +1636,27 @@ export class FrameComponent implements OnInit, OnDestroy {
   }
 
   private onPlayerEvent(data: PlayerEventData): void {
-    if (!this.isSeeking || data.event === 'seeked') {
-      this.currentTime = Number(data.currentTime ?? this.currentTime) || this.currentTime;
+    const reportedTime = Number(data.currentTime);
+    const hasReportedTime = Number.isFinite(reportedTime);
+    const now = Date.now();
+    const seekGuardActive =
+      this.lastSeekTarget != null && now < this.seekGuardUntil;
+
+    if (seekGuardActive && hasReportedTime) {
+      this.handleSeekGuardUpdate(reportedTime, data.event);
+    } else if (!this.isSeeking || data.event === 'seeked') {
+      if (hasReportedTime) {
+        // Keep prior time when embed briefly reports 0 after a real seek.
+        if (!(reportedTime < 1 && this.currentTime > 8 && data.event !== 'seeked')) {
+          this.currentTime = reportedTime;
+        }
+      }
     }
 
-    this.duration = Number(data.duration ?? this.duration) || this.duration;
+    const reportedDuration = Number(data.duration);
+    if (Number.isFinite(reportedDuration) && reportedDuration > 1) {
+      this.duration = reportedDuration;
+    }
     const wasPlaying = this.isPlaying;
     if (typeof data.playing === 'boolean') {
       this.isPlaying = data.playing;
@@ -724,17 +1686,25 @@ export class FrameComponent implements OnInit, OnDestroy {
         break;
       case 'ended':
         this.isPlaying = false;
+        this.clearSeekGuard();
         this.persistLocalProgress(true);
         break;
       case 'seeked':
-        this.isSeeking = false;
-        this.broadcastWatchPartyEvent('seeked', data.currentTime);
+        if (
+          this.lastSeekTarget == null ||
+          Math.abs((hasReportedTime ? reportedTime : this.currentTime) - this.lastSeekTarget) <= 2.5
+        ) {
+          this.clearSeekGuard();
+        }
+        this.broadcastWatchPartyEvent('seeked', this.currentTime);
         this.persistLocalProgress(true);
         break;
       case 'timeupdate':
+        this.syncSubtitleOverlay();
         this.persistLocalProgress(false);
         break;
       case 'playerstatus':
+        this.syncSubtitleOverlay();
         this.persistLocalProgress(false);
         break;
       default:
@@ -749,6 +1719,51 @@ export class FrameComponent implements OnInit, OnDestroy {
 
     if (wasPlaying !== this.isPlaying) {
       this.onPlaybackStateChanged();
+    }
+  }
+
+  private handleSeekGuardUpdate(reportedTime: number, event?: string): void {
+    const target = this.lastSeekTarget ?? this.currentTime;
+    const delta = Math.abs(reportedTime - target);
+
+    if (delta <= 1.75) {
+      this.currentTime = reportedTime;
+      this.clearSeekGuard();
+      return;
+    }
+
+    // Hold UI on the scrub target while the embed catches up / fights us.
+    this.currentTime = target;
+    this.isSeeking = true;
+
+    // CinemaOS sometimes ignores the first seek or snaps to 0 — re-issue.
+    const snappedToStart = reportedTime < 1.5 && target > 5;
+    const drifted = delta > 3;
+    if ((snappedToStart || drifted) && (event === 'timeupdate' || event === 'seeked' || event === 'playerstatus')) {
+      this.scheduleSeekRetry(target);
+    }
+  }
+
+  private scheduleSeekRetry(target: number): void {
+    if (this.seekRetryTimer != null) {
+      return;
+    }
+    this.seekRetryTimer = setTimeout(() => {
+      this.seekRetryTimer = null;
+      if (this.lastSeekTarget == null || Date.now() > this.seekGuardUntil) {
+        return;
+      }
+      this.postPlayerCommand('seek', target);
+    }, FrameComponent.SEEK_RETRY_MS);
+  }
+
+  private clearSeekGuard(): void {
+    this.isSeeking = false;
+    this.lastSeekTarget = null;
+    this.seekGuardUntil = 0;
+    if (this.seekRetryTimer != null) {
+      clearTimeout(this.seekRetryTimer);
+      this.seekRetryTimer = null;
     }
   }
 
@@ -775,7 +1790,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
     this.lastClearedRestartAt = now;
     this.currentTime = 0;
-    this.postPlayerCommand({ command: 'seek', time: 0 });
+    this.postPlayerCommand('seek', 0);
     return true;
   }
 
@@ -826,27 +1841,84 @@ export class FrameComponent implements OnInit, OnDestroy {
     );
   }
 
-  private postPlayerCommand(command: Record<string, unknown>): void {
+  /**
+   * Same Luscreens controller for every provider:
+   * - ApiPlayer → direct <video> / HLS commands
+   * - CinemaOS / VidFast → iframe postMessage `{ command }` (PLAYER_EVENT bridge)
+   */
+  private postPlayerCommand(command: PlayerCommand, time?: number): void {
+    if (this.usesLocalHls) {
+      this.controlApiplayerVideo(command, time);
+      return;
+    }
+
     const contentWindow = this.playerIframe?.nativeElement?.contentWindow;
     if (!contentWindow) {
       return;
     }
 
-    contentWindow.postMessage(command, '*');
+    contentWindow.postMessage(this.toRemoteIframeCommand(command, time), '*');
+  }
+
+  private controlApiplayerVideo(command: PlayerCommand, time?: number): void {
+    const video = this.playerVideo?.nativeElement;
+    if (!video) {
+      return;
+    }
+
+    switch (command) {
+      case 'play':
+        void video.play().catch(() => undefined);
+        break;
+      case 'pause':
+        video.pause();
+        break;
+      case 'seek':
+        video.currentTime = Math.max(0, time ?? this.currentTime);
+        break;
+      case 'getStatus':
+        this.onPlayerEvent({
+          event: 'playerstatus',
+          currentTime: video.currentTime,
+          duration: video.duration || this.duration,
+          tmdbId: +this.id || 0,
+          mediaType: this.mediaType === 'tv' ? 'tv' : 'movie',
+          season: this.selectedSeason,
+          episode: this.selectedEpisode,
+          playing: !video.paused,
+          muted: video.muted,
+          volume: video.volume,
+        });
+        break;
+    }
+  }
+
+  private toRemoteIframeCommand(
+    command: PlayerCommand,
+    time?: number
+  ): Record<string, unknown> {
+    if (command === 'seek') {
+      return { command: 'seek', time: time ?? this.currentTime };
+    }
+    if (command === 'getStatus') {
+      return { command: 'getStatus' };
+    }
+    return { command, ...(time != null ? { time } : {}) };
   }
 
   togglePlayPause(): void {
-    this.postPlayerCommand({ command: this.isPlaying ? 'pause' : 'play' });
+    this.postPlayerCommand(this.isPlaying ? 'pause' : 'play');
     // Optimistic UI so controls don't hide before the player event arrives
     this.isPlaying = !this.isPlaying;
     this.onPlaybackStateChanged();
   }
 
   get seekProgressPercent(): string {
-    if (!this.duration || this.duration <= 0) {
+    const max = this.seekBarMax;
+    if (!max || max <= 0) {
       return '0%';
     }
-    const pct = Math.min(100, Math.max(0, (this.currentTime / this.duration) * 100));
+    const pct = Math.min(100, Math.max(0, (this.currentTime / max) * 100));
     return `${pct}%`;
   }
 
@@ -884,11 +1956,16 @@ export class FrameComponent implements OnInit, OnDestroy {
 
   private scheduleControlsHide(): void {
     this.clearControlsHideTimer();
-    if (!this.isPlaying || this.showCcMenu || this.showServerMenu) {
+    if (!this.isPlaying || this.showCcMenu || this.showProviderMenu || this.showServerMenu) {
       return;
     }
     this.controlsHideTimer = setTimeout(() => {
-      if (this.isPlaying && !this.showCcMenu && !this.showServerMenu) {
+      if (
+        this.isPlaying &&
+        !this.showCcMenu &&
+        !this.showProviderMenu &&
+        !this.showServerMenu
+      ) {
         this.showPlayerControls = false;
         this.cdr.detectChanges();
       }
@@ -903,18 +1980,33 @@ export class FrameComponent implements OnInit, OnDestroy {
   }
 
   seekTo(time: number): void {
-    const clamped = Math.max(0, Math.min(time, this.duration || time));
+    const max = this.duration > 1 ? this.duration : Number.POSITIVE_INFINITY;
+    const clamped = Math.max(0, Math.min(time, max));
+    // Ignore accidental 0 seeks from a range input before duration is known
+    if (clamped < 0.5 && this.currentTime > 8 && this.duration <= 1) {
+      return;
+    }
     this.isSeeking = true;
     this.clearedSessionReady = true; // user took control — never snap seek back to 0
+    this.lastSeekTarget = clamped;
+    this.seekGuardUntil = Date.now() + FrameComponent.SEEK_GUARD_MS;
     this.currentTime = clamped;
-    this.postPlayerCommand({ command: 'seek', time: clamped });
+    this.postPlayerCommand('seek', clamped);
+    // CinemaOS may miss the first postMessage before the video element is ready
+    if (this.isCinemaosProvider) {
+      this.scheduleSeekRetry(clamped);
+      setTimeout(() => this.postPlayerCommand('seek', clamped), 700);
+    }
   }
 
   onSeekInput(event: Event): void {
     const value = Number((event.target as HTMLInputElement).value);
     this.isSeeking = true;
     this.clearedSessionReady = true;
+    this.lastSeekTarget = value;
+    this.seekGuardUntil = Date.now() + FrameComponent.SEEK_GUARD_MS;
     this.currentTime = value;
+    this.syncSubtitleOverlay();
   }
 
   onSeekChange(event: Event): void {
@@ -927,7 +2019,7 @@ export class FrameComponent implements OnInit, OnDestroy {
   }
 
   requestPlayerStatus(): void {
-    this.postPlayerCommand({ command: 'getStatus' });
+    this.postPlayerCommand('getStatus');
   }
 
   async toggleFullscreen(): Promise<void> {
@@ -1300,15 +2392,15 @@ export class FrameComponent implements OnInit, OnDestroy {
 
       switch (command.action) {
         case 'play':
-          this.postPlayerCommand({ command: 'seek', time });
-          this.postPlayerCommand({ command: 'play', time });
+          this.postPlayerCommand('seek', time);
+          this.postPlayerCommand('play', time);
           this.isPlaying = true;
           this.currentTime = time;
           this.onPlaybackStateChanged();
           break;
         case 'pause':
-          this.postPlayerCommand({ command: 'seek', time });
-          this.postPlayerCommand({ command: 'pause', time });
+          this.postPlayerCommand('seek', time);
+          this.postPlayerCommand('pause', time);
           this.isPlaying = false;
           this.currentTime = time;
           this.onPlaybackStateChanged();
@@ -1317,11 +2409,8 @@ export class FrameComponent implements OnInit, OnDestroy {
           this.seekTo(time);
           break;
         case 'sync':
-          this.postPlayerCommand({ command: 'seek', time });
-          this.postPlayerCommand({
-            command: command.playing ? 'play' : 'pause',
-            time,
-          });
+          this.postPlayerCommand('seek', time);
+          this.postPlayerCommand(command.playing ? 'play' : 'pause', time);
           this.isPlaying = !!command.playing;
           this.currentTime = time;
           this.onPlaybackStateChanged();

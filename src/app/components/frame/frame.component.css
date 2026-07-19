@@ -1,8 +1,50 @@
-/* Embed must never receive pointer input (ads / native player UI). */
+/* Media surface must never receive pointer input — Luscreens owns the controller. */
 .player-embed {
   pointer-events: none !important;
   touch-action: none;
   user-select: none;
+}
+
+/* Provider / server ping signal bars */
+.provider-signal {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 11px;
+}
+
+.provider-signal i {
+  display: block;
+  width: 2.5px;
+  border-radius: 1px;
+  background: currentColor;
+  opacity: 0.22;
+}
+
+.provider-signal i:nth-child(1) { height: 3px; }
+.provider-signal i:nth-child(2) { height: 5px; }
+.provider-signal i:nth-child(3) { height: 8px; }
+.provider-signal i:nth-child(4) { height: 11px; }
+
+.provider-signal[data-level='1'] i:nth-child(-n+1),
+.provider-signal[data-level='2'] i:nth-child(-n+2),
+.provider-signal[data-level='3'] i:nth-child(-n+3),
+.provider-signal[data-level='4'] i:nth-child(-n+4) {
+  opacity: 1;
+}
+
+.provider-signal[data-level='-1'] i {
+  opacity: 0.35;
+  animation: provider-signal-pulse 1s ease-in-out infinite;
+}
+
+.provider-signal[data-level='-1'] i:nth-child(2) { animation-delay: 0.1s; }
+.provider-signal[data-level='-1'] i:nth-child(3) { animation-delay: 0.2s; }
+.provider-signal[data-level='-1'] i:nth-child(4) { animation-delay: 0.3s; }
+
+@keyframes provider-signal-pulse {
+  0%, 100% { opacity: 0.2; }
+  50% { opacity: 0.7; }
 }
 
 /* Solid hit layer above the iframe. Tiny alpha so browsers always hit-test it. */
@@ -10,6 +52,24 @@
   pointer-events: auto !important;
   background: rgba(0, 0, 0, 0.002);
   -webkit-tap-highlight-color: transparent;
+}
+
+.player-subtitle-overlay {
+  z-index: 25;
+}
+
+.player-subtitle-cue {
+  display: inline-block;
+  max-width: min(920px, 100%);
+  padding: 0.2rem 0.65rem;
+  border-radius: 0.35rem;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font-size: clamp(0.95rem, 2.1vw, 1.35rem);
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: pre-line;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
 }
 
 .player-seek {

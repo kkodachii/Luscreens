@@ -29,6 +29,7 @@
     "core-js": "^3.40.0",
     "embla-carousel-angular": "18.0.0",
     "flowbite": "^3.1.2",
+    "hls.js": "^1.6.16",
     "ngx-scrollbar": ">=16.0.0",
     "ngx-sonner": "^2.0.0",
     "peerjs": "^1.5.5",

@@ -18,7 +18,7 @@
       <div class="lg:w-3/4 w-full">
         <!-- Video Player -->
         <div
-          *ngIf="embedUrl"
+          *ngIf="hasPlayerSurface"
           #playerContainer
           class="w-full bg-black relative"
           [class.fixed]="isFullscreen"
@@ -33,18 +33,39 @@
             [class.min-h-0]="isFullscreen"
             [class.aspect-video]="!isFullscreen"
             [class.rounded-lg]="!isFullscreen"
-            [class.overflow-hidden]="!isFullscreen && !showCcMenu && !showServerMenu"
-            [class.overflow-visible]="!isFullscreen && (showCcMenu || showServerMenu)"
-            [class.z-30]="!isFullscreen && (showCcMenu || showServerMenu)"
+            [class.overflow-hidden]="!isFullscreen && !showCcMenu && !showProviderMenu && !showServerMenu"
+            [class.overflow-visible]="!isFullscreen && (showCcMenu || showProviderMenu || showServerMenu)"
+            [class.z-30]="!isFullscreen && (showCcMenu || showProviderMenu || showServerMenu)"
+            [attr.data-provider]="selectedProvider"
           >
+            <!-- ApiPlayer: direct HLS in <video>, driven by the same Luscreens controller -->
+            <video
+              *ngIf="isApiplayerProvider && apiplayerSurfaceActive"
+              #playerVideo
+              class="player-embed w-full h-full shadow-xl absolute inset-0 object-contain bg-black"
+              [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-lg'"
+              playsinline
+              webkit-playsinline
+              preload="auto"
+              (play)="onVideoPlay()"
+              (pause)="onVideoPause()"
+              (timeupdate)="onVideoTimeUpdate()"
+              (seeked)="onVideoSeeked()"
+              (ended)="onVideoEnded()"
+              (loadedmetadata)="onVideoLoadedMetadata()"
+            ></video>
+
+            <!-- CinemaOS / VidFast: iframe + PLAYER_EVENT remote controller -->
             <iframe
+              *ngIf="usesRemoteIframe && embedUrl"
               #playerIframe
               [src]="embedUrl"
               (load)="onPlayerIframeLoad()"
               frameborder="0"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; cast"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; cast; fullscreen"
+              allowfullscreen
               referrerpolicy="no-referrer"
-              loading="lazy"
+              loading="eager"
               tabindex="-1"
               aria-hidden="true"
               inert
@@ -52,9 +73,18 @@
               [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-lg'"
             ></iframe>
 
+            <!-- CinemaOS CC overlay (iframe can't receive our track elements) -->
+            <div
+              *ngIf="activeSubtitleText"
+              class="player-subtitle-overlay absolute inset-x-0 bottom-[18%] z-[25] px-4 sm:px-8 pointer-events-none text-center"
+              aria-live="polite"
+            >
+              <span class="player-subtitle-cue">{{ activeSubtitleText }}</span>
+            </div>
+
             <!--
-              Hard click shield above the iframe. Tiny alpha bg so the layer always receives hits
-              (fully transparent layers can miss pointer events in some browsers).
+              Hard click shield above the media. Custom controls own play/pause/seek
+              for both ApiPlayer (<video>) and VidFast (iframe).
             -->
             <div
               class="player-click-shield absolute inset-0 z-20 flex items-center justify-center cursor-pointer select-none"
@@ -78,7 +108,7 @@
               </span>
             </div>
 
-            <!-- Overlay controls (auto-hide while playing) -->
+            <!-- Shared overlay controller (same for ApiPlayer + VidFast) -->
             <div
               class="player-controls absolute inset-0 z-30 flex flex-col justify-between pointer-events-none transition-opacity duration-300"
               [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-lg'"
@@ -90,40 +120,96 @@
               <div class="relative bg-gradient-to-b from-black/80 via-black/40 to-transparent px-2.5 sm:px-4 pt-2.5 sm:pt-4 pb-8 sm:pb-12 pointer-events-none">
                 <div class="relative flex items-start">
                   <div
-                    class="relative shrink-0 z-40"
+                    class="relative shrink-0 z-40 flex items-start gap-0.5"
                     [class.pointer-events-auto]="showPlayerControls"
                     (click)="$event.stopPropagation()"
                     (touchstart)="$event.stopPropagation()"
                   >
-                    <button
-                      type="button"
-                      (click)="toggleServerMenu(); revealPlayerControls()"
-                      class="p-1.5 sm:p-2 rounded-full text-white hover:bg-white/10 transition"
-                      [class.text-red-400]="showServerMenu || useAutoServer"
-                      aria-label="Server"
-                      [title]="'Server: ' + activeServerLabel"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <path d="M17.5 19a4.5 4.5 0 0 0 .5-9 7 7 0 0 0-13.6 1.8A4 4 0 0 0 6 19h11.5z" />
-                      </svg>
-                    </button>
-                    <div
-                      *ngIf="showServerMenu"
-                      class="absolute top-full left-0 mt-1 w-44 max-h-52 overflow-y-auto rounded-xl border border-white/15 bg-black/95 shadow-xl py-1 pointer-events-auto"
-                    >
-                      <p class="px-3 py-1.5 text-[10px] uppercase tracking-wide text-white/40">
-                        Server · {{ activeServerLabel }}
-                      </p>
+                    <!-- Provider -->
+                    <div class="relative">
                       <button
-                        *ngFor="let server of serverOptions"
                         type="button"
-                        (click)="selectServer(server.id); revealPlayerControls()"
-                        class="w-full text-left px-3 py-2 text-xs hover:bg-white/10 transition"
-                        [class.text-red-400]="(server.id === 'auto' && useAutoServer) || (server.id !== 'auto' && !useAutoServer && selectedServer === server.id)"
-                        [class.font-semibold]="(server.id === 'auto' && useAutoServer) || (server.id !== 'auto' && !useAutoServer && selectedServer === server.id)"
+                        (click)="toggleProviderMenu(); revealPlayerControls()"
+                        class="p-1.5 sm:p-2 rounded-full text-white hover:bg-white/10 transition"
+                        [class.text-red-400]="showProviderMenu || !isVidfastProvider"
+                        aria-label="Provider"
+                        [title]="'Provider: ' + activeProviderLabel"
                       >
-                        {{ server.label }}
+                        <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                          <rect x="3" y="3" width="7" height="7" rx="1.5" />
+                          <rect x="14" y="3" width="7" height="7" rx="1.5" />
+                          <rect x="3" y="14" width="7" height="7" rx="1.5" />
+                          <rect x="14" y="14" width="7" height="7" rx="1.5" />
+                        </svg>
                       </button>
+                      <div
+                        *ngIf="showProviderMenu"
+                        class="absolute top-full left-0 mt-1 w-56 max-h-64 overflow-y-auto rounded-xl border border-white/15 bg-black/95 shadow-xl py-1 pointer-events-auto"
+                      >
+                        <p class="px-3 py-1.5 text-[10px] uppercase tracking-wide text-white/40">
+                          Provider · {{ activeProviderLabel }}
+                        </p>
+                        <button
+                          *ngFor="let provider of providerOptions"
+                          type="button"
+                          (click)="selectProvider(provider.id); revealPlayerControls()"
+                          class="w-full flex items-center justify-between gap-2 px-3 py-2 text-xs hover:bg-white/10 transition"
+                          [class.text-red-400]="selectedProvider === provider.id"
+                          [class.font-semibold]="selectedProvider === provider.id"
+                        >
+                          <span>{{ provider.label }}</span>
+                          <span
+                            class="inline-flex items-center gap-1.5 shrink-0 tabular-nums"
+                            [ngClass]="providerPingTone(provider.id)"
+                            [attr.title]="'Ping: ' + formatProviderPing(provider.id)"
+                          >
+                            <span
+                              class="provider-signal"
+                              [attr.data-level]="getProviderSignalLevel(provider.id)"
+                              aria-hidden="true"
+                            >
+                              <i></i><i></i><i></i><i></i>
+                            </span>
+                            <span class="text-[10px] min-w-[2.5rem] text-right opacity-80">
+                              {{ formatProviderPing(provider.id) }}
+                            </span>
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <!-- Server (VidFast stream pins only) -->
+                    <div class="relative" *ngIf="isVidfastProvider">
+                      <button
+                        type="button"
+                        (click)="toggleServerMenu(); revealPlayerControls()"
+                        class="p-1.5 sm:p-2 rounded-full text-white hover:bg-white/10 transition"
+                        [class.text-red-400]="showServerMenu || useAutoServer"
+                        aria-label="Server"
+                        [title]="'Server: ' + activeServerLabel"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                          <path d="M17.5 19a4.5 4.5 0 0 0 .5-9 7 7 0 0 0-13.6 1.8A4 4 0 0 0 6 19h11.5z" />
+                        </svg>
+                      </button>
+                      <div
+                        *ngIf="showServerMenu"
+                        class="absolute top-full left-0 mt-1 w-44 max-h-64 overflow-y-auto rounded-xl border border-white/15 bg-black/95 shadow-xl py-1 pointer-events-auto"
+                      >
+                        <p class="px-3 py-1.5 text-[10px] uppercase tracking-wide text-white/40">
+                          Server · {{ activeServerLabel }}
+                        </p>
+                        <button
+                          *ngFor="let server of serverOptions"
+                          type="button"
+                          (click)="selectServer(server.id); revealPlayerControls()"
+                          class="w-full text-left px-3 py-2 text-xs hover:bg-white/10 transition"
+                          [class.text-red-400]="(server.id === 'auto' && useAutoServer) || (server.id !== 'auto' && !useAutoServer && selectedServer === server.id)"
+                          [class.font-semibold]="(server.id === 'auto' && useAutoServer) || (server.id !== 'auto' && !useAutoServer && selectedServer === server.id)"
+                        >
+                          {{ server.label }}
+                        </button>
+                      </div>
                     </div>
                   </div>
 
@@ -152,7 +238,7 @@
                 <input
                   type="range"
                   min="0"
-                  [max]="duration || 0"
+                  [max]="seekBarMax"
                   step="0.1"
                   [value]="currentTime"
                   (input)="onSeekInput($event); revealPlayerControls()"
@@ -247,9 +333,9 @@
                         type="button"
                         (click)="toggleCcMenu(); revealPlayerControls()"
                         class="p-1.5 sm:p-2 rounded-full text-white hover:bg-white/10 transition"
-                        [class.text-red-400]="!!selectedSubtitle || showCcMenu"
+                        [class.text-red-400]="!!selectedSubtitle || showCcMenu || isSubtitleLoading"
                         aria-label="Subtitles"
-                        title="Subtitles (CC)"
+                        [title]="isSubtitleLoading ? 'Loading subtitles…' : 'Subtitles (CC)'"
                       >
                         <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                           <rect x="2.5" y="5.5" width="19" height="13" rx="2" />
@@ -442,7 +528,7 @@
           </div>
         </div>
 
-        <div *ngIf="!embedUrl" class="text-gray-500 text-center mt-8 mb-8">
+        <div *ngIf="!hasPlayerSurface" class="text-gray-500 text-center mt-8 mb-8">
           Unable to load the video.
         </div>
 

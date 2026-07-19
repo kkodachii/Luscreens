@@ -1,6 +1,10 @@
 export const environment = {
   production: true,
   tmdbApiKey: 'c646ab9e5209d5c5c8d42ab3f653b61a',
+  streamProvider: 'apiplayer' as 'apiplayer' | 'cinemaos' | 'vidfast',
+  streamProviders: ['apiplayer', 'cinemaos', 'vidfast'] as Array<
+    'apiplayer' | 'cinemaos' | 'vidfast'
+  >,
   streamServer: 'vEdge',
   streamServers: ['vEdge', 'Beta', 'Bravo', 'vFast', 'Cobra', 'Charlie'],
   /** Prefer OPENROUTER_API_KEY on the auth API — do not commit secrets here. */
@@ -9,4 +13,3 @@ export const environment = {
   /** Auth API on Render (Root Directory: auth-api) */
   authApiUrl: 'https://luscreens.onrender.com',
 };
-  
