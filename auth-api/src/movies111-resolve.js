@@ -6,6 +6,7 @@
 const https = require('https');
 const http = require('http');
 const crypto = require('crypto');
+const { URL } = require('url');
 
 const STREAM_API = 'https://momlover.notyourtype.dad';
 const UPSTREAM = 'https://player.vidlove.cc';
@@ -15,6 +16,10 @@ const UA =
 
 const PLUGS = ['fabric', 'moviebox', 'cline', 'zebra', 'self'];
 
+/** Prefer IPv4 — some hosts fail on Render's IPv6 path. */
+const httpsAgent = new https.Agent({ family: 4, keepAlive: true });
+const httpAgent = new http.Agent({ family: 4, keepAlive: true });
+
 function requestOrigin(req) {
   const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https')
     .split(',')[0]
@@ -23,7 +28,7 @@ function requestOrigin(req) {
   return `${proto}://${host}`;
 }
 
-function fetchJson(targetUrl, options = {}) {
+function fetchJsonLegacy(targetUrl, options = {}) {
   const method = options.method || 'GET';
   const body = options.body || null;
   const headers = {
@@ -33,31 +38,116 @@ function fetchJson(targetUrl, options = {}) {
     Referer: `${UPSTREAM}/`,
     ...(options.headers || {}),
   };
-  if (body && !headers['Content-Length']) {
+  if (body && !headers['Content-Length'] && !headers['content-length']) {
     headers['Content-Length'] = Buffer.byteLength(body);
   }
 
-  return new Promise((resolve, reject) => {
-    const lib = targetUrl.startsWith('https') ? https : http;
-    const req = lib.request(targetUrl, { method, headers }, (res) => {
-      const chunks = [];
-      res.on('data', (c) => chunks.push(c));
-      res.on('end', () => {
-        const raw = Buffer.concat(chunks).toString('utf8');
-        let json = null;
-        try {
-          json = raw ? JSON.parse(raw) : null;
-        } catch {
-          json = null;
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (result) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+
+    try {
+      const parsed = new URL(targetUrl);
+      const lib = parsed.protocol === 'https:' ? https : http;
+      const agent = parsed.protocol === 'https:' ? httpsAgent : httpAgent;
+      const req = lib.request(
+        {
+          protocol: parsed.protocol,
+          hostname: parsed.hostname,
+          port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+          path: `${parsed.pathname}${parsed.search}`,
+          method,
+          headers,
+          agent,
+          timeout: 20000,
+        },
+        (res) => {
+          const chunks = [];
+          res.on('data', (c) => chunks.push(c));
+          res.on('end', () => {
+            const raw = Buffer.concat(chunks).toString('utf8');
+            let json = null;
+            try {
+              json = raw ? JSON.parse(raw) : null;
+            } catch {
+              json = null;
+            }
+            done({ status: res.statusCode || 502, json, raw, error: null });
+          });
         }
-        resolve({ status: res.statusCode || 502, json, raw });
+      );
+      req.on('error', (err) => {
+        done({
+          status: 0,
+          json: null,
+          raw: '',
+          error: err && err.message ? err.message : 'request error',
+        });
       });
-    });
-    req.on('error', reject);
-    req.setTimeout(20000, () => req.destroy(new Error('timeout')));
-    if (body) req.write(body);
-    req.end();
+      req.on('timeout', () => {
+        req.destroy(new Error('timeout'));
+      });
+      if (body) req.write(body);
+      req.end();
+    } catch (err) {
+      done({
+        status: 0,
+        json: null,
+        raw: '',
+        error: err && err.message ? err.message : 'request setup failed',
+      });
+    }
   });
+}
+
+async function fetchJson(targetUrl, options = {}) {
+  const method = options.method || 'GET';
+  const body = options.body || null;
+  const headers = {
+    'User-Agent': UA,
+    Accept: 'application/json, */*',
+    Origin: UPSTREAM,
+    Referer: `${UPSTREAM}/`,
+    ...(options.headers || {}),
+  };
+
+  // Prefer global fetch when present; fall back to IPv4-forced http(s).
+  if (typeof fetch === 'function') {
+    try {
+      const res = await fetch(targetUrl, {
+        method,
+        headers,
+        body: body || undefined,
+        redirect: 'follow',
+      });
+      const raw = await res.text();
+      let json = null;
+      try {
+        json = raw ? JSON.parse(raw) : null;
+      } catch {
+        json = null;
+      }
+      return { status: res.status, json, raw, error: null };
+    } catch (err) {
+      // Fall through to legacy IPv4 agent
+      const legacy = await fetchJsonLegacy(targetUrl, options);
+      if (!legacy.error) return legacy;
+      return {
+        status: 0,
+        json: null,
+        raw: '',
+        error:
+          (err && err.message ? err.message : 'fetch failed') +
+          (legacy.error ? ` / ${legacy.error}` : ''),
+      };
+    }
+  }
+
+  return fetchJsonLegacy(targetUrl, options);
 }
 
 function decryptGcm(payloadB64) {
@@ -114,16 +204,39 @@ function proxifyStreamUrl(url, origin) {
   return url;
 }
 
-async function resolveMovies111Stream({ mediaType, id, season, episode, origin }) {
-  const tokenRes = await fetchJson(`${STREAM_API}/auth/generate-token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ clientData: {} }),
-  });
-  const token = tokenRes.json?.token;
-  if (!token) {
-    throw new Error('Failed to obtain stream token');
+async function obtainStreamToken() {
+  let last = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    last = await fetchJson(`${STREAM_API}/auth/generate-token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientData: {} }),
+    });
+    if (last.json?.token) {
+      return last.json.token;
+    }
+    // Brief backoff for rate limits / cold starts
+    await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
   }
+
+  const preview = String(last?.raw || '')
+    .replace(/\s+/g, ' ')
+    .slice(0, 120);
+  const err = new Error(
+    `Failed to obtain stream token (status=${last?.status ?? 0}${
+      last?.error ? `, err=${last.error}` : ''
+    })`
+  );
+  err.details = {
+    status: last?.status ?? 0,
+    error: last?.error || null,
+    preview: preview || null,
+  };
+  throw err;
+}
+
+async function resolveMovies111Stream({ mediaType, id, season, episode, origin }) {
+  const token = await obtainStreamToken();
 
   const kind = mediaType === 'tv' ? 'tv' : 'movie';
   const errors = [];
@@ -141,7 +254,7 @@ async function resolveMovies111Stream({ mediaType, id, season, episode, origin }
         },
       });
       if (res.status >= 400 || !res.json) {
-        errors.push(`${plug}:${res.status}`);
+        errors.push(`${plug}:${res.status}${res.error ? `:${res.error}` : ''}`);
         continue;
       }
       let data = res.json;
@@ -202,7 +315,7 @@ function mountMovies111Resolve(app) {
       res.setHeader('cache-control', 'private, max-age=30');
       return res.json({ ok: true, ...result });
     } catch (err) {
-      console.error('movies111 resolve failed', err && err.message ? err.message : err);
+      console.error('movies111 resolve failed', err && err.message ? err.message : err, err && err.details);
       res.status(502).json({
         ok: false,
         error: err && err.message ? err.message : 'resolve failed',
