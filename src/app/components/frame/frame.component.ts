@@ -1,5 +1,5 @@
 import { Component, OnInit, OnDestroy, ViewChild, ElementRef, ChangeDetectorRef } from '@angular/core';
-import { ActivatedRoute, Router } from '@angular/router';
+import { ActivatedRoute, ParamMap, Router } from '@angular/router';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { NgForOf, NgIf, CommonModule } from '@angular/common';
 import { TmdbService } from '../../services/tmdb.service';
@@ -292,6 +292,14 @@ export class FrameComponent implements OnInit, OnDestroy {
     return this.useAutoServer ? 'Auto' : this.selectedServer || 'Auto';
   }
 
+  /** Guests follow the host; only Sync is shared control. */
+  get canControlPartyPlayback(): boolean {
+    if (!this.watchParty.connected) {
+      return true;
+    }
+    return this.watchParty.role === 'host';
+  }
+
   // Watch party
   watchParty: WatchPartyState = {
     role: null,
@@ -313,6 +321,7 @@ export class FrameComponent implements OnInit, OnDestroy {
   showFloatingPartyChat = false;
   partyChatUnread = 0;
   private watchPartySubs = new Subscription();
+  private routeParamsSub: Subscription | null = null;
   private ignorePartyBroadcastUntil = 0;
   private lastLocalProgressSaveAt = 0;
   private lastClearedRestartAt = 0;
@@ -373,31 +382,11 @@ export class FrameComponent implements OnInit, OnDestroy {
     // Warm provider RTT so the first open can pick lowest-ping primary
     void this.refreshProviderPings(true);
 
-    this.mediaType = this.route.snapshot.paramMap.get('media_type') || '';
-    this.id = this.route.snapshot.paramMap.get('id') || '';
-
-    const seasonParam = this.route.snapshot.paramMap.get('season');
-    const episodeParam = this.route.snapshot.paramMap.get('episode');
-    if (seasonParam) {
-      this.selectedSeason = +seasonParam;
-    }
-    if (episodeParam) {
-      this.selectedEpisode = +episodeParam;
-    }
-
-    if (this.mediaType && this.id) {
-      this.beginClearedBootstrapIfNeeded();
-      if (this.mediaType === 'movie') {
-        this.fetchMovieDetails();
-      } else if (this.mediaType === 'tv') {
-        this.fetchTvDetails();
-      } else {
-        console.error('Invalid media type.');
-      }
-      this.fetchLogo(this.mediaType, +this.id);
-    } else {
-      console.error('Missing required route parameters.');
-    }
+    // Angular reuses this component across /frame/... titles — must react to param changes
+    // so watch-party guests (and the host) load the host's new movie.
+    this.routeParamsSub = this.route.paramMap.subscribe((params) => {
+      this.applyRouteParams(params);
+    });
 
     void this.tryRestoreWatchParty();
   }
@@ -417,9 +406,79 @@ export class FrameComponent implements OnInit, OnDestroy {
     document.removeEventListener('fullscreenchange', this.onFullscreenChange);
     window.removeEventListener('beforeunload', this.onBeforeUnload);
     this.closePictureInPicture();
+    this.routeParamsSub?.unsubscribe();
+    this.routeParamsSub = null;
     this.watchPartySubs.unsubscribe();
-    // Do NOT tear down PeerJS here — WatchPartyService is root-scoped and must
-    // stay alive when the host changes titles. leaveParty() / beforeunload handle cleanup.
+    // WatchPartyService is root-scoped and must stay alive when the host changes titles.
+    // leaveParty() / beforeunload handle cleanup.
+  }
+
+  /**
+   * Load (or reload) the frame when the route id/title changes.
+   * Without this, SPA navigation keeps the previous movie on screen.
+   */
+  private applyRouteParams(params: ParamMap): void {
+    const mediaType = params.get('media_type') || '';
+    const id = params.get('id') || '';
+    const seasonParam = params.get('season');
+    const episodeParam = params.get('episode');
+
+    if (!mediaType || !id) {
+      console.error('Missing required route parameters.');
+      return;
+    }
+
+    const nextSeason = seasonParam ? +seasonParam : this.selectedSeason;
+    const nextEpisode = episodeParam ? +episodeParam : this.selectedEpisode;
+    const titleChanged =
+      mediaType !== this.mediaType || String(id) !== String(this.id);
+    const episodeChanged =
+      mediaType === 'tv' &&
+      (nextSeason !== this.selectedSeason || nextEpisode !== this.selectedEpisode);
+
+    // Ignore duplicate emissions after the title is already loaded
+    if (!titleChanged && !episodeChanged && this.title) {
+      return;
+    }
+
+    this.mediaType = mediaType;
+    this.id = id;
+    if (seasonParam) {
+      this.selectedSeason = +seasonParam;
+    }
+    if (episodeParam) {
+      this.selectedEpisode = +episodeParam;
+    }
+
+    if (titleChanged) {
+      // Drop stale title so we don't broadcast the previous movie to the party
+      this.title = '';
+      this.posterPath = null;
+      this.backdropPath = '';
+      this.resetPlayerState();
+      this.resetServerFailoverState();
+      this.isLoading = true;
+      this.embedUrl = null;
+      this.destroyApiplayerVideo();
+      this.beginClearedBootstrapIfNeeded();
+      if (mediaType === 'movie') {
+        this.fetchMovieDetails();
+      } else if (mediaType === 'tv') {
+        this.fetchTvDetails();
+      } else {
+        console.error('Invalid media type.');
+        this.isLoading = false;
+      }
+      this.fetchLogo(mediaType, +id);
+      return;
+    }
+
+    // Same show, different episode — refresh player + party media pin
+    if (episodeChanged) {
+      this.resetServerFailoverState();
+      this.updateEmbedUrl();
+      this.syncWatchPartyMedia();
+    }
   }
 
   private readonly onBeforeUnload = (): void => {
@@ -2064,6 +2123,10 @@ export class FrameComponent implements OnInit, OnDestroy {
   }
 
   togglePlayPause(): void {
+    if (!this.canControlPartyPlayback) {
+      this.revealPlayerControls();
+      return;
+    }
     this.postPlayerCommand(this.isPlaying ? 'pause' : 'play');
     // Optimistic UI so controls don't hide before the player event arrives
     this.isPlaying = !this.isPlaying;
@@ -2098,6 +2161,9 @@ export class FrameComponent implements OnInit, OnDestroy {
       return;
     }
     this.revealPlayerControls();
+    if (!this.canControlPartyPlayback) {
+      return;
+    }
     this.togglePlayPause();
   }
 
@@ -2163,6 +2229,13 @@ export class FrameComponent implements OnInit, OnDestroy {
   }
 
   seekTo(time: number): void {
+    // Guests may still apply host/sync remote seeks
+    if (
+      !this.canControlPartyPlayback &&
+      !this.watchPartyService.isApplyingRemote
+    ) {
+      return;
+    }
     const max = this.duration > 1 ? this.duration : Number.POSITIVE_INFINITY;
     const clamped = Math.max(0, Math.min(time, max));
     // Ignore accidental 0 seeks from a range input before duration is known
@@ -2183,6 +2256,9 @@ export class FrameComponent implements OnInit, OnDestroy {
   }
 
   onSeekInput(event: Event): void {
+    if (!this.canControlPartyPlayback) {
+      return;
+    }
     const value = Number((event.target as HTMLInputElement).value);
     this.isSeeking = true;
     this.clearedSessionReady = true;
@@ -2672,6 +2748,9 @@ export class FrameComponent implements OnInit, OnDestroy {
   }
 
   prevEpisode(): void {
+    if (!this.canControlPartyPlayback) {
+      return;
+    }
     const currentIndex = this.episodes.findIndex(
       (episode) => episode.episode_number === this.selectedEpisode
     );
@@ -2681,6 +2760,9 @@ export class FrameComponent implements OnInit, OnDestroy {
   }
 
   nextEpisode(): void {
+    if (!this.canControlPartyPlayback) {
+      return;
+    }
     const currentIndex = this.episodes.findIndex(
       (episode) => episode.episode_number === this.selectedEpisode
     );

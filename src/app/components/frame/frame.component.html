@@ -100,7 +100,7 @@
                 class="player-center-hit flex items-center justify-center w-20 h-20 sm:w-28 sm:h-28 rounded-full cursor-pointer"
                 (click)="onCenterPlayPauseTap($event)"
                 [attr.aria-label]="isPlaying ? 'Pause' : 'Play'"
-                [title]="isPlaying ? 'Pause' : 'Play'"
+                [title]="canControlPartyPlayback ? (isPlaying ? 'Pause' : 'Play') : 'Only the host can control playback'"
               >
                 <span
                   *ngIf="!isPlaying && !isPlayerReloading && showPlayerControls"
@@ -248,11 +248,15 @@
                   [max]="seekBarMax"
                   step="0.1"
                   [value]="currentTime"
+                  [disabled]="!canControlPartyPlayback"
                   (input)="onSeekInput($event); revealPlayerControls()"
                   (change)="onSeekChange($event); revealPlayerControls()"
                   class="player-seek w-full cursor-pointer"
+                  [class.opacity-50]="!canControlPartyPlayback"
+                  [class.cursor-not-allowed]="!canControlPartyPlayback"
                   [style.--seek-progress]="seekProgressPercent"
                   [attr.aria-label]="'Seek'"
+                  [title]="canControlPartyPlayback ? 'Seek' : 'Only the host can seek'"
                 />
 
                 <div class="flex items-center justify-between gap-1 sm:gap-2">
@@ -262,8 +266,10 @@
                       type="button"
                       (click)="togglePlayPause(); revealPlayerControls()"
                       class="p-1.5 sm:p-2 rounded-full text-white hover:bg-white/10 transition"
+                      [class.opacity-40]="!canControlPartyPlayback"
+                      [disabled]="!canControlPartyPlayback"
                       [attr.aria-label]="isPlaying ? 'Pause' : 'Play'"
-                      [title]="isPlaying ? 'Pause' : 'Play'"
+                      [title]="canControlPartyPlayback ? (isPlaying ? 'Pause' : 'Play') : 'Only the host can control playback'"
                     >
                       <svg *ngIf="isPlaying" xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 sm:w-[22px] sm:h-[22px]" viewBox="0 0 24 24" fill="currentColor">
                         <rect x="6" y="4" width="4" height="16" rx="1" />
@@ -278,8 +284,10 @@
                       type="button"
                       (click)="skipBy(-10); revealPlayerControls()"
                       class="relative p-1.5 sm:p-2 rounded-full text-white hover:bg-white/10 transition"
+                      [class.opacity-40]="!canControlPartyPlayback"
+                      [disabled]="!canControlPartyPlayback"
                       aria-label="Rewind 10 seconds"
-                      title="Rewind 10s"
+                      [title]="canControlPartyPlayback ? 'Rewind 10s' : 'Only the host can control playback'"
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 sm:w-[22px] sm:h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                         <path d="M2.5 12a9.5 9.5 0 1 0 2.2-6" />
@@ -292,8 +300,10 @@
                       type="button"
                       (click)="skipBy(10); revealPlayerControls()"
                       class="relative p-1.5 sm:p-2 rounded-full text-white hover:bg-white/10 transition"
+                      [class.opacity-40]="!canControlPartyPlayback"
+                      [disabled]="!canControlPartyPlayback"
                       aria-label="Forward 10 seconds"
-                      title="Forward 10s"
+                      [title]="canControlPartyPlayback ? 'Forward 10s' : 'Only the host can control playback'"
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 sm:w-[22px] sm:h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                         <path d="M21.5 12a9.5 9.5 0 1 1-2.2-6" />
@@ -307,8 +317,10 @@
                       type="button"
                       (click)="prevEpisode(); revealPlayerControls()"
                       class="p-1.5 sm:p-2 rounded-full text-white hover:bg-white/10 transition hidden md:inline-flex"
+                      [class.opacity-40]="!canControlPartyPlayback"
+                      [disabled]="!canControlPartyPlayback"
                       aria-label="Previous episode"
-                      title="Previous episode"
+                      [title]="canControlPartyPlayback ? 'Previous episode' : 'Only the host can control playback'"
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
                         <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z" />
@@ -319,8 +331,10 @@
                       type="button"
                       (click)="nextEpisode(); revealPlayerControls()"
                       class="p-1.5 sm:p-2 rounded-full text-white hover:bg-white/10 transition hidden md:inline-flex"
+                      [class.opacity-40]="!canControlPartyPlayback"
+                      [disabled]="!canControlPartyPlayback"
                       aria-label="Next episode"
-                      title="Next episode"
+                      [title]="canControlPartyPlayback ? 'Next episode' : 'Only the host can control playback'"
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
                         <path d="M16 18h2V6h-2zm-11 0 8.5-6L5 6z" />
@@ -371,7 +385,7 @@
                       type="button"
                       (click)="syncWatchParty(); revealPlayerControls()"
                       class="shrink-0 px-2 py-1 rounded-full text-[10px] sm:text-[11px] font-semibold text-red-400 border border-red-500/50 bg-red-600/15 hover:bg-red-600/30 transition"
-                      title="Sync everyone to your current time"
+                      title="Sync everyone to your current time (host and guests)"
                     >
                       Sync
                     </button>
@@ -574,7 +588,9 @@
                 </h3>
                 <p class="text-xs text-gray-400 mt-1">
                   {{ watchParty.connected
-                    ? 'Anyone can control playback. Reload keeps you in the same room.'
+                    ? (watchParty.role === 'host'
+                      ? 'You control playback. Guests follow you and can use Sync. Reload keeps the same room.'
+                      : 'You’re a guest — only the host controls playback. Use Sync if you drift. Reload keeps the same room.')
                     : 'Create a room and share the code. Friends can join from Join in the header.' }}
                 </p>
               </div>
@@ -629,12 +645,21 @@
                 </span>
               </div>
 
+              <p
+                *ngIf="watchParty.role === 'guest'"
+                class="text-xs text-sky-300/90 rounded-md border border-sky-500/30 bg-sky-600/10 px-3 py-2"
+              >
+                Note: Playback is host-only. Use
+                <span class="font-semibold text-sky-200">Sync</span>
+                if you need to realign with the room.
+              </p>
+
               <div class="flex flex-wrap gap-2">
                 <button
                   type="button"
                   (click)="syncWatchParty()"
                   class="px-3 py-1.5 rounded-md border border-emerald-500/40 text-emerald-300 hover:bg-emerald-600/20 text-xs transition"
-                  title="Send your current time to everyone"
+                  title="Host or guest can sync everyone to their current time"
                 >
                   Sync everyone to me
                 </button>

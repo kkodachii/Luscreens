@@ -209,20 +209,23 @@ export class WatchPartyService implements OnDestroy {
   }
 
   setMediaState(media: WatchPartyMediaState, options?: { broadcast?: boolean }): void {
+    const prev = this.mediaState;
     this.mediaState = media;
     if (!this.isInParty) {
       return;
     }
 
     const shouldBroadcast = options?.broadcast ?? this.isHost;
-    if (shouldBroadcast && this.isHost) {
+    const mediaChanged =
+      !prev ||
+      prev.mediaType !== media.mediaType ||
+      String(prev.id) !== String(media.id) ||
+      prev.season !== media.season ||
+      prev.episode !== media.episode;
+
+    // Host title/episode changes: pin on server (pushEvent) so guests navigate
+    if (shouldBroadcast && this.isHost && mediaChanged) {
       void this.postMedia(media);
-      this.broadcast({
-        action: 'media',
-        media,
-        displayName: this.displayName,
-        sentAt: Date.now(),
-      });
     }
 
     const role = this.snapshot.role;
@@ -459,7 +462,8 @@ export class WatchPartyService implements OnDestroy {
   }
 
   broadcastPlayerEvent(event: 'play' | 'pause' | 'seeked', time: number): void {
-    if (!this.isInParty) {
+    // Playback transport is host-only; guests use Sync if they need to realign
+    if (!this.isInParty || !this.isHost) {
       return;
     }
 
@@ -480,6 +484,7 @@ export class WatchPartyService implements OnDestroy {
     });
   }
 
+  /** Sync may be triggered by host or guest. */
   broadcastSync(time: number, playing: boolean): void {
     if (!this.isInParty) {
       return;
@@ -697,7 +702,21 @@ export class WatchPartyService implements OnDestroy {
       this.applyGuestMedia(command.media);
     }
 
+    // play / pause / seek: host only. sync: anyone.
+    if (
+      (command.action === 'play' ||
+        command.action === 'pause' ||
+        command.action === 'seek') &&
+      !this.isMemberHost(fromId)
+    ) {
+      return;
+    }
+
     this.remoteCommandSubject.next(command);
+  }
+
+  private isMemberHost(memberId: string): boolean {
+    return this.snapshot.members.some((m) => m.peerId === memberId && m.isHost);
   }
 
   private applyGuestMedia(media: WatchPartyMediaState): void {
