@@ -84,6 +84,9 @@ video.player-embed {
   z-index: 50;
   transform: translate(-50%, -50%) rotate(90deg);
   transform-origin: center center;
+  /* Limit paint/composite cost of the rotated iframe on mobile GPUs */
+  contain: layout paint;
+  backface-visibility: hidden;
 }
 
 /* While waiting for unmuted tap: keep Luscreens edges tappable, center open for Vidlove */

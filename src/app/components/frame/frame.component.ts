@@ -346,12 +346,18 @@ export class FrameComponent implements OnInit, OnDestroy {
   };
   private keanFillObserver: ResizeObserver | null = null;
   private keanFillHostEl: HTMLElement | null = null;
+  private keanFillRaf: number | null = null;
+  private lastKeanFillKey = '';
+  private lastKeanUiSyncAt = 0;
+  private orientationRaf: number | null = null;
   /** True when using fixed inset-0 fullscreen because requestFullscreen failed (common on iOS web). */
   private cssFullscreenFallback = false;
   /** Portrait phone/tablet viewport — used to force landscape layout in web fullscreen. */
   isPortraitViewport = false;
   /** Tiny overscan only — higher values crop the picture too hard on mobile. */
   private static readonly KEAN_FILL_OVERSCAN = 1.02;
+  /** Cap Kean seek-bar CD — Vidlove posts timeupdate very often on mobile. */
+  private static readonly KEAN_UI_SYNC_MS = 250;
   /** Avoid reload loops when Peachify reports a mismatched season/episode. */
   private peachifyEpisodeReassertUntil = 0;
 
@@ -581,12 +587,23 @@ export class FrameComponent implements OnInit, OnDestroy {
   };
 
   private readonly onOrientationOrResize = (): void => {
-    this.ngZone.run(() => {
+    // Mobile URL-bar show/hide fires resize constantly — coalesce to one frame.
+    if (this.orientationRaf != null) {
+      return;
+    }
+    this.orientationRaf = requestAnimationFrame(() => {
+      this.orientationRaf = null;
+      const wasPortrait = this.isPortraitViewport;
       this.updatePortraitViewport();
-      if (this.isFullscreen) {
-        this.syncKeanIframeFill();
-        this.cdr.detectChanges();
+      if (!this.isFullscreen && wasPortrait === this.isPortraitViewport) {
+        return;
       }
+      this.ngZone.run(() => {
+        this.scheduleKeanIframeFill();
+        if (wasPortrait !== this.isPortraitViewport || this.isFullscreen) {
+          this.cdr.detectChanges();
+        }
+      });
     });
   };
 
@@ -680,6 +697,14 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.clearKeanSetTimeTimers();
     this.clearKeanBootTimer();
     this.teardownKeanFillObserver();
+    if (this.keanFillRaf != null) {
+      cancelAnimationFrame(this.keanFillRaf);
+      this.keanFillRaf = null;
+    }
+    if (this.orientationRaf != null) {
+      cancelAnimationFrame(this.orientationRaf);
+      this.orientationRaf = null;
+    }
     this.keanBootCover = false;
     this.cssFullscreenFallback = false;
     this.playerSurfaceLocked = false;
@@ -1770,10 +1795,7 @@ export class FrameComponent implements OnInit, OnDestroy {
       // Shorter than desktop boot — a long splash looks like a stuck Vidlove load on mobile.
       this.scheduleKeanBootClear(1200);
       // Layout may settle after paint (esp. mobile CSS fullscreen)
-      requestAnimationFrame(() => {
-        this.syncKeanIframeFill();
-        this.cdr.detectChanges();
-      });
+      requestAnimationFrame(() => this.scheduleKeanIframeFill());
     } else {
       this.clearPlayerReloading();
       this.armServerFailoverWatch();
@@ -1899,7 +1921,6 @@ export class FrameComponent implements OnInit, OnDestroy {
 
   private async pingProvider(provider: StreamProvider): Promise<void> {
     this.providerPingPending[provider] = true;
-    this.cdr.detectChanges();
 
     const url = `${this.providerPingUrls[provider]}?_=${Date.now()}`;
     const started = performance.now();
@@ -2414,6 +2435,14 @@ export class FrameComponent implements OnInit, OnDestroy {
     // First real player event ⇒ Vidlove boot UI is gone
     if (mapped === 'play' || mapped === 'timeupdate' || mapped === 'pause') {
       this.clearKeanBootCover();
+    }
+    // timeupdate floods on mobile — throttle Angular CD so the page doesn't feel stuck loading
+    if (mapped === 'timeupdate') {
+      const now = Date.now();
+      if (now - this.lastKeanUiSyncAt < FrameComponent.KEAN_UI_SYNC_MS) {
+        return true;
+      }
+      this.lastKeanUiSyncAt = now;
     }
     this.cdr.detectChanges();
     return true;
@@ -3793,17 +3822,18 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.teardownKeanFillObserver();
     const host = this.keanFillHostEl;
     if (!host || !this.isMovies111Provider) {
-      this.keanIframeFillStyle = { inset: '0', width: '100%', height: '100%' };
+      this.applyKeanFillStyle({ inset: '0', width: '100%', height: '100%' });
       return;
     }
     this.syncKeanIframeFill();
     if (typeof ResizeObserver === 'undefined') {
       return;
     }
-    this.keanFillObserver = new ResizeObserver(() => {
-      this.ngZone.run(() => this.syncKeanIframeFill());
+    // Stay outside Angular — mobile chrome resize would otherwise thrash CD.
+    this.ngZone.runOutsideAngular(() => {
+      this.keanFillObserver = new ResizeObserver(() => this.scheduleKeanIframeFill());
+      this.keanFillObserver.observe(host);
     });
-    this.keanFillObserver.observe(host);
   }
 
   private teardownKeanFillObserver(): void {
@@ -3811,10 +3841,50 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.keanFillObserver = null;
   }
 
+  private isMobilePlayerViewport(): boolean {
+    if (typeof window === 'undefined') {
+      return false;
+    }
+    return (
+      window.matchMedia('(max-width: 900px)').matches ||
+      window.matchMedia('(pointer: coarse)').matches
+    );
+  }
+
+  private scheduleKeanIframeFill(): void {
+    if (this.keanFillRaf != null) {
+      return;
+    }
+    this.keanFillRaf = requestAnimationFrame(() => {
+      this.keanFillRaf = null;
+      const prevKey = this.lastKeanFillKey;
+      this.syncKeanIframeFill();
+      if (this.lastKeanFillKey !== prevKey) {
+        this.ngZone.run(() => this.cdr.detectChanges());
+      }
+    });
+  }
+
+  private applyKeanFillStyle(style: Record<string, string>): void {
+    const key = [
+      style['inset'] ?? '',
+      style['top'] ?? '',
+      style['left'] ?? '',
+      style['width'] ?? '',
+      style['height'] ?? '',
+      style['transform'] ?? '',
+    ].join('|');
+    if (key === this.lastKeanFillKey) {
+      return;
+    }
+    this.lastKeanFillKey = key;
+    this.keanIframeFillStyle = style;
+  }
+
   private syncKeanIframeFill(): void {
     const host = this.keanFillHostEl;
     if (!host || !this.isMovies111Provider) {
-      this.keanIframeFillStyle = { inset: '0', width: '100%', height: '100%' };
+      this.applyKeanFillStyle({ inset: '0', width: '100%', height: '100%' });
       return;
     }
     const w = host.clientWidth;
@@ -3823,11 +3893,18 @@ export class FrameComponent implements OnInit, OnDestroy {
       return;
     }
 
+    // Cover-scaling upsizes the Vidlove iframe (often > viewport). Fine on desktop;
+    // on phones it makes decode/composite feel like endless loading lag.
+    if (this.isMobilePlayerViewport()) {
+      this.applyKeanFillStyle({ inset: '0', width: '100%', height: '100%' });
+      return;
+    }
+
     const target = 16 / 9;
     const hostRatio = w / h;
     // Already ~16:9 (inline player) — no cover zoom.
     if (Math.abs(hostRatio - target) < 0.04) {
-      this.keanIframeFillStyle = { inset: '0', width: '100%', height: '100%' };
+      this.applyKeanFillStyle({ inset: '0', width: '100%', height: '100%' });
       return;
     }
 
@@ -3844,7 +3921,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     iw *= overscan;
     ih *= overscan;
 
-    this.keanIframeFillStyle = {
+    this.applyKeanFillStyle({
       top: '50%',
       left: '50%',
       width: `${Math.round(iw)}px`,
@@ -3852,7 +3929,7 @@ export class FrameComponent implements OnInit, OnDestroy {
       maxWidth: 'none',
       transform: 'translate(-50%, -50%) translateZ(0)',
       WebkitTransform: 'translate(-50%, -50%) translateZ(0)',
-    };
+    });
   }
 
   private updatePortraitViewport(): void {
