@@ -45,7 +45,7 @@
               #playerVideo
               class="player-embed w-full h-full shadow-xl absolute inset-0 object-contain bg-black"
               [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-lg'"
-              referrerpolicy="no-referrer"
+              referrerpolicy="strict-origin-when-cross-origin"
               playsinline
               webkit-playsinline
               preload="auto"
@@ -57,7 +57,10 @@
               (loadedmetadata)="onVideoLoadedMetadata()"
             ></video>
 
-            <!-- Remote iframe embeds. referrerpolicy must stay a static attribute (Angular NG0910). -->
+            <!--
+              Remote iframe embeds. referrerpolicy must stay a static attribute (Angular NG0910).
+              Use strict-origin-when-cross-origin — no-referrer breaks Vidlove/stream CDNs on mobile web.
+            -->
             <div
               *ngIf="usesRemoteIframe && embedUrl"
               #keanFillHost
@@ -73,7 +76,7 @@
                 frameborder="0"
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; cast; fullscreen"
                 allowfullscreen
-                referrerpolicy="no-referrer"
+                referrerpolicy="strict-origin-when-cross-origin"
                 loading="eager"
                 class="player-embed shadow-xl absolute"
                 [class.kean-interactive]="keanIframeInteractive"

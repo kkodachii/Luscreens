@@ -1767,7 +1767,8 @@ export class FrameComponent implements OnInit, OnDestroy {
       this.keanAwaitingGesturePlay = true;
       this.revealPlayerControls();
       this.flushKeanPendingSetTime();
-      this.scheduleKeanBootClear(FrameComponent.KEAN_BOOT_COVER_MS);
+      // Shorter than desktop boot — a long splash looks like a stuck Vidlove load on mobile.
+      this.scheduleKeanBootClear(1200);
       // Layout may settle after paint (esp. mobile CSS fullscreen)
       requestAnimationFrame(() => {
         this.syncKeanIframeFill();
@@ -2432,7 +2433,8 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.clearKeanBootTimer();
     this.keanBootClearTimer = setTimeout(() => {
       this.keanBootClearTimer = null;
-      this.clearKeanBootCover();
+      // Mobile Safari can drop CD for timers outside the zone — force a turn.
+      this.ngZone.run(() => this.clearKeanBootCover());
     }, delayMs);
   }
 
