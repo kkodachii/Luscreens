@@ -52,6 +52,16 @@
   pointer-events: auto !important;
   background: rgba(0, 0, 0, 0.002);
   -webkit-tap-highlight-color: transparent;
+  cursor: default;
+}
+
+/* Invisible center target — only this region toggles play/pause */
+.player-center-hit {
+  pointer-events: auto;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .player-subtitle-overlay {

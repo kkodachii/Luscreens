@@ -83,44 +83,52 @@
             </div>
 
             <!--
-              Hard click shield above the media. Custom controls own play/pause/seek.
+              Full-surface shield: tap anywhere to show controls.
+              Only the center hit target toggles play/pause.
             -->
             <div
-              class="player-click-shield absolute inset-0 z-20 flex items-center justify-center cursor-pointer select-none"
+              class="player-click-shield absolute inset-0 z-20 flex items-center justify-center select-none"
               [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-lg'"
               (click)="onPlayerSurfaceTap()"
               (mousemove)="onPlayerSurfaceMove()"
               (dblclick)="$event.preventDefault()"
               (contextmenu)="$event.preventDefault()"
               (auxclick)="$event.preventDefault()"
-              role="button"
-              [attr.aria-label]="isPlaying ? 'Pause' : 'Play'"
-              [title]="isPlaying ? 'Pause' : 'Play'"
             >
-              <span
-                *ngIf="!isPlaying && !isPlayerReloading && showPlayerControls"
-                class="flex items-center justify-center w-14 h-14 sm:w-20 sm:h-20 rounded-full bg-red-600/90 text-white shadow-xl pointer-events-none"
+              <button
+                type="button"
+                class="player-center-hit flex items-center justify-center w-20 h-20 sm:w-28 sm:h-28 rounded-full cursor-pointer"
+                (click)="onCenterPlayPauseTap($event)"
+                [attr.aria-label]="isPlaying ? 'Pause' : 'Play'"
+                [title]="isPlaying ? 'Pause' : 'Play'"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="currentColor" class="ml-1">
-                  <path d="M8 5v14l11-7z" />
-                </svg>
-              </span>
+                <span
+                  *ngIf="!isPlaying && !isPlayerReloading && showPlayerControls"
+                  class="flex items-center justify-center w-14 h-14 sm:w-20 sm:h-20 rounded-full bg-red-600/90 text-white shadow-xl pointer-events-none"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="currentColor" class="ml-1" aria-hidden="true">
+                    <path d="M8 5v14l11-7z" />
+                  </svg>
+                </span>
+              </button>
             </div>
 
-            <!-- Shared overlay controller -->
+            <!-- Shared overlay controller (stays above reload spinner so provider/server stay usable) -->
             <div
-              class="player-controls absolute inset-0 z-30 flex flex-col justify-between pointer-events-none transition-opacity duration-300"
+              class="player-controls absolute inset-0 flex flex-col justify-between pointer-events-none transition-opacity duration-300"
+              [class.z-30]="!isPlayerReloading"
+              [class.z-[60]]="isPlayerReloading"
               [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-lg'"
-              [class.opacity-0]="!showPlayerControls"
-              [class.opacity-100]="showPlayerControls"
-              [class.invisible]="!showPlayerControls"
+              [class.opacity-0]="!showPlayerControls && !isPlayerReloading"
+              [class.opacity-100]="showPlayerControls || isPlayerReloading"
+              [class.invisible]="!showPlayerControls && !isPlayerReloading"
             >
               <!-- Top: cloud server (left) + title -->
               <div class="relative bg-gradient-to-b from-black/80 via-black/40 to-transparent px-2.5 sm:px-4 pt-2.5 sm:pt-4 pb-8 sm:pb-12 pointer-events-none">
                 <div class="relative flex items-start">
                   <div
                     class="relative shrink-0 z-40 flex items-start gap-0.5"
-                    [class.pointer-events-auto]="showPlayerControls"
+                    [class.pointer-events-auto]="showPlayerControls || isPlayerReloading"
                     (click)="$event.stopPropagation()"
                     (touchstart)="$event.stopPropagation()"
                   >
@@ -229,7 +237,7 @@
               <!-- Bottom: seek + buttons -->
               <div
                 class="bg-gradient-to-t from-black/90 via-black/55 to-transparent px-2 sm:px-4 pt-8 sm:pt-14 pb-2 sm:pb-4 space-y-1.5 sm:space-y-2.5"
-                [class.pointer-events-auto]="showPlayerControls"
+                [class.pointer-events-auto]="showPlayerControls || isPlayerReloading"
                 (click)="$event.stopPropagation()"
                 (touchstart)="$event.stopPropagation()"
                 (mousemove)="revealPlayerControls()"
@@ -509,12 +517,11 @@
               </form>
             </div>
 
-            <!-- Covers the black iframe flash while CC / server reload -->
+            <!-- Reload splash — visual only; does not block provider/server controls -->
             <div
               *ngIf="isPlayerReloading"
-              class="absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-cover bg-center"
+              class="absolute inset-0 z-40 flex flex-col items-center justify-center gap-3 bg-cover bg-center pointer-events-none"
               [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-lg'"
-              style="pointer-events: auto;"
               [ngStyle]="{
                 'background-image': backdropPath
                   ? 'linear-gradient(rgba(0,0,0,.65), rgba(0,0,0,.8)), url(https://image.tmdb.org/t/p/w780' + backdropPath + ')'

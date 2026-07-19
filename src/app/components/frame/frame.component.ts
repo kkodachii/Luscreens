@@ -139,6 +139,7 @@ export class FrameComponent implements OnInit, OnDestroy {
   /** Overlay controls — visible on tap; auto-hide after 4s while playing. */
   showPlayerControls = true;
   private controlsHideTimer: ReturnType<typeof setTimeout> | null = null;
+  private controlsRevealSuppressedUntil = 0;
   private static readonly CONTROLS_HIDE_MS = 4000;
   isPictureInPicture = false;
   readonly supportsDocumentPip =
@@ -187,6 +188,9 @@ export class FrameComponent implements OnInit, OnDestroy {
   showServerMenu = false;
   isPlayerReloading = false;
   playerReloadLabel = 'Loading…';
+  private reloadOverlayTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Cap full-screen reload splash so server/provider switches don't feel stuck. */
+  private static readonly RELOAD_OVERLAY_MAX_MS = 2200;
   /** True while the local HLS <video> surface should be mounted (ApiPlayer). */
   apiplayerSurfaceActive = false;
   private pendingSeekSeconds: number | null = null;
@@ -403,6 +407,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.stopProgressTimer();
     this.clearControlsHideTimer();
     this.clearServerFailoverWatch();
+    this.clearPlayerReloading();
     this.clearSeekGuard();
     this.clearSubtitles();
     this.apiplayerLoadToken++;
@@ -758,7 +763,7 @@ export class FrameComponent implements OnInit, OnDestroy {
         return;
       }
 
-      this.isPlayerReloading = false;
+      this.clearPlayerReloading();
       this.beginClearedBootstrapIfNeeded();
       this.armServerFailoverWatch();
       if (this.selectedSubtitle) {
@@ -1021,6 +1026,10 @@ export class FrameComponent implements OnInit, OnDestroy {
     const time = resumeAt ?? this.currentTime;
     this.playerReloadLabel = label;
     this.isPlayerReloading = true;
+    // Keep provider/server menus reachable while the new source boots
+    this.showPlayerControls = true;
+    this.clearControlsHideTimer();
+    this.armReloadOverlayTimeout();
 
     if (this.usesLocalHls) {
       void this.loadLocalHlsVideo(time > 5 ? time : undefined);
@@ -1031,15 +1040,32 @@ export class FrameComponent implements OnInit, OnDestroy {
     // Keep previous frame painted under the overlay; swap src on next tick
     setTimeout(() => {
       this.openPlayer(time > 5 ? time : undefined);
-      // openPlayer clears reloading only via iframe load / HLS path
-      if (this.usesRemoteIframe) {
-        // iframe (load) handler clears the overlay
-      }
     }, 50);
   }
 
-  onPlayerIframeLoad(): void {
+  private armReloadOverlayTimeout(): void {
+    if (this.reloadOverlayTimer != null) {
+      clearTimeout(this.reloadOverlayTimer);
+    }
+    this.reloadOverlayTimer = setTimeout(() => {
+      this.reloadOverlayTimer = null;
+      if (this.isPlayerReloading) {
+        this.isPlayerReloading = false;
+        this.cdr.detectChanges();
+      }
+    }, FrameComponent.RELOAD_OVERLAY_MAX_MS);
+  }
+
+  private clearPlayerReloading(): void {
+    if (this.reloadOverlayTimer != null) {
+      clearTimeout(this.reloadOverlayTimer);
+      this.reloadOverlayTimer = null;
+    }
     this.isPlayerReloading = false;
+  }
+
+  onPlayerIframeLoad(): void {
+    this.clearPlayerReloading();
     this.beginClearedBootstrapIfNeeded();
     this.requestPlayerStatus();
     this.armServerFailoverWatch();
@@ -1286,7 +1312,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     // HLS / CinemaOS / VidPhantom: if playback never starts, try the next provider
     if (this.usesLocalHls || this.isCinemaosProvider) {
       this.serverFailoverTimer = setTimeout(() => {
-        if (this.serverPlaybackOk || this.isPlayerReloading) {
+        if (this.serverPlaybackOk) {
           return;
         }
         const next = this.nextFailoverProvider(this.selectedProvider);
@@ -1322,23 +1348,21 @@ export class FrameComponent implements OnInit, OnDestroy {
     if (this.duration > 1 || this.currentTime > 0.5 || this.isPlaying) {
       this.serverPlaybackOk = true;
       this.clearServerFailoverWatch();
+      this.clearPlayerReloading();
     }
   }
 
   private showNoServerFound(): void {
     this.playerReloadLabel = 'No working server found';
     this.isPlayerReloading = true;
-    setTimeout(() => {
-      if (!this.serverPlaybackOk) {
-        this.isPlayerReloading = false;
-        this.cdr.detectChanges();
-      }
-    }, 2500);
+    this.showPlayerControls = true;
+    this.armReloadOverlayTimeout();
   }
 
   /** Current VidFast server never started — try next pin, then Auto. Do not bounce to ApiPlayer. */
   private tryNextServerFailover(): void {
-    if (this.serverPlaybackOk || this.isPlayerReloading) {
+    // Don't wait on the splash overlay — only skip if playback already recovered
+    if (this.serverPlaybackOk) {
       return;
     }
 
@@ -1442,7 +1466,7 @@ export class FrameComponent implements OnInit, OnDestroy {
       if (loadToken === this.subtitleLoadToken) {
         this.isSubtitleLoading = false;
         if (showOverlay) {
-          this.isPlayerReloading = false;
+          this.clearPlayerReloading();
         }
         this.cdr.detectChanges();
       }
@@ -2055,8 +2079,21 @@ export class FrameComponent implements OnInit, OnDestroy {
     return `${pct}%`;
   }
 
-  /** Tap video surface: show controls and toggle play/pause (avoids clicking into the embed). */
+  /** Tap outside the center: toggle controls only (do not play/pause). */
   onPlayerSurfaceTap(): void {
+    if (this.isPlayerReloading) {
+      return;
+    }
+    if (this.showPlayerControls) {
+      this.hidePlayerControls();
+      return;
+    }
+    this.revealPlayerControls();
+  }
+
+  /** Center hit only: toggle play/pause. */
+  onCenterPlayPauseTap(event: Event): void {
+    event.stopPropagation();
     if (this.isPlayerReloading) {
       return;
     }
@@ -2066,6 +2103,9 @@ export class FrameComponent implements OnInit, OnDestroy {
 
   /** Mouse move over the video reveals controls while playing. */
   onPlayerSurfaceMove(): void {
+    if (Date.now() < this.controlsRevealSuppressedUntil) {
+      return;
+    }
     if (this.showPlayerControls) {
       this.scheduleControlsHide();
       return;
@@ -2076,6 +2116,16 @@ export class FrameComponent implements OnInit, OnDestroy {
   revealPlayerControls(): void {
     this.showPlayerControls = true;
     this.scheduleControlsHide();
+  }
+
+  hidePlayerControls(): void {
+    this.clearControlsHideTimer();
+    this.showCcMenu = false;
+    this.showProviderMenu = false;
+    this.showServerMenu = false;
+    this.showPlayerControls = false;
+    // Ignore trailing mousemove from the same click so chrome stays hidden
+    this.controlsRevealSuppressedUntil = Date.now() + 400;
   }
 
   private onPlaybackStateChanged(): void {
