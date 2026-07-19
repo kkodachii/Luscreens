@@ -14,7 +14,7 @@ export interface Movies111StreamInfo {
 const STREAM_API = 'https://momlover.notyourtype.dad';
 const UPSTREAM = 'https://player.vidlove.cc';
 const GCM_KEY = 'Sn00pD0g#RESP_B4SE_K3y_2026!';
-const PLUGS = ['fabric', 'moviebox', 'cline', 'zebra', 'self'] as const;
+const PLUGS = ['moviebox', 'fabric', 'cline', 'zebra', 'self'] as const;
 
 /**
  * Resolves 111Movies streams via auth-api, with a native-device fallback when
@@ -59,6 +59,7 @@ export class Movies111StreamService {
     const params = new URLSearchParams({
       type: options.mediaType,
       id: options.id,
+      prefer: 'hls',
     });
     if (options.mediaType === 'tv') {
       params.set('season', String(options.season ?? 1));
@@ -148,8 +149,7 @@ export class Movies111StreamService {
         continue;
       }
 
-      const masterUrl =
-        source.type === 'hls' ? this.proxifyStreamUrl(source.url) : source.url;
+      const masterUrl = this.proxifyStreamUrl(source.url, source.type);
 
       return {
         masterUrl,
@@ -199,9 +199,10 @@ export class Movies111StreamService {
         const type = String(s['type'] || s['format'] || '').toLowerCase();
         const isHls = type === 'hls' || /\.m3u8(\?|$)/i.test(url) || /m3u8/i.test(url);
         const quality = String(s['quality'] || s['label'] || '');
-        let rank = isHls ? 100 : 50;
-        if (/1080/.test(quality)) rank += 20;
-        else if (/720/.test(quality)) rank += 10;
+        let rank = isHls ? 60 : 100;
+        if (/1080/.test(quality)) rank += 30;
+        else if (/720/.test(quality)) rank += 20;
+        else if (/480/.test(quality)) rank += 10;
         else if (/auto/i.test(quality)) rank += 15;
         return {
           url,
@@ -218,12 +219,15 @@ export class Movies111StreamService {
       : null;
   }
 
-  private proxifyStreamUrl(url: string): string {
+  private proxifyStreamUrl(url: string, type: 'hls' | 'mp4' = 'hls'): string {
     if (!this.apiBase) {
       return url;
     }
     try {
       const u = new URL(url);
+      if (type === 'mp4' || /\.mp4(\?|$)/i.test(u.pathname)) {
+        return `${this.apiBase}/media-proxy?url=${encodeURIComponent(url)}`;
+      }
       if (/ballerinacappuccinalovestungtungtungsahur\.com/i.test(u.host)) {
         return `${this.apiBase}/m3u8-proxy${u.pathname}${u.search}`;
       }

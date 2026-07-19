@@ -134,6 +134,7 @@ app.get('/', (_req, res) => {
       'GET /111movies-proxy/*',
       'GET /movies111/resolve',
       'GET /m3u8-proxy/*',
+      'GET /media-proxy',
     ],
   });
 });

@@ -217,6 +217,8 @@ export class FrameComponent implements OnInit, OnDestroy {
     (environment as { streamProvider?: StreamProvider }).streamProvider || 'apiplayer';
   /** True after ApiPlayer primary has been applied for this page. */
   private providerPriorityApplied = false;
+  /** User picked a provider in the menu — do not auto-hop to another. */
+  private providerLockedByUser = false;
   private providerPriorityPromise: Promise<void> | null = null;
   selectedSubtitle: string | null = null;
   /** Active cue text for CinemaOS (and ApiPlayer fallback) overlay. */
@@ -615,6 +617,9 @@ export class FrameComponent implements OnInit, OnDestroy {
       this.title = '';
       this.posterPath = null;
       this.backdropPath = '';
+      this.providerLockedByUser = false;
+      this.providerPriorityApplied = false;
+      this.providerPriorityPromise = null;
       this.resetPlayerState();
       this.resetServerFailoverState();
       this.isLoading = true;
@@ -1179,7 +1184,9 @@ export class FrameComponent implements OnInit, OnDestroy {
 
       this.clearPlayerReloading();
       this.beginClearedBootstrapIfNeeded();
-      this.armServerFailoverWatch();
+      // Local stream attached — don't wait for play events or failover will steal the provider.
+      this.serverPlaybackOk = true;
+      this.clearServerFailoverWatch();
       if (this.selectedSubtitle) {
         void this.applySubtitleSelection(this.selectedSubtitle, false);
       }
@@ -1190,6 +1197,10 @@ export class FrameComponent implements OnInit, OnDestroy {
         return;
       }
       this.providersTriedThisTitle.add(provider);
+      if (this.providerLockedByUser) {
+        this.showNoServerFound();
+        return;
+      }
       const next = this.nextFailoverProvider(provider);
       if (next) {
         this.selectedProvider = next;
@@ -1303,16 +1314,98 @@ export class FrameComponent implements OnInit, OnDestroy {
 
         if (Hls.isSupported()) {
           const hls = new Hls({
-            enableWorker: true,
+            // Workers can decode audio-only / black frames under our overlay stack
+            enableWorker: false,
             lowLatencyMode: false,
+            startLevel: -1,
+            capLevelToPlayerSize: true,
+            maxBufferLength: 30,
+            maxMaxBufferLength: 60,
+            backBufferLength: 30,
+            fragLoadPolicy: {
+              default: {
+                maxTimeToFirstByteMs: 15000,
+                maxLoadTimeMs: 60000,
+                timeoutRetry: {
+                  maxNumRetry: 3,
+                  retryDelayMs: 500,
+                  maxRetryDelayMs: 4000,
+                },
+                errorRetry: {
+                  maxNumRetry: 3,
+                  retryDelayMs: 500,
+                  maxRetryDelayMs: 4000,
+                },
+              },
+            },
           });
           this.hlsPlayer = hls;
+          let settled = false;
+          let blackRecoveries = 0;
+          const finish = (err?: unknown): void => {
+            if (settled) {
+              return;
+            }
+            settled = true;
+            video.removeEventListener('loadeddata', onFrame);
+            video.removeEventListener('playing', onFrame);
+            if (err) {
+              reject(err);
+              return;
+            }
+            onReady();
+          };
+          // Wait for a real video frame — timer/audio alone can look "playing" with a black screen
+          const onFrame = (): void => {
+            if (video.videoWidth > 0) {
+              finish();
+            }
+          };
           hls.loadSource(masterUrl);
           hls.attachMedia(video);
-          hls.on(Hls.Events.MANIFEST_PARSED, () => onReady());
+          video.addEventListener('loadeddata', onFrame);
+          video.addEventListener('playing', onFrame);
+          hls.on(Hls.Events.MANIFEST_PARSED, (_event, data) => {
+            const levels = data.levels || [];
+            // Prefer a level that clearly has video resolution
+            const pick = levels.findIndex((l) => (l.height || 0) >= 360);
+            const fallback = levels.findIndex((l) => (l.height || 0) > 0);
+            const start = pick >= 0 ? pick : fallback >= 0 ? fallback : 0;
+            if (levels.length) {
+              hls.startLevel = start;
+              hls.currentLevel = start;
+            }
+            void video.play().catch(() => undefined);
+            // If still black, bump quality / recover decoder (don't fake "ready")
+            const nudge = (): void => {
+              if (settled) {
+                return;
+              }
+              if (video.videoWidth > 0) {
+                finish();
+                return;
+              }
+              if (blackRecoveries < 2 && levels.length > 1) {
+                blackRecoveries += 1;
+                const next = Math.min(levels.length - 1, start + blackRecoveries);
+                try {
+                  hls.currentLevel = next;
+                  hls.recoverMediaError();
+                  video.currentTime = Math.max(0, video.currentTime) + 0.05;
+                  void video.play().catch(() => undefined);
+                } catch {
+                  // ignore
+                }
+                setTimeout(nudge, 2500);
+                return;
+              }
+              finish(new Error('HLS started without a video frame'));
+            };
+            setTimeout(nudge, 3500);
+          });
           hls.on(Hls.Events.ERROR, (_event, data) => {
             if (data.fatal) {
-              reject(data);
+              finish(data);
             }
           });
           return;
@@ -1701,6 +1794,7 @@ export class FrameComponent implements OnInit, OnDestroy {
       return;
     }
     this.providerPriorityApplied = true; // keep manual choice
+    this.providerLockedByUser = true;
     this.selectedProvider = provider;
     this.peachifyWantAutoPlay = true;
     this.movies111WantAutoPlay = true;
@@ -1779,6 +1873,17 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.serverPlaybackOk = false;
   }
 
+  private switchProviderForFailover(next: StreamProvider): boolean {
+    if (this.providerLockedByUser) {
+      return false;
+    }
+    this.selectedProvider = next;
+    if (next === 'vidfast' || next === 'vidup' || next === 'peachify') {
+      this.useAutoServer = true;
+    }
+    return true;
+  }
+
   private clearServerFailoverWatch(): void {
     if (this.serverFailoverTimer != null) {
       clearTimeout(this.serverFailoverTimer);
@@ -1800,14 +1905,18 @@ export class FrameComponent implements OnInit, OnDestroy {
         if (this.serverPlaybackOk) {
           return;
         }
+        if (this.providerLockedByUser) {
+          this.showNoServerFound();
+          return;
+        }
         const next = this.nextFailoverProvider(this.selectedProvider);
         if (!next) {
           this.showNoServerFound();
           return;
         }
-        this.selectedProvider = next;
-        if (this.usesServerParam) {
-          this.useAutoServer = true;
+        if (!this.switchProviderForFailover(next)) {
+          this.showNoServerFound();
+          return;
         }
         this.reloadPlayer(this.currentTime, `Trying ${this.activeProviderLabel}…`);
       }, FrameComponent.APIPLAYER_FAILOVER_MS);
@@ -1873,11 +1982,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
 
     const next = this.nextFailoverProvider(this.selectedProvider);
-    if (next) {
-      this.selectedProvider = next;
-      if (this.usesServerParam) {
-        this.useAutoServer = true;
-      }
+    if (next && this.switchProviderForFailover(next)) {
       this.reloadPlayer(this.currentTime, `Trying ${this.activeProviderLabel}…`);
       return;
     }
@@ -2175,15 +2280,11 @@ export class FrameComponent implements OnInit, OnDestroy {
     const eventName = String(payload.event || '').toLowerCase();
 
     if (eventName === 'error') {
-      if (this.usesLocalHls && !this.serverPlaybackOk) {
+      if (this.usesLocalHls && !this.serverPlaybackOk && !this.providerLockedByUser) {
         const failed = this.selectedProvider;
         const next = this.nextFailoverProvider(failed);
-        if (next) {
+        if (next && this.switchProviderForFailover(next)) {
           this.providersTriedThisTitle.add(failed);
-          this.selectedProvider = next;
-          if (next === 'vidfast' || next === 'vidup' || next === 'peachify') {
-            this.useAutoServer = true;
-          }
           this.reloadPlayer(this.currentTime, `Trying ${this.activeProviderLabel}…`);
         }
       }
@@ -2366,7 +2467,8 @@ export class FrameComponent implements OnInit, OnDestroy {
       this.isMovies111Provider && Date.now() < this.movies111IgnorePlayingUntil;
     if (typeof data.playing === 'boolean' && !peachifyLockPlaying && !movies111LockPlaying) {
       this.isPlaying = data.playing;
-      if (this.isMovies111Provider) {
+      // Synthetic ticker is only for iframe embeds — local <video> uses real timeupdate
+      if (this.isMovies111Provider && !this.usesLocalHls) {
         if (this.isPlaying) {
           this.startMovies111Ticker();
         } else {
@@ -2396,7 +2498,7 @@ export class FrameComponent implements OnInit, OnDestroy {
         if (!peachifyLockPlaying && !movies111LockPlaying) {
           this.isPlaying = true;
         }
-        if (this.isMovies111Provider && this.isPlaying) {
+        if (this.isMovies111Provider && this.isPlaying && !this.usesLocalHls) {
           this.startMovies111Ticker();
         }
         // CinemaOS forces muted=true on autoPlay — lift it as soon as playback starts
@@ -2891,7 +2993,7 @@ export class FrameComponent implements OnInit, OnDestroy {
   }
 
   private startMovies111Ticker(): void {
-    if (!this.isMovies111Provider) {
+    if (!this.isMovies111Provider || this.usesLocalHls) {
       return;
     }
     this.stopMovies111Ticker();

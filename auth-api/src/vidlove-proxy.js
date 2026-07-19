@@ -38,9 +38,324 @@ const TEXT_TYPES = [
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
+const httpsAgent = new https.Agent({
+  family: 4,
+  keepAlive: true,
+  maxSockets: 64,
+  keepAliveMsecs: 15000,
+});
+const httpAgent = new http.Agent({
+  family: 4,
+  keepAlive: true,
+  maxSockets: 32,
+});
+
+/** Short in-memory cache for rewritten playlists (not media segments). */
+const playlistCache = new Map();
+const PLAYLIST_CACHE_TTL_MS = 15000;
+const PLAYLIST_CACHE_MAX = 120;
+
+function isValidPlaylistBody(text) {
+  const head = String(text || '')
+    .replace(/^\uFEFF/, '')
+    .trimStart()
+    .slice(0, 64)
+    .toUpperCase();
+  return head.startsWith('#EXTM3U');
+}
+
+const DIRECT_HLS_HOST_RE =
+  /(primebox\.workers\.dev|hakunaymatata|onlinecoachingacademy|voxzer|finepulfe|ployan|cloudfront|bunnycdn)/i;
+
 function isTextType(contentType) {
   const ct = String(contentType || '').toLowerCase();
   return TEXT_TYPES.some((t) => ct.includes(t));
+}
+
+function cacheGet(key) {
+  const hit = playlistCache.get(key);
+  if (!hit) return null;
+  if (Date.now() > hit.expires) {
+    playlistCache.delete(key);
+    return null;
+  }
+  return hit;
+}
+
+function cacheSet(key, value) {
+  if (playlistCache.size >= PLAYLIST_CACHE_MAX) {
+    const first = playlistCache.keys().next().value;
+    if (first) playlistCache.delete(first);
+  }
+  playlistCache.set(key, { ...value, expires: Date.now() + PLAYLIST_CACHE_TTL_MS });
+}
+
+function directPlaylistCacheKey(upstreamUrl) {
+  return `/m3u8-proxy/direct.m3u8?url=${encodeURIComponent(upstreamUrl)}`;
+}
+
+/**
+ * Prefetch + rewrite master (and lowest-bitrate variant) into playlist cache
+ * so the player’s first requests are cache hits.
+ */
+async function warmDirectPlaylistChain(upstreamMasterUrl, origin) {
+  if (!upstreamMasterUrl || !/^https?:\/\//i.test(upstreamMasterUrl)) {
+    return null;
+  }
+  const masterKey = directPlaylistCacheKey(upstreamMasterUrl);
+  let masterBody;
+  const cachedMaster = cacheGet(masterKey);
+  if (cachedMaster?.body) {
+    masterBody = cachedMaster.body.toString('utf8');
+  } else {
+    const upstream = await fetchUpstream(upstreamMasterUrl, {
+      method: 'GET',
+      headers: { Accept: '*/*' },
+    });
+    if ((upstream.status || 500) >= 400) {
+      return null;
+    }
+    masterBody = rewritePlaylistText(upstream.body.toString('utf8'), origin);
+    if (!isValidPlaylistBody(masterBody)) {
+      return null;
+    }
+    cacheSet(masterKey, {
+      status: upstream.status || 200,
+      body: Buffer.from(masterBody, 'utf8'),
+    });
+  }
+
+  // Pick lowest BANDWIDTH variant (fast start); fall back to first URI
+  const lines = masterBody.split(/\r?\n/);
+  let bestUrl = null;
+  let bestBw = Infinity;
+  let pendingBw = null;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (/^#EXT-X-STREAM-INF:/i.test(trimmed)) {
+      const m = /BANDWIDTH=(\d+)/i.exec(trimmed);
+      pendingBw = m ? Number(m[1]) : null;
+      continue;
+    }
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    if (!/^https?:\/\//i.test(trimmed)) continue;
+    const bw = pendingBw != null ? pendingBw : 999999999;
+    pendingBw = null;
+    if (bw < bestBw) {
+      bestBw = bw;
+      bestUrl = trimmed;
+    }
+  }
+  if (!bestUrl) {
+    return masterKey;
+  }
+
+  try {
+    const proxied = new URL(bestUrl);
+    const nested = proxied.searchParams.get('url');
+    if (!nested) return masterKey;
+    // Keys must match Express req.originalUrl for /m3u8-proxy requests
+    const keyFromProxy = `${proxied.pathname}${proxied.search}`;
+    const keyCanonical = directPlaylistCacheKey(nested);
+    if (!cacheGet(keyFromProxy) && !cacheGet(keyCanonical)) {
+      const upstream = await fetchUpstream(nested, {
+        method: 'GET',
+        headers: { Accept: '*/*' },
+      });
+      if ((upstream.status || 500) < 400) {
+        const text = rewritePlaylistText(upstream.body.toString('utf8'), origin);
+        if (isValidPlaylistBody(text)) {
+          const body = Buffer.from(text, 'utf8');
+          const entry = { status: upstream.status || 200, body };
+          cacheSet(keyFromProxy, entry);
+          cacheSet(keyCanonical, entry);
+        }
+      }
+    }
+  } catch {
+    // warm is best-effort
+  }
+  return masterKey;
+}
+
+function pipeUpstream(targetUrl, req, res, { asPlaylist = false, origin = '' } = {}) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+
+    try {
+      const parsed = new URL(targetUrl);
+      const lib = parsed.protocol === 'https:' ? https : http;
+      const agent = parsed.protocol === 'https:' ? httpsAgent : httpAgent;
+      const headers = {
+        'User-Agent': UA,
+        Accept: req.headers.accept || '*/*',
+      };
+      if (req.headers.range) {
+        headers.Range = req.headers.range;
+      }
+
+      const upstreamReq = lib.request(
+        {
+          protocol: parsed.protocol,
+          hostname: parsed.hostname,
+          port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+          path: `${parsed.pathname}${parsed.search}`,
+          method: req.method === 'HEAD' ? 'GET' : req.method || 'GET',
+          headers,
+          agent,
+          timeout: 45000,
+        },
+        (upstreamRes) => {
+          const contentType = String(upstreamRes.headers['content-type'] || '');
+          const looksPlaylist =
+            asPlaylist ||
+            /m3u8/i.test(parsed.pathname) ||
+            contentType.includes('mpegurl') ||
+            contentType.includes('m3u8');
+
+          if (looksPlaylist) {
+            const chunks = [];
+            upstreamRes.on('data', (c) => chunks.push(c));
+            upstreamRes.on('end', () => {
+              let text = Buffer.concat(chunks).toString('utf8');
+              text = rewritePlaylistText(text, origin || requestOrigin(req));
+              const body = Buffer.from(text, 'utf8');
+              res.status(upstreamRes.statusCode || 200);
+              res.setHeader('access-control-allow-origin', '*');
+              res.setHeader('content-type', 'application/vnd.apple.mpegurl');
+              res.setHeader('cache-control', 'public, max-age=15');
+              res.setHeader('content-length', body.length);
+              res.end(body);
+              done();
+            });
+            return;
+          }
+
+          res.status(upstreamRes.statusCode || 200);
+          res.setHeader('access-control-allow-origin', '*');
+          res.setHeader(
+            'access-control-expose-headers',
+            'Content-Length, Content-Range, Accept-Ranges'
+          );
+          for (const name of [
+            'content-type',
+            'content-length',
+            'content-range',
+            'accept-ranges',
+            'cache-control',
+          ]) {
+            if (upstreamRes.headers[name] != null) {
+              res.setHeader(name, upstreamRes.headers[name]);
+            }
+          }
+          if (/ts-proxy|\.ts($|\?)/i.test(parsed.pathname + (req.path || ''))) {
+            res.setHeader('content-type', 'video/mp2t');
+          }
+          if (!res.getHeader('accept-ranges')) {
+            res.setHeader('accept-ranges', 'bytes');
+          }
+          upstreamRes.pipe(res);
+          upstreamRes.on('end', done);
+          upstreamRes.on('error', done);
+        }
+      );
+
+      upstreamReq.on('error', (err) => {
+        console.error('hls pipe error', err && err.message ? err.message : err);
+        if (!res.headersSent) {
+          res.status(502).json({ error: 'hls proxy failed' });
+        }
+        done();
+      });
+      upstreamReq.on('timeout', () => {
+        upstreamReq.destroy(new Error('timeout'));
+      });
+      req.on('close', () => {
+        upstreamReq.destroy();
+        done();
+      });
+      upstreamReq.end();
+    } catch (err) {
+      console.error('hls pipe setup failed', err && err.message ? err.message : err);
+      if (!res.headersSent) {
+        res.status(502).json({ error: 'hls proxy failed' });
+      }
+      done();
+    }
+  });
+}
+
+function proxyUrlForUpstream(rawUrl, origin) {
+  try {
+    const absolute = /^https?:\/\//i.test(rawUrl)
+      ? rawUrl
+      : rawUrl.startsWith('/')
+        ? `${HLS_PROXY}${rawUrl}`
+        : null;
+    if (!absolute) return null;
+    const u = new URL(absolute);
+
+    // Ballerina wrapper: unwrap CDN nested ?url= and go direct
+    const nested = u.searchParams.get('url');
+    if (nested && /^https?:\/\//i.test(nested)) {
+      try {
+        const nestedHost = new URL(nested).host;
+        if (DIRECT_HLS_HOST_RE.test(nestedHost)) {
+          const kind =
+            /m3u8/i.test(u.pathname) || /\.m3u8(\?|$)/i.test(nested) ? 'm3u8' : 'ts';
+          return `${origin}/m3u8-proxy/direct.${kind}?url=${encodeURIComponent(nested)}`;
+        }
+      } catch {
+        // fall through
+      }
+    }
+
+    if (u.origin === origin) return absolute;
+    if (DIRECT_HLS_HOST_RE.test(u.host)) {
+      const kind = /\.m3u8(\?|$)/i.test(u.pathname) ? 'm3u8' : 'ts';
+      return `${origin}/m3u8-proxy/direct.${kind}?url=${encodeURIComponent(absolute)}`;
+    }
+    if (/ballerinacappuccinalovestungtungtungsahur\.com/i.test(u.host)) {
+      return `${origin}/m3u8-proxy${u.pathname}${u.search}`;
+    }
+    return `${origin}/m3u8-proxy/m3u8-proxy.m3u8?url=${encodeURIComponent(absolute)}`;
+  } catch {
+    return null;
+  }
+}
+
+function rewritePlaylistText(text, origin) {
+  return text
+    .split(/\r?\n/)
+    .map((line) => {
+      const trimmed = line.trim();
+      if (/^#YT-EXT-/i.test(trimmed) || /^#EXT-X-VIDEO-RANGE:/i.test(trimmed)) {
+        return null;
+      }
+      if (/^#EXT-X-STREAM-INF:/i.test(trimmed)) {
+        return trimmed
+          .replace(/,YT-EXT-ABSOLUTE-LOUDNESS=[^,]*/gi, '')
+          .replace(/,VIDEO-RANGE=[^,]*/gi, '');
+      }
+      if (!trimmed || trimmed.startsWith('#')) {
+        return line;
+      }
+      // Absolute http(s) or relative ballerina proxy paths
+      if (
+        /^https?:\/\//i.test(trimmed) ||
+        /^\/?(m3u8-proxy\.m3u8|ts-proxy\.ts|key-proxy)/i.test(trimmed)
+      ) {
+        return proxyUrlForUpstream(trimmed, origin) || line;
+      }
+      return line;
+    })
+    .filter((line) => line != null)
+    .join('\n');
 }
 
 function requestOrigin(req) {
@@ -136,9 +451,24 @@ function fetchUpstream(targetUrl, options = {}) {
       headers['Content-Length'] = body.length;
     }
 
+    let parsed;
+    try {
+      parsed = new URL(targetUrl);
+    } catch (err) {
+      reject(err);
+      return;
+    }
+    const agent = parsed.protocol === 'https:' ? httpsAgent : httpAgent;
     const req = lib.request(
-      targetUrl,
-      { method, headers },
+      {
+        protocol: parsed.protocol,
+        hostname: parsed.hostname,
+        port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+        path: `${parsed.pathname}${parsed.search}`,
+        method,
+        headers,
+        agent,
+      },
       (res) => {
         const chunks = [];
         res.on('data', (c) => chunks.push(c));
@@ -278,7 +608,7 @@ function mountVidloveProxy(app) {
   // Only this auth path belongs to Vidlove; Luscreens keeps /auth/login etc.
   app.all('/auth/generate-token', proxyStreamApi);
 
-  // HLS helper host (CORS-blocked in cross-origin iframes)
+  // HLS helper — stream segments; short-circuit CDN urls to skip ballerina hop
   app.use('/m3u8-proxy', async (req, res) => {
     try {
       if (req.method === 'OPTIONS') {
@@ -290,19 +620,163 @@ function mountVidloveProxy(app) {
         );
         return res.status(204).end();
       }
+
+      const origin = requestOrigin(req);
+      const nestedUrl = typeof req.query.url === 'string' ? req.query.url : '';
+      const cacheKey = req.originalUrl || req.url;
+
+      // Fast path: ?url= points at a CDN we can fetch directly (no ballerina)
+      if (nestedUrl && /^https?:\/\//i.test(nestedUrl)) {
+        let nestedHost = '';
+        try {
+          nestedHost = new URL(nestedUrl).host;
+        } catch {
+          return res.status(400).json({ error: 'bad url' });
+        }
+        if (!DIRECT_HLS_HOST_RE.test(nestedHost) && !/ballerina/i.test(nestedHost)) {
+          return res.status(400).json({ error: 'host not allowed' });
+        }
+
+        const isPlaylist =
+          /m3u8/i.test(req.path || '') ||
+          /\.m3u8(\?|$)/i.test(nestedUrl) ||
+          /\/direct\.m3u8/i.test(req.path || '') ||
+          // CDN playlist gateways often omit .m3u8 in the path
+          (/\/proxy/i.test(nestedUrl) && !/\.(ts|m4s|mp4)(\?|$)/i.test(nestedUrl));
+        if (isPlaylist) {
+          const cached = cacheGet(cacheKey);
+          if (cached?.body && isValidPlaylistBody(cached.body.toString('utf8'))) {
+            res.status(200);
+            res.setHeader('access-control-allow-origin', '*');
+            res.setHeader('content-type', 'application/vnd.apple.mpegurl');
+            res.setHeader('cache-control', 'public, max-age=10');
+            res.setHeader('x-cache', 'HIT');
+            return res.end(cached.body);
+          }
+
+          // Buffer+rewrite playlist, then cache (never cache HTML/404 as m3u8)
+          const upstream = await fetchUpstream(nestedUrl, {
+            method: 'GET',
+            headers: { Accept: '*/*' },
+          });
+          const status = upstream.status || 502;
+          const text = rewritePlaylistText(upstream.body.toString('utf8'), origin);
+          if (status >= 400 || !isValidPlaylistBody(text)) {
+            res.status(status >= 400 ? status : 502);
+            res.setHeader('access-control-allow-origin', '*');
+            res.setHeader('content-type', 'text/plain; charset=utf-8');
+            res.setHeader('cache-control', 'no-store');
+            return res.end('invalid playlist');
+          }
+          const body = Buffer.from(text, 'utf8');
+          cacheSet(cacheKey, { status: 200, body });
+          res.status(200);
+          res.setHeader('access-control-allow-origin', '*');
+          res.setHeader('content-type', 'application/vnd.apple.mpegurl');
+          res.setHeader('cache-control', 'public, max-age=10');
+          res.setHeader('x-cache', 'MISS');
+          return res.end(body);
+        }
+
+        // Media segments: stream through (no full buffer)
+        return pipeUpstream(nestedUrl, req, res, { asPlaylist: false, origin });
+      }
+
+      // Ballerina-shaped paths (/m3u8-proxy.m3u8, /ts-proxy.ts, …)
+      // If nested ?url= is already a CDN we know, skip the ballerina hop entirely.
+      const ballerinaNested =
+        typeof req.query.url === 'string' && /^https?:\/\//i.test(req.query.url)
+          ? req.query.url
+          : '';
+      if (ballerinaNested) {
+        try {
+          const nestedHost = new URL(ballerinaNested).host;
+          if (DIRECT_HLS_HOST_RE.test(nestedHost)) {
+            const isPlaylist =
+              /m3u8/i.test(req.path || '') || /\.m3u8(\?|$)/i.test(ballerinaNested);
+            if (isPlaylist) {
+              const cached = cacheGet(`direct:${ballerinaNested}`);
+              if (cached?.body && isValidPlaylistBody(cached.body.toString('utf8'))) {
+                res.status(200);
+                res.setHeader('access-control-allow-origin', '*');
+                res.setHeader('content-type', 'application/vnd.apple.mpegurl');
+                res.setHeader('cache-control', 'public, max-age=10');
+                res.setHeader('x-cache', 'HIT');
+                return res.end(cached.body);
+              }
+              const upstream = await fetchUpstream(ballerinaNested, {
+                method: 'GET',
+                headers: { Accept: '*/*' },
+              });
+              const status = upstream.status || 502;
+              const text = rewritePlaylistText(upstream.body.toString('utf8'), origin);
+              if (status >= 400 || !isValidPlaylistBody(text)) {
+                res.status(status >= 400 ? status : 502);
+                res.setHeader('access-control-allow-origin', '*');
+                res.setHeader('cache-control', 'no-store');
+                return res.end('invalid playlist');
+              }
+              const body = Buffer.from(text, 'utf8');
+              cacheSet(`direct:${ballerinaNested}`, { status: 200, body });
+              res.status(200);
+              res.setHeader('access-control-allow-origin', '*');
+              res.setHeader('content-type', 'application/vnd.apple.mpegurl');
+              res.setHeader('cache-control', 'public, max-age=10');
+              res.setHeader('x-bypass', 'ballerina');
+              return res.end(body);
+            }
+            res.setHeader('x-bypass', 'ballerina');
+            return pipeUpstream(ballerinaNested, req, res, {
+              asPlaylist: false,
+              origin,
+            });
+          }
+        } catch {
+          // fall through to ballerina
+        }
+      }
+
       const target = `${HLS_PROXY}${req.url || '/'}`;
+      const isTs = /ts-proxy/i.test(req.path || '');
+      if (isTs) {
+        return pipeUpstream(target, req, res, { asPlaylist: false, origin });
+      }
+
+      const cached = cacheGet(cacheKey);
+      if (cached?.body && isValidPlaylistBody(cached.body.toString('utf8'))) {
+        res.status(200);
+        res.setHeader('access-control-allow-origin', '*');
+        res.setHeader('content-type', 'application/vnd.apple.mpegurl');
+        res.setHeader('cache-control', 'public, max-age=10');
+        res.setHeader('x-cache', 'HIT');
+        return res.end(cached.body);
+      }
+
       const upstream = await fetchUpstream(target, {
         method: req.method === 'HEAD' ? 'GET' : req.method || 'GET',
-        headers: {
-          Accept: req.headers.accept || '*/*',
-        },
+        headers: { Accept: req.headers.accept || '*/*' },
       });
-      const base = proxyBase(req);
-      const origin = requestOrigin(req);
-      return sendProxied(res, upstream, base, origin, false);
+      const status = upstream.status || 502;
+      const text = rewritePlaylistText(upstream.body.toString('utf8'), origin);
+      if (status >= 400 || !isValidPlaylistBody(text)) {
+        res.status(status >= 400 ? status : 502);
+        res.setHeader('access-control-allow-origin', '*');
+        res.setHeader('cache-control', 'no-store');
+        return res.end('invalid playlist');
+      }
+      const body = Buffer.from(text, 'utf8');
+      cacheSet(cacheKey, { status: 200, body });
+      res.status(200);
+      res.setHeader('access-control-allow-origin', '*');
+      res.setHeader('content-type', 'application/vnd.apple.mpegurl');
+      res.setHeader('cache-control', 'public, max-age=10');
+      res.setHeader('x-cache', 'MISS');
+      return res.end(body);
     } catch (err) {
       console.error('m3u8-proxy failed', err && err.message ? err.message : err);
-      res.status(502).json({ error: 'm3u8 proxy failed' });
+      if (!res.headersSent) {
+        res.status(502).json({ error: 'm3u8 proxy failed' });
+      }
     }
   });
 
@@ -388,4 +862,4 @@ function mountVidloveProxy(app) {
   });
 }
 
-module.exports = { mountVidloveProxy };
+module.exports = { mountVidloveProxy, warmDirectPlaylistChain };
