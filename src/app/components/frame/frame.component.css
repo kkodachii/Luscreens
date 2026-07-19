@@ -17,6 +17,17 @@ video.player-embed {
   background: #000;
 }
 
+/* Inline (not fullscreen): taller on phones so the embed isn't a short 16:9 strip */
+.player-inline-surface {
+  aspect-ratio: 16 / 9;
+}
+
+@media (max-width: 640px) {
+  .player-inline-surface {
+    aspect-ratio: 4 / 3;
+  }
+}
+
 .kean-fill-host {
   overflow: hidden;
   background: #000;

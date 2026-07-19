@@ -32,7 +32,7 @@
             class="relative w-full bg-black"
             [class.flex-1]="isFullscreen"
             [class.min-h-0]="isFullscreen"
-            [class.aspect-video]="!isFullscreen"
+            [class.player-inline-surface]="!isFullscreen"
             [class.rounded-lg]="!isFullscreen"
             [class.overflow-hidden]="!isFullscreen && !showCcMenu && !showProviderMenu && !showServerMenu"
             [class.overflow-visible]="!isFullscreen && (showCcMenu || showProviderMenu || showServerMenu)"
