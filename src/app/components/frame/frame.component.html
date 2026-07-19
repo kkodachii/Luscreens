@@ -83,14 +83,16 @@
             </div>
 
             <!--
-              Full-surface shield: tap anywhere to show controls.
-              Only the center hit target toggles play/pause.
+              Full-surface shield: one tap toggles controls; center toggles play/pause.
+              pointerup avoids the mobile mousemove→click double-toggle race.
             -->
             <div
               class="player-click-shield absolute inset-0 z-20 flex items-center justify-center select-none"
+              [class.menus-open]="showServerMenu || showProviderMenu || showCcMenu"
               [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-lg'"
-              (click)="onPlayerSurfaceTap()"
-              (mousemove)="onPlayerSurfaceMove()"
+              (pointerup)="onPlayerSurfacePointerUp($event)"
+              (mousemove)="onPlayerSurfaceMove($event)"
+              (click)="$event.preventDefault()"
               (dblclick)="$event.preventDefault()"
               (contextmenu)="$event.preventDefault()"
               (auxclick)="$event.preventDefault()"
@@ -98,7 +100,8 @@
               <button
                 type="button"
                 class="player-center-hit flex items-center justify-center w-20 h-20 sm:w-28 sm:h-28 rounded-full cursor-pointer"
-                (click)="onCenterPlayPauseTap($event)"
+                (pointerup)="onCenterPlayPauseTap($event)"
+                (click)="$event.preventDefault(); $event.stopPropagation()"
                 [attr.aria-label]="isPlaying ? 'Pause' : 'Play'"
                 [title]="canControlPartyPlayback ? (isPlaying ? 'Pause' : 'Play') : 'Only the host can control playback'"
               >
@@ -116,8 +119,8 @@
             <!-- Shared overlay controller (stays above reload spinner so provider/server stay usable) -->
             <div
               class="player-controls absolute inset-0 flex flex-col justify-between pointer-events-none transition-opacity duration-300"
-              [class.z-30]="!isPlayerReloading"
-              [class.z-[60]]="isPlayerReloading"
+              [class.z-30]="!isPlayerReloading && !showServerMenu && !showProviderMenu && !showCcMenu"
+              [class.z-[60]]="isPlayerReloading || showServerMenu || showProviderMenu || showCcMenu"
               [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-lg'"
               [class.opacity-0]="!showPlayerControls && !isPlayerReloading"
               [class.opacity-100]="showPlayerControls || isPlayerReloading"
@@ -127,8 +130,9 @@
               <div class="relative bg-gradient-to-b from-black/80 via-black/40 to-transparent px-2.5 sm:px-4 pt-2.5 sm:pt-4 pb-8 sm:pb-12 pointer-events-none">
                 <div class="relative flex items-start">
                   <div
-                    class="relative shrink-0 z-40 flex items-start gap-0.5"
-                    [class.pointer-events-auto]="showPlayerControls || isPlayerReloading"
+                    class="player-toolbar-menus relative shrink-0 flex items-start gap-0.5"
+                    (pointerdown)="$event.stopPropagation()"
+                    (pointerup)="$event.stopPropagation()"
                     (click)="$event.stopPropagation()"
                     (touchstart)="$event.stopPropagation()"
                   >
@@ -151,7 +155,7 @@
                       </button>
                       <div
                         *ngIf="showProviderMenu"
-                        class="absolute top-full left-0 mt-1 w-56 max-h-64 overflow-y-auto rounded-xl border border-white/15 bg-black/95 shadow-xl py-1 pointer-events-auto"
+                        class="player-menu-dropdown absolute top-full left-0 mt-1 w-56 max-h-64 overflow-y-auto rounded-xl border border-white/15 bg-black/95 shadow-xl py-1"
                       >
                         <p class="px-3 py-1.5 text-[10px] uppercase tracking-wide text-white/40">
                           Provider · {{ activeProviderLabel }}
@@ -185,8 +189,8 @@
                       </div>
                     </div>
 
-                    <!-- Server (VidFast stream pins only) -->
-                    <div class="relative" *ngIf="isVidfastProvider">
+                    <!-- Server pins (VidFast / VidUP / Peachify) — use cloud icon menu, not Peachify's in-player list -->
+                    <div class="relative" *ngIf="usesServerParam">
                       <button
                         type="button"
                         (click)="toggleServerMenu(); revealPlayerControls()"
@@ -201,7 +205,7 @@
                       </button>
                       <div
                         *ngIf="showServerMenu"
-                        class="absolute top-full left-0 mt-1 w-44 max-h-64 overflow-y-auto rounded-xl border border-white/15 bg-black/95 shadow-xl py-1 pointer-events-auto"
+                        class="player-menu-dropdown absolute top-full left-0 mt-1 w-44 max-h-64 overflow-y-auto rounded-xl border border-white/15 bg-black/95 shadow-xl py-1"
                       >
                         <p class="px-3 py-1.5 text-[10px] uppercase tracking-wide text-white/40">
                           Server · {{ activeServerLabel }}
@@ -209,8 +213,9 @@
                         <button
                           *ngFor="let server of serverOptions"
                           type="button"
-                          (click)="selectServer(server.id); revealPlayerControls()"
-                          class="w-full text-left px-3 py-2 text-xs hover:bg-white/10 transition"
+                          (pointerup)="onServerMenuPick($event, server.id)"
+                          (click)="$event.preventDefault(); $event.stopPropagation()"
+                          class="w-full text-left px-3 py-2 text-xs hover:bg-white/10 transition cursor-pointer"
                           [class.text-red-400]="(server.id === 'auto' && useAutoServer) || (server.id !== 'auto' && !useAutoServer && selectedServer === server.id)"
                           [class.font-semibold]="(server.id === 'auto' && useAutoServer) || (server.id !== 'auto' && !useAutoServer && selectedServer === server.id)"
                         >

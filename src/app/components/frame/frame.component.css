@@ -52,7 +52,23 @@
   pointer-events: auto !important;
   background: rgba(0, 0, 0, 0.002);
   -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
   cursor: default;
+}
+
+/* Menus sit above the shield; disable shield so dropdown clicks don't fall through. */
+.player-click-shield.menus-open {
+  pointer-events: none !important;
+}
+
+.player-menu-dropdown {
+  z-index: 80;
+  pointer-events: auto !important;
+}
+
+.player-toolbar-menus {
+  z-index: 70;
+  pointer-events: auto !important;
 }
 
 /* Invisible center target — only this region toggles play/pause */
@@ -62,6 +78,7 @@
   border: 0;
   padding: 0;
   -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
 
 .player-subtitle-overlay {

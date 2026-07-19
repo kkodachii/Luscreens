@@ -161,6 +161,9 @@ export class PingCheckComponent implements OnInit {
       { id: 'cinemaos', label: 'CinemaOS', url: 'https://cinemaos.tech/favicon.ico' },
       { id: 'vidphantom', label: 'VidPhantom', url: 'https://vidphantom.com/favicon.ico' },
       { id: 'vidfast', label: 'VidFast', url: 'https://vidfast.vc/favicon.ico' },
+      { id: 'peachify', label: 'Peachify', url: 'https://peachify.top/favicon.ico' },
+      { id: 'vidup', label: 'VidUP', url: 'https://vidup.to/favicon.ico' },
+      { id: 'videasy', label: 'Videasy', url: 'https://player.videasy.net/favicon.ico' },
     ];
 
     const hosts: { id: string; label: string; url: string }[] = [
@@ -168,6 +171,9 @@ export class PingCheckComponent implements OnInit {
       { id: 'cinemaos-root', label: 'cinemaos.tech', url: 'https://cinemaos.tech/' },
       { id: 'vidphantom-root', label: 'vidphantom.com', url: 'https://vidphantom.com/' },
       { id: 'apiplayer-root', label: 'apiplayer.ru', url: 'https://apiplayer.ru/' },
+      { id: 'peachify-root', label: 'peachify.top', url: 'https://peachify.top/' },
+      { id: 'vidup-root', label: 'vidup.to', url: 'https://vidup.to/' },
+      { id: 'videasy-root', label: 'player.videasy.net', url: 'https://player.videasy.net/' },
       { id: 'tmdb', label: 'TMDB API', url: 'https://api.themoviedb.org/3/' },
     ];
 

@@ -100,6 +100,29 @@ export class FrameComponent implements OnInit, OnDestroy {
     'https://www.apiplayer.ru',
   ];
 
+  /** https://peachify.pro/ → embed host peachify.top */
+  private readonly peachifyOrigins = [
+    'https://peachify.top',
+    'https://www.peachify.top',
+    'https://peachify.pro',
+    'https://www.peachify.pro',
+  ];
+
+  /** https://vidup.to/ — VidFast-style PLAYER_EVENT bridge */
+  private readonly vidupOrigins = [
+    'https://vidup.to',
+    'https://www.vidup.to',
+  ];
+
+  /** https://www.videasy.to/docs → player.videasy.net */
+  private readonly videasyOrigins = [
+    'https://player.videasy.net',
+    'https://videasy.net',
+    'https://www.videasy.net',
+    'https://videasy.to',
+    'https://www.videasy.to',
+  ];
+
   private readonly onPlayerMessage = (event: MessageEvent): void => {
     this.handlePlayerMessage(event);
   };
@@ -139,7 +162,8 @@ export class FrameComponent implements OnInit, OnDestroy {
   /** Overlay controls — visible on tap; auto-hide after 4s while playing. */
   showPlayerControls = true;
   private controlsHideTimer: ReturnType<typeof setTimeout> | null = null;
-  private controlsRevealSuppressedUntil = 0;
+  /** Ignore surface toggle briefly after hide / hover-reveal (avoids double-toggle). */
+  private controlsToggleSuppressedUntil = 0;
   private static readonly CONTROLS_HIDE_MS = 4000;
   isPictureInPicture = false;
   readonly supportsDocumentPip =
@@ -163,13 +187,16 @@ export class FrameComponent implements OnInit, OnDestroy {
   ];
   readonly providerOptions: { id: StreamProvider; label: string }[] = [
     { id: 'apiplayer', label: 'ApiPlayer' },
+    { id: 'vidfast', label: 'VidFast' },
     { id: 'cinemaos', label: 'CinemaOS' },
     { id: 'vidphantom', label: 'VidPhantom' },
-    { id: 'vidfast', label: 'VidFast' },
+    { id: 'peachify', label: 'Peachify' },
+    { id: 'vidup', label: 'VidUP' },
+    { id: 'videasy', label: 'Videasy' },
   ];
   selectedProvider: StreamProvider =
     (environment as { streamProvider?: StreamProvider }).streamProvider || 'apiplayer';
-  /** True after lowest-ping primary (+ VidFast #2) has been applied for this page. */
+  /** True after ApiPlayer primary has been applied for this page. */
   private providerPriorityApplied = false;
   private providerPriorityPromise: Promise<void> | null = null;
   selectedSubtitle: string | null = null;
@@ -181,7 +208,7 @@ export class FrameComponent implements OnInit, OnDestroy {
   private subtitleLoadToken = 0;
   private cachedImdbId: string | null = null;
   selectedServer: string = environment.streamServer || 'vEdge';
-  /** When true, omit `server=` so VidFast can pick a working source itself. */
+  /** When true, omit `server=` so the embed can pick a working source itself. */
   useAutoServer = false;
   showCcMenu = false;
   showProviderMenu = false;
@@ -203,20 +230,48 @@ export class FrameComponent implements OnInit, OnDestroy {
     cinemaos: null,
     vidphantom: null,
     vidfast: null,
+    peachify: null,
+    vidup: null,
+    videasy: null,
   };
   providerPingPending: Record<StreamProvider, boolean> = {
     apiplayer: false,
     cinemaos: false,
     vidphantom: false,
     vidfast: false,
+    peachify: false,
+    vidup: false,
+    videasy: false,
   };
   private readonly providerPingUrls: Record<StreamProvider, string> = {
     apiplayer: 'https://apiplayer.ru/favicon.ico',
     cinemaos: 'https://cinemaos.tech/favicon.ico',
     vidphantom: 'https://vidphantom.com/favicon.ico',
     vidfast: 'https://vidfast.vc/favicon.ico',
+    peachify: 'https://peachify.top/favicon.ico',
+    vidup: 'https://vidup.to/favicon.ico',
+    videasy: 'https://player.videasy.net/favicon.ico',
   };
   private lastProviderPingAt = 0;
+
+  /**
+   * Peachify disables parent→player postMessage commands.
+   * Play/pause/seek are applied by rebuilding the embed URL (`autoPlay` + `startAt`).
+   */
+  private peachifyWantAutoPlay = true;
+  private peachifyControlTimer: ReturnType<typeof setTimeout> | null = null;
+  private peachifyRemountTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * Keep `#playerContainer` in the DOM while embedUrl is briefly cleared.
+   * Otherwise *ngIf tears down the fullscreen element on server/provider remount.
+   */
+  private playerSurfaceLocked = false;
+  /** Bust iframe cache so autoPlay true/false always remounts. */
+  private peachifyEmbedNonce = 0;
+  /** Ignore outbound play/pause events while our URL control settles. */
+  private peachifyIgnorePlayingUntil = 0;
+  /** Avoid reload loops when Peachify reports a mismatched season/episode. */
+  private peachifyEpisodeReassertUntil = 0;
 
   /** Auto-failover: try next server if current one never starts playback. */
   private static readonly SERVER_FAILOVER_MS = 12000;
@@ -243,9 +298,26 @@ export class FrameComponent implements OnInit, OnDestroy {
     return this.selectedProvider === 'apiplayer';
   }
 
+  get isPeachifyProvider(): boolean {
+    return this.selectedProvider === 'peachify';
+  }
+
+  get isVidupProvider(): boolean {
+    return this.selectedProvider === 'vidup';
+  }
+
+  get isVideasyProvider(): boolean {
+    return this.selectedProvider === 'videasy';
+  }
+
   /** Embed hosts with a real subtitle query param (reload to apply). */
   get usesEmbedSubParam(): boolean {
-    return this.isVidfastProvider;
+    return this.isVidfastProvider || this.isVidupProvider || this.isPeachifyProvider;
+  }
+
+  /** Providers that accept `server=` (or equivalent) via URL reload. */
+  get usesServerParam(): boolean {
+    return this.isVidfastProvider || this.isVidupProvider || this.isPeachifyProvider;
   }
 
   /**
@@ -256,28 +328,49 @@ export class FrameComponent implements OnInit, OnDestroy {
     return this.isApiplayerProvider || this.isVidphantomProvider;
   }
 
-  /**
-   * Iframe embeds that speak PLAYER_EVENT / { command }.
-   * CinemaOS: https://cinemaos.tech/embed
-   */
+  /** Iframe embeds (PLAYER_EVENT and/or progress postMessage). */
   get usesRemoteIframe(): boolean {
-    return this.isVidfastProvider || this.isCinemaosProvider;
+    return (
+      this.isVidfastProvider ||
+      this.isCinemaosProvider ||
+      this.isPeachifyProvider ||
+      this.isVidupProvider ||
+      this.isVideasyProvider
+    );
   }
 
-  /** Player chrome is mounted for either embed provider. */
+  /**
+   * Player chrome is mounted for either embed provider.
+   * Stay mounted while remounting (embedUrl briefly null) so fullscreen is not exited.
+   */
   get hasPlayerSurface(): boolean {
-    return this.usesLocalHls || !!this.embedUrl;
+    return this.usesLocalHls || !!this.embedUrl || this.playerSurfaceLocked;
   }
 
   get serverOptions(): { id: string; label: string }[] {
-    const fromEnv = (environment as { streamServers?: string[] }).streamServers ?? [];
-    const preferred = environment.streamServer || 'vEdge';
-    const names = [preferred, ...fromEnv].filter(Boolean);
-    // Auto first (VidFast picks), then preferred, then the rest
+    const names = this.serversForProvider(this.selectedProvider);
     return [
       { id: FrameComponent.AUTO_SERVER_ID, label: 'Auto' },
-      ...[...new Set(names)].map((id) => ({ id, label: id })),
+      ...names.map((id) => ({ id, label: id })),
     ];
+  }
+
+  private serversForProvider(provider: StreamProvider): string[] {
+    switch (provider) {
+      case 'vidfast': {
+        const fromEnv = (environment as { streamServers?: string[] }).streamServers ?? [];
+        const preferred = environment.streamServer || 'vEdge';
+        return [...new Set([preferred, ...fromEnv].filter(Boolean))];
+      }
+      case 'peachify':
+        // https://peachify.pro/ — ?server= on peachify.top
+        return ['iron', 'spider', 'multi', 'dark', 'wolf'];
+      case 'vidup':
+        // Docs expose server= but no public pin list — Auto only
+        return [];
+      default:
+        return [];
+    }
   }
 
   get activeProviderLabel(): string {
@@ -332,6 +425,10 @@ export class FrameComponent implements OnInit, OnDestroy {
   private progressTimer: ReturnType<typeof setInterval> | null = null;
 
   private readonly onFullscreenChange = (): void => {
+    // Ignore transient fullscreen loss while the embed remounts (server/provider switch)
+    if (this.playerSurfaceLocked && this.isFullscreen && !document.fullscreenElement) {
+      return;
+    }
     this.isFullscreen = !!document.fullscreenElement;
     this.revealPlayerControls();
   };
@@ -399,6 +496,15 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.clearPlayerReloading();
     this.clearSeekGuard();
     this.clearSubtitles();
+    if (this.peachifyControlTimer != null) {
+      clearTimeout(this.peachifyControlTimer);
+      this.peachifyControlTimer = null;
+    }
+    if (this.peachifyRemountTimer != null) {
+      clearTimeout(this.peachifyRemountTimer);
+      this.peachifyRemountTimer = null;
+    }
+    this.playerSurfaceLocked = false;
     this.apiplayerLoadToken++;
     this.subtitleLoadToken++;
     this.destroyApiplayerVideo();
@@ -640,12 +746,13 @@ export class FrameComponent implements OnInit, OnDestroy {
   updateEmbedUrl(): void {
     if (this.mediaType === 'tv') {
       this.resetPlayerState();
+      this.peachifyWantAutoPlay = true;
       this.openPlayer();
       this.syncWatchPartyMedia();
     }
   }
 
-  /** Mount local HLS (ApiPlayer / VidPhantom) or CinemaOS/VidFast iframe. */
+  /** Mount local HLS or remote iframe for the active provider. */
   private openPlayer(resumeAt?: number): void {
     void this.openPlayerAsync(resumeAt);
   }
@@ -660,16 +767,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
 
     this.destroyApiplayerVideo();
-    if (this.isCinemaosProvider) {
-      this.embedUrl = this.buildCinemaosEmbedUrl(resumeAt);
-      return;
-    }
-
-    const path = this.getEmbedPath();
-    if (!path) {
-      return;
-    }
-    this.embedUrl = this.buildVidfastEmbedUrl(path, resumeAt);
+    this.embedUrl = this.buildActiveEmbedUrl(resumeAt);
   }
 
   private resolveStartAt(resumeAt?: number): number {
@@ -677,15 +775,49 @@ export class FrameComponent implements OnInit, OnDestroy {
     if (cleared) {
       return 0;
     }
-    if (resumeAt != null && resumeAt > 0) {
+    // Explicit 0 must win (Peachify URL control / cleared seek) — don't fall back to saved
+    if (resumeAt != null && Number.isFinite(resumeAt) && resumeAt >= 0) {
       return resumeAt;
     }
     return this.getSavedStartAt();
   }
 
+  private buildActiveEmbedUrl(resumeAt?: number): SafeResourceUrl {
+    switch (this.selectedProvider) {
+      case 'cinemaos':
+        return this.buildCinemaosEmbedUrl(resumeAt);
+      case 'peachify':
+        return this.buildPeachifyEmbedUrl(resumeAt);
+      case 'videasy':
+        return this.buildVideasyEmbedUrl(resumeAt);
+      case 'vidup': {
+        const path = this.getEmbedPath();
+        return path
+          ? this.buildVidupEmbedUrl(path, resumeAt)
+          : this.sanitizer.bypassSecurityTrustResourceUrl('about:blank');
+      }
+      case 'vidfast':
+      default: {
+        const path = this.getEmbedPath();
+        return path
+          ? this.buildVidfastEmbedUrl(path, resumeAt)
+          : this.sanitizer.bypassSecurityTrustResourceUrl('about:blank');
+      }
+    }
+  }
+
   private buildEmbedUrl(path: string, resumeAt?: number): SafeResourceUrl {
     if (this.isCinemaosProvider) {
       return this.buildCinemaosEmbedUrl(resumeAt);
+    }
+    if (this.isPeachifyProvider) {
+      return this.buildPeachifyEmbedUrl(resumeAt);
+    }
+    if (this.isVideasyProvider) {
+      return this.buildVideasyEmbedUrl(resumeAt);
+    }
+    if (this.isVidupProvider) {
+      return this.buildVidupEmbedUrl(path, resumeAt);
     }
     if (this.isApiplayerProvider || this.isVidphantomProvider) {
       return this.buildApiplayerEmbedUrl(path, resumeAt);
@@ -753,6 +885,133 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
 
     const url = `https://vidfast.vc/${path}?${params.toString()}`;
+    return this.sanitizer.bypassSecurityTrustResourceUrl(url);
+  }
+
+  /** https://vidup.to/ — same shape as VidFast */
+  private buildVidupEmbedUrl(path: string, resumeAt?: number): SafeResourceUrl {
+    this.pendingSeekSeconds = null;
+    const params = new URLSearchParams({
+      autoPlay: 'true',
+      theme: 'e50914',
+      title: 'false',
+      hideServer: 'true',
+      fullscreenButton: 'false',
+      chromecast: 'false',
+    });
+    if (!this.useAutoServer && this.selectedServer) {
+      params.set('server', this.selectedServer);
+    }
+    if (this.selectedSubtitle) {
+      params.set('sub', this.selectedSubtitle);
+    }
+    params.set('startAt', String(Math.max(0, Math.floor(this.resolveStartAt(resumeAt)))));
+    if (this.mediaType === 'tv') {
+      params.set('nextButton', 'true');
+      params.set('autoNext', 'true');
+    }
+    const url = `https://vidup.to/${path}?${params.toString()}`;
+    return this.sanitizer.bypassSecurityTrustResourceUrl(url);
+  }
+
+  /**
+   * https://peachify.pro/ → https://peachify.top/embed/...
+   * Parent→player commands are disabled; Luscreens controls via autoPlay + startAt reloads.
+   * TV auto-next is off so season/episode stay locked to our picker.
+   */
+  private buildPeachifyEmbedUrl(resumeAt?: number): SafeResourceUrl {
+    this.pendingSeekSeconds = null;
+    if (!this.id || !this.mediaType) {
+      return this.sanitizer.bypassSecurityTrustResourceUrl('about:blank');
+    }
+
+    const season = Math.max(1, Math.floor(Number(this.selectedSeason) || 1));
+    const episode = Math.max(1, Math.floor(Number(this.selectedEpisode) || 1));
+    const path =
+      this.mediaType === 'tv'
+        ? `embed/tv/${this.id}/${season}/${episode}`
+        : `embed/movie/${this.id}`;
+
+    const params = new URLSearchParams({
+      autoPlay: this.peachifyWantAutoPlay ? 'true' : 'false',
+      accent: 'e50914',
+      // Hide Peachify chrome entirely — Luscreens owns controls; pins still use ?server=
+      servers: 'hide',
+      pip: 'hide',
+      cast: 'hide',
+      fullscreen: 'hide',
+      volume: 'hide',
+      captions: 'hide',
+      quality: 'hide',
+      play: 'hide',
+      rewind: 'hide',
+      forward: 'hide',
+      timegroup: 'hide',
+      timeslider: 'hide',
+      settings: 'hide',
+      // Pin this exact S/E — Peachify's internal browser can otherwise drift
+      ep: this.mediaType === 'tv' ? `s${season}e${episode}` : 'movie',
+      // Force a real navigation on every play/pause/server switch
+      _cb: String(++this.peachifyEmbedNonce),
+    });
+
+    const peachifyPins = this.serversForProvider('peachify');
+    if (!this.useAutoServer) {
+      const pin = peachifyPins.includes(this.selectedServer)
+        ? this.selectedServer
+        : peachifyPins[0];
+      if (pin) {
+        params.set('server', pin);
+      }
+    }
+
+    // Docs expect subtitle labels (e.g. English), not ISO codes
+    if (this.selectedSubtitle) {
+      const subLabel =
+        this.subtitleOptions.find((o) => o.code === this.selectedSubtitle)?.label ??
+        this.selectedSubtitle;
+      params.set('sub', subLabel);
+    }
+
+    // Always pin start — Peachify otherwise restores its own peachifyProgress cache
+    const startAt = Math.max(0, Math.floor(this.resolveStartAt(resumeAt)));
+    params.set('startAt', String(startAt));
+    params.set('progress', String(startAt));
+    params.set('t', String(startAt));
+
+    if (this.mediaType === 'tv') {
+      // Luscreens owns next/prev — Peachify auto-next was jumping to wrong episodes
+      params.set('autoNext', 'false');
+      params.set('showNextBtn', 'false');
+    }
+
+    const url = `https://peachify.top/${path}?${params.toString()}`;
+    return this.sanitizer.bypassSecurityTrustResourceUrl(url);
+  }
+
+  /** https://www.videasy.to/docs → player.videasy.net */
+  private buildVideasyEmbedUrl(resumeAt?: number): SafeResourceUrl {
+    this.pendingSeekSeconds = null;
+    if (!this.id || !this.mediaType) {
+      return this.sanitizer.bypassSecurityTrustResourceUrl('about:blank');
+    }
+    const path =
+      this.mediaType === 'tv'
+        ? `tv/${this.id}/${this.selectedSeason}/${this.selectedEpisode}`
+        : `movie/${this.id}`;
+    const params = new URLSearchParams({
+      color: 'e50914',
+      overlay: 'false',
+    });
+    if (this.mediaType === 'tv') {
+      params.set('nextEpisode', 'true');
+      params.set('autoplayNextEpisode', 'true');
+    }
+    const startAt = Math.max(0, Math.floor(this.resolveStartAt(resumeAt)));
+    if (startAt > 0) {
+      params.set('progress', String(startAt));
+    }
+    const url = `https://player.videasy.net/${path}?${params.toString()}`;
     return this.sanitizer.bypassSecurityTrustResourceUrl(url);
   }
 
@@ -838,7 +1097,7 @@ export class FrameComponent implements OnInit, OnDestroy {
       const next = this.nextFailoverProvider(provider);
       if (next) {
         this.selectedProvider = next;
-        if (next === 'vidfast') {
+        if (next === 'vidfast' || next === 'vidup' || next === 'peachify') {
           this.useAutoServer = true;
         }
         this.reloadPlayer(
@@ -852,12 +1111,18 @@ export class FrameComponent implements OnInit, OnDestroy {
   }
 
   /**
-   * Priority: #1 lowest-ping (non-VidFast), #2 VidFast, then remaining by ping.
-   * Failed / unknown pings sort last.
+   * Priority: #1 ApiPlayer, #2 VidFast, then remaining by lowest ping.
+   * Failed / unknown pings sort last among the ping-ranked group.
    */
   private getProviderFailoverOrder(): StreamProvider[] {
-    const others: StreamProvider[] = ['apiplayer', 'cinemaos', 'vidphantom'];
-    const ranked = [...others].sort((a, b) => {
+    const byPing: StreamProvider[] = [
+      'cinemaos',
+      'vidphantom',
+      'peachify',
+      'vidup',
+      'videasy',
+    ];
+    const ranked = [...byPing].sort((a, b) => {
       const am =
         this.providerPingMs[a] == null || this.providerPingMs[a]! < 0
           ? Number.POSITIVE_INFINITY
@@ -868,11 +1133,10 @@ export class FrameComponent implements OnInit, OnDestroy {
           : this.providerPingMs[b]!;
       return am - bm;
     });
-    const primary = ranked[0] ?? 'apiplayer';
-    return [primary, 'vidfast', ...ranked.filter((id) => id !== primary)];
+    return ['apiplayer', 'vidfast', ...ranked];
   }
 
-  /** Pick primary once from current pings (does not override manual choice). */
+  /** Apply fixed primary (ApiPlayer) once; pings only order the fallbacks. */
   private ensureProviderPriority(): Promise<void> {
     if (!this.providerPriorityPromise) {
       this.providerPriorityPromise = this.resolveProviderPriority();
@@ -881,12 +1145,13 @@ export class FrameComponent implements OnInit, OnDestroy {
   }
 
   private async resolveProviderPriority(): Promise<void> {
-    await this.refreshProviderPings(true);
+    // Warm pings for CinemaOS / VidPhantom failover order (non-blocking for primary)
+    void this.refreshProviderPings(true);
     if (this.providerPriorityApplied) {
       return;
     }
     this.providerPriorityApplied = true;
-    this.selectedProvider = this.getProviderFailoverOrder()[0] ?? 'apiplayer';
+    this.selectedProvider = 'apiplayer';
     this.cdr.detectChanges();
   }
 
@@ -1083,6 +1348,7 @@ export class FrameComponent implements OnInit, OnDestroy {
 
   private reloadPlayer(resumeAt?: number, label = 'Loading…'): void {
     const time = resumeAt ?? this.currentTime;
+    const stayFullscreen = this.isFullscreen || !!document.fullscreenElement;
     this.playerReloadLabel = label;
     this.isPlayerReloading = true;
     // Keep provider/server menus reachable while the new source boots
@@ -1092,13 +1358,18 @@ export class FrameComponent implements OnInit, OnDestroy {
 
     if (this.usesLocalHls) {
       void this.loadLocalHlsVideo(time > 5 ? time : undefined);
+      this.ensureFullscreenPreserved(stayFullscreen);
       return;
     }
 
     this.destroyApiplayerVideo();
     // Keep previous frame painted under the overlay; swap src on next tick
+    this.playerSurfaceLocked = true;
     setTimeout(() => {
       this.openPlayer(time > 5 ? time : undefined);
+      this.playerSurfaceLocked = false;
+      this.cdr.detectChanges();
+      this.ensureFullscreenPreserved(stayFullscreen);
     }, 50);
   }
 
@@ -1156,12 +1427,20 @@ export class FrameComponent implements OnInit, OnDestroy {
   }
 
   toggleServerMenu(): void {
-    if (!this.isVidfastProvider) {
+    if (!this.usesServerParam) {
       return;
     }
     this.showServerMenu = !this.showServerMenu;
     this.showProviderMenu = false;
     this.showCcMenu = false;
+    this.revealPlayerControls();
+  }
+
+  /** pointerup so the click-shield can't swallow the gesture after the menu opens. */
+  onServerMenuPick(event: Event, serverId: string): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.selectServer(serverId);
     this.revealPlayerControls();
   }
 
@@ -1305,13 +1584,29 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
     this.providerPriorityApplied = true; // keep manual choice
     this.selectedProvider = provider;
+    this.peachifyWantAutoPlay = true;
     this.showProviderMenu = false;
     this.showServerMenu = false;
     this.resetServerFailoverState();
-    // VidFast owns CC via `sub=` — drop our cue overlay so it doesn't double up
+    // Prefer Auto when entering a host with its own server pins
+    if (this.usesServerParam) {
+      this.useAutoServer = true;
+      const pins = this.serversForProvider(provider);
+      if (pins.length && !pins.includes(this.selectedServer)) {
+        this.selectedServer = pins[0];
+      }
+    }
+    // Embed `sub=` hosts — drop our cue overlay so it doesn't double up
     if (this.usesEmbedSubParam) {
       this.clearSubtitles(false);
     }
+
+    if (provider === 'peachify') {
+      this.playerReloadLabel = `Switching to ${this.activeProviderLabel}…`;
+      this.remountPeachifyEmbed(Math.max(0, Math.floor(this.currentTime)));
+      return;
+    }
+
     this.reloadPlayer(
       this.currentTime,
       `Switching to ${this.activeProviderLabel}…`
@@ -1319,7 +1614,7 @@ export class FrameComponent implements OnInit, OnDestroy {
   }
 
   selectServer(server: string): void {
-    if (!this.isVidfastProvider) {
+    if (!this.usesServerParam) {
       this.showServerMenu = false;
       return;
     }
@@ -1340,6 +1635,17 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
     this.showServerMenu = false;
     this.resetServerFailoverState();
+
+    // Peachify needs a full iframe remount or ?server= is ignored
+    if (this.isPeachifyProvider) {
+      this.peachifyWantAutoPlay = true;
+      this.playerReloadLabel = wantsAuto
+        ? 'Finding a server…'
+        : `Switching to ${server}…`;
+      this.remountPeachifyEmbed(Math.max(0, Math.floor(this.currentTime)));
+      return;
+    }
+
     this.reloadPlayer(
       this.currentTime,
       wantsAuto ? 'Finding a server…' : `Switching to ${server}…`
@@ -1368,8 +1674,8 @@ export class FrameComponent implements OnInit, OnDestroy {
 
     this.providersTriedThisTitle.add(this.selectedProvider);
 
-    // HLS / CinemaOS / VidPhantom: if playback never starts, try the next provider
-    if (this.usesLocalHls || this.isCinemaosProvider) {
+    // HLS / iframe hosts without server pins: try the next provider
+    if (this.usesLocalHls || !this.usesServerParam) {
       this.serverFailoverTimer = setTimeout(() => {
         if (this.serverPlaybackOk) {
           return;
@@ -1380,7 +1686,7 @@ export class FrameComponent implements OnInit, OnDestroy {
           return;
         }
         this.selectedProvider = next;
-        if (next === 'vidfast') {
+        if (this.usesServerParam) {
           this.useAutoServer = true;
         }
         this.reloadPlayer(this.currentTime, `Trying ${this.activeProviderLabel}…`);
@@ -1418,14 +1724,13 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.armReloadOverlayTimeout();
   }
 
-  /** Current VidFast server never started — try next pin, then Auto. Do not bounce to ApiPlayer. */
+  /** Current server pin never started — try next pin, then Auto, then next provider. */
   private tryNextServerFailover(): void {
-    // Don't wait on the splash overlay — only skip if playback already recovered
     if (this.serverPlaybackOk) {
       return;
     }
 
-    if (!this.isVidfastProvider) {
+    if (!this.usesServerParam) {
       return;
     }
 
@@ -1444,6 +1749,16 @@ export class FrameComponent implements OnInit, OnDestroy {
     if (!this.serversTriedThisTitle.has(FrameComponent.AUTO_SERVER_ID)) {
       this.useAutoServer = true;
       this.reloadPlayer(this.currentTime, 'Finding a working server…');
+      return;
+    }
+
+    const next = this.nextFailoverProvider(this.selectedProvider);
+    if (next) {
+      this.selectedProvider = next;
+      if (this.usesServerParam) {
+        this.useAutoServer = true;
+      }
+      this.reloadPlayer(this.currentTime, `Trying ${this.activeProviderLabel}…`);
       return;
     }
 
@@ -1616,11 +1931,26 @@ export class FrameComponent implements OnInit, OnDestroy {
     return this.vidphantomOrigins.includes(origin) || /vidphantom\./i.test(origin || '');
   }
 
+  private isPeachifyOrigin(origin: string): boolean {
+    return this.peachifyOrigins.includes(origin) || /peachify\./i.test(origin || '');
+  }
+
+  private isVidupOrigin(origin: string): boolean {
+    return this.vidupOrigins.includes(origin) || /vidup\./i.test(origin || '');
+  }
+
+  private isVideasyOrigin(origin: string): boolean {
+    return this.videasyOrigins.includes(origin) || /videasy\./i.test(origin || '');
+  }
+
   private isRemoteIframeOrigin(origin: string): boolean {
     return (
       this.isVidfastOrigin(origin) ||
       this.isCinemaosOrigin(origin) ||
-      this.isVidphantomOrigin(origin)
+      this.isVidphantomOrigin(origin) ||
+      this.isPeachifyOrigin(origin) ||
+      this.isVidupOrigin(origin) ||
+      this.isVideasyOrigin(origin)
     );
   }
 
@@ -1717,7 +2047,7 @@ export class FrameComponent implements OnInit, OnDestroy {
         if (next) {
           this.providersTriedThisTitle.add(failed);
           this.selectedProvider = next;
-          if (next === 'vidfast') {
+          if (next === 'vidfast' || next === 'vidup' || next === 'peachify') {
             this.useAutoServer = true;
           }
           this.reloadPlayer(this.currentTime, `Trying ${this.activeProviderLabel}…`);
@@ -1758,18 +2088,57 @@ export class FrameComponent implements OnInit, OnDestroy {
   }
 
   private handleRemoteIframeMessage(event: MessageEvent): void {
-    // VidFast + CinemaOS + VidPhantom share PLAYER_EVENT
     if (!this.isRemoteIframeOrigin(event.origin || '')) {
       return;
     }
 
-    const payload = event.data;
-    const type = payload?.type || payload?.eventType;
-    const data = payload?.data ?? payload?.payload ?? payload;
+    // Videasy often posts a JSON string (progress / timestamp)
+    let payload: unknown = event.data;
+    if (typeof payload === 'string') {
+      try {
+        payload = JSON.parse(payload);
+      } catch {
+        return;
+      }
+    }
+    if (!payload || typeof payload !== 'object') {
+      return;
+    }
+
+    const envelope = payload as Record<string, unknown>;
+    const type = envelope?.['type'] || envelope?.['eventType'] || envelope?.['event'];
+    const data =
+      (envelope?.['data'] as Record<string, unknown> | undefined) ??
+      (envelope?.['payload'] as Record<string, unknown> | undefined) ??
+      envelope;
+
+    // Videasy progress payload: { id, type, progress, timestamp, duration, season, episode }
+    if (
+      this.isVideasyOrigin(event.origin || '') &&
+      data &&
+      typeof data === 'object' &&
+      ('timestamp' in data || 'progress' in data) &&
+      'duration' in data
+    ) {
+      const ts = Number((data as { timestamp?: number }).timestamp);
+      const dur = Number((data as { duration?: number }).duration);
+      this.onPlayerEvent({
+        event: 'timeupdate',
+        currentTime: Number.isFinite(ts) ? ts : this.currentTime,
+        duration: Number.isFinite(dur) ? dur : this.duration,
+        tmdbId: +this.id || 0,
+        mediaType: this.mediaType === 'tv' ? 'tv' : 'movie',
+        season: this.selectedSeason,
+        episode: this.selectedEpisode,
+        playing: this.isPlaying,
+        muted: false,
+        volume: 1,
+      });
+      return;
+    }
 
     if (type === 'PLAYER_EVENT' && data) {
-      const eventData = { ...(data as PlayerEventData) };
-      // VidPhantom omits `playing` — derive it from the event name
+      const eventData = { ...(data as unknown as PlayerEventData) };
       if (typeof eventData.playing !== 'boolean') {
         const name = String(eventData.event || '').toLowerCase();
         if (name === 'play') {
@@ -1783,35 +2152,41 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
 
     if (type === 'MEDIA_DATA' && data) {
-      // Ignore embed progress maps — PLAYER_EVENT upsertPlayback is our source.
       return;
     }
 
-    // VidPhantom next-episode hook (when nextbutton=true)
     if (type === 'PLAYER_NEXT_EPISODE') {
       this.nextEpisode();
       return;
     }
 
-    // Error / failure messages from the embed (names vary by VidFast build)
     const errorType = String(type || '').toLowerCase();
     if (
       errorType.includes('error') ||
       errorType === 'playback_error' ||
       errorType === 'player_error'
     ) {
-      this.tryNextServerFailover();
+      if (this.usesServerParam) {
+        this.tryNextServerFailover();
+      } else {
+        const next = this.nextFailoverProvider(this.selectedProvider);
+        if (next) {
+          this.providersTriedThisTitle.add(this.selectedProvider);
+          this.selectedProvider = next;
+          this.reloadPlayer(this.currentTime, `Trying ${this.activeProviderLabel}…`);
+        }
+      }
       return;
     }
 
-    // Some embeds send player fields without wrapping type
+    const loose = data as unknown as PlayerEventData;
     if (
       data &&
       typeof data === 'object' &&
       ('currentTime' in data || 'event' in data) &&
-      ((data as PlayerEventData).event || (data as PlayerEventData).playing !== undefined)
+      (loose.event || loose.playing !== undefined)
     ) {
-      this.onPlayerEvent(data as PlayerEventData);
+      this.onPlayerEvent(loose);
     }
   }
 
@@ -1838,8 +2213,14 @@ export class FrameComponent implements OnInit, OnDestroy {
       this.duration = reportedDuration;
     }
     const wasPlaying = this.isPlaying;
-    if (typeof data.playing === 'boolean') {
+    const peachifyLockPlaying = this.isPeachifyProvider && Date.now() < this.peachifyIgnorePlayingUntil;
+    if (typeof data.playing === 'boolean' && !peachifyLockPlaying) {
       this.isPlaying = data.playing;
+    }
+
+    // Peachify may restore a different S/E from its own progress cache — pin ours
+    if (this.reassertPeachifyEpisodeIfDrifted(data)) {
+      return;
     }
 
     // Cleared titles: VidFast may ignore startAt=0 and jump to its own cached time
@@ -1855,7 +2236,9 @@ export class FrameComponent implements OnInit, OnDestroy {
 
     switch (data.event) {
       case 'play':
-        this.isPlaying = true;
+        if (!peachifyLockPlaying) {
+          this.isPlaying = true;
+        }
         // CinemaOS forces muted=true on autoPlay — lift it as soon as playback starts
         if (this.isCinemaosProvider) {
           this.unmuteRemotePlayer();
@@ -1864,7 +2247,9 @@ export class FrameComponent implements OnInit, OnDestroy {
         this.persistLocalProgress(true);
         break;
       case 'pause':
-        this.isPlaying = false;
+        if (!peachifyLockPlaying) {
+          this.isPlaying = false;
+        }
         this.broadcastWatchPartyEvent('pause', data.currentTime);
         this.persistLocalProgress(true);
         break;
@@ -1872,6 +2257,10 @@ export class FrameComponent implements OnInit, OnDestroy {
         this.isPlaying = false;
         this.clearSeekGuard();
         this.persistLocalProgress(true);
+        // Peachify auto-next is off — advance with Luscreens episode list
+        if (this.isPeachifyProvider && this.mediaType === 'tv') {
+          this.nextEpisode();
+        }
         break;
       case 'seeked':
         if (
@@ -2028,11 +2417,17 @@ export class FrameComponent implements OnInit, OnDestroy {
   /**
    * Same Luscreens controller for every provider:
    * - ApiPlayer / VidPhantom → direct <video> / HLS commands
+   * - Peachify → URL reload (inbound postMessage disabled by host)
    * - CinemaOS / VidFast → iframe postMessage `{ command }` (PLAYER_EVENT bridge)
    */
   private postPlayerCommand(command: PlayerCommand, time?: number): void {
     if (this.usesLocalHls) {
       this.controlApiplayerVideo(command, time);
+      return;
+    }
+
+    if (this.isPeachifyProvider) {
+      this.controlPeachifyViaUrl(command, time);
       return;
     }
 
@@ -2047,6 +2442,160 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
 
     contentWindow.postMessage(this.toRemoteIframeCommand(command, time), '*');
+  }
+
+  /** If Peachify's PLAYER_EVENT S/E ≠ our picker, force the embed path back. */
+  private reassertPeachifyEpisodeIfDrifted(data: PlayerEventData): boolean {
+    if (!this.isPeachifyProvider || this.mediaType !== 'tv') {
+      return false;
+    }
+    const season = Math.floor(Number(data.season));
+    const episode = Math.floor(Number(data.episode));
+    if (!Number.isFinite(season) || !Number.isFinite(episode)) {
+      return false;
+    }
+    if (season === this.selectedSeason && episode === this.selectedEpisode) {
+      return false;
+    }
+    const now = Date.now();
+    if (now < this.peachifyEpisodeReassertUntil) {
+      return true;
+    }
+    this.peachifyEpisodeReassertUntil = now + 4000;
+    this.peachifyWantAutoPlay = this.isPlaying || this.peachifyWantAutoPlay;
+    this.embedUrl = this.buildPeachifyEmbedUrl(
+      Math.max(0, Math.floor(this.currentTime))
+    );
+    this.cdr.detectChanges();
+    return true;
+  }
+
+  /**
+   * Peachify has no inbound command bridge — rebuild embed with autoPlay + startAt.
+   * Must tear down the iframe (`embedUrl = null`) or browsers keep the old playback.
+   * Do not touch `isPlaying` here — `togglePlayPause` already flips it once.
+   */
+  private controlPeachifyViaUrl(command: PlayerCommand, time?: number): void {
+    if (command === 'getStatus') {
+      return;
+    }
+
+    const at = Math.max(0, Math.floor(time ?? this.currentTime));
+
+    if (command === 'play') {
+      this.peachifyWantAutoPlay = true;
+    } else if (command === 'pause') {
+      this.peachifyWantAutoPlay = false;
+    }
+
+    this.currentTime = at;
+    this.lastSeekTarget = at;
+    this.seekGuardUntil = Date.now() + FrameComponent.SEEK_GUARD_MS;
+    this.peachifyIgnorePlayingUntil = Date.now() + 2800;
+
+    // Still try postMessage in case the host re-enables inbound control
+    this.tryPeachifyPostMessage(command, at);
+
+    if (this.peachifyControlTimer != null) {
+      clearTimeout(this.peachifyControlTimer);
+      this.peachifyControlTimer = null;
+    }
+
+    const delayMs = command === 'seek' ? 220 : 0;
+    const apply = (): void => {
+      this.peachifyControlTimer = null;
+      this.remountPeachifyEmbed(at);
+    };
+
+    if (delayMs > 0) {
+      this.peachifyControlTimer = setTimeout(apply, delayMs);
+    } else {
+      apply();
+    }
+  }
+
+  /** Tear down + rebuild so `autoPlay` / `startAt` changes always take effect. */
+  private remountPeachifyEmbed(startAt: number): void {
+    if (!this.isPeachifyProvider) {
+      return;
+    }
+    if (this.peachifyRemountTimer != null) {
+      clearTimeout(this.peachifyRemountTimer);
+      this.peachifyRemountTimer = null;
+    }
+
+    const stayFullscreen = this.isFullscreen || !!document.fullscreenElement;
+
+    this.playerReloadLabel = 'Loading…';
+    this.isPlayerReloading = true;
+    this.showPlayerControls = true;
+    this.armReloadOverlayTimeout();
+    this.destroyApiplayerVideo();
+
+    // Lock surface BEFORE clearing embedUrl so fullscreen container is not destroyed
+    this.playerSurfaceLocked = true;
+    this.embedUrl = null;
+    this.cdr.detectChanges();
+
+    this.peachifyRemountTimer = setTimeout(() => {
+      this.peachifyRemountTimer = null;
+      if (!this.isPeachifyProvider) {
+        this.playerSurfaceLocked = false;
+        return;
+      }
+      this.embedUrl = this.buildPeachifyEmbedUrl(startAt);
+      this.isPlaying = this.peachifyWantAutoPlay;
+      this.playerSurfaceLocked = false;
+      this.cdr.detectChanges();
+      this.ensureFullscreenPreserved(stayFullscreen);
+    }, 30);
+  }
+
+  /** Re-enter fullscreen if a remount dropped the native fullscreen element. */
+  private ensureFullscreenPreserved(shouldBeFullscreen: boolean): void {
+    if (!shouldBeFullscreen) {
+      return;
+    }
+    this.isFullscreen = true;
+    const container = this.playerContainer?.nativeElement;
+    if (!container) {
+      return;
+    }
+    if (document.fullscreenElement === container) {
+      return;
+    }
+    // Best-effort restore (may no-op without a user gesture on some browsers)
+    void container.requestFullscreen?.().catch(() => undefined);
+  }
+
+  private tryPeachifyPostMessage(command: PlayerCommand, time: number): void {
+    const win = this.playerIframe?.nativeElement?.contentWindow;
+    if (!win) {
+      return;
+    }
+    const payloads: unknown[] = [
+      { command },
+      { command, time },
+      { type: 'PLAYER_COMMAND', command, time },
+      { type: 'command', command, time },
+      JSON.stringify({ command }),
+      JSON.stringify({ command, time }),
+    ];
+    if (command === 'seek') {
+      payloads.push(
+        { command: 'seek', time },
+        { command: 'seek', value: time },
+        { command: 'seek', seconds: time }
+      );
+    }
+    for (const payload of payloads) {
+      try {
+        win.postMessage(payload, '*');
+        win.postMessage(payload, 'https://peachify.top');
+      } catch {
+        // ignore cross-origin / closed frame
+      }
+    }
   }
 
   /**
@@ -2127,9 +2676,18 @@ export class FrameComponent implements OnInit, OnDestroy {
       this.revealPlayerControls();
       return;
     }
-    this.postPlayerCommand(this.isPlaying ? 'pause' : 'play');
+    const nextPlaying = !this.isPlaying;
+    // Peachify: set autoPlay intent before remount (inbound postMessage is disabled)
+    if (this.isPeachifyProvider) {
+      this.peachifyWantAutoPlay = nextPlaying;
+      this.isPlaying = nextPlaying;
+      this.postPlayerCommand(nextPlaying ? 'play' : 'pause');
+      this.onPlaybackStateChanged();
+      return;
+    }
+    this.postPlayerCommand(nextPlaying ? 'play' : 'pause');
     // Optimistic UI so controls don't hide before the player event arrives
-    this.isPlaying = !this.isPlaying;
+    this.isPlaying = nextPlaying;
     this.onPlaybackStateChanged();
   }
 
@@ -2142,20 +2700,44 @@ export class FrameComponent implements OnInit, OnDestroy {
     return `${pct}%`;
   }
 
-  /** Tap outside the center: toggle controls only (do not play/pause). */
-  onPlayerSurfaceTap(): void {
+  /**
+   * One tap outside the center toggles controls (show ↔ hide).
+   * Uses pointerup so mobile doesn't get mousemove-show + click-hide.
+   */
+  onPlayerSurfacePointerUp(event: PointerEvent): void {
     if (this.isPlayerReloading) {
       return;
     }
+    // Don't steal taps meant for provider / server / CC menus
+    if (this.showServerMenu || this.showProviderMenu || this.showCcMenu) {
+      return;
+    }
+    // Center button handles play/pause; ignore bubbled pointerup from it
+    const target = event.target as HTMLElement | null;
+    if (target?.closest?.('.player-center-hit')) {
+      return;
+    }
+    // Only primary button / touch / pen
+    if (event.pointerType === 'mouse' && event.button !== 0) {
+      return;
+    }
+    if (Date.now() < this.controlsToggleSuppressedUntil) {
+      return;
+    }
+
+    event.preventDefault();
     if (this.showPlayerControls) {
       this.hidePlayerControls();
       return;
     }
     this.revealPlayerControls();
+    // Swallow the synthetic click that follows touch/pen
+    this.controlsToggleSuppressedUntil = Date.now() + 350;
   }
 
   /** Center hit only: toggle play/pause. */
   onCenterPlayPauseTap(event: Event): void {
+    event.preventDefault();
     event.stopPropagation();
     if (this.isPlayerReloading) {
       return;
@@ -2165,23 +2747,40 @@ export class FrameComponent implements OnInit, OnDestroy {
       return;
     }
     this.togglePlayPause();
+    this.controlsToggleSuppressedUntil = Date.now() + 350;
   }
 
-  /** Mouse move over the video reveals controls while playing. */
-  onPlayerSurfaceMove(): void {
-    if (Date.now() < this.controlsRevealSuppressedUntil) {
+  /**
+   * Hover: keep chrome alive while visible.
+   * On fine pointers only, hover can reveal — but suppress the trailing click toggle.
+   */
+  onPlayerSurfaceMove(event?: MouseEvent): void {
+    if (Date.now() < this.controlsToggleSuppressedUntil) {
       return;
     }
     if (this.showPlayerControls) {
       this.scheduleControlsHide();
       return;
     }
+    // Touch devices synthesize mousemove before click — never auto-reveal there
+    const finePointer =
+      typeof window !== 'undefined' &&
+      window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+    if (!finePointer) {
+      return;
+    }
+    // Ignore moves with no buttons that are part of a drag; simple hover reveal
+    if (event && event.buttons !== 0) {
+      return;
+    }
     this.revealPlayerControls();
+    this.controlsToggleSuppressedUntil = Date.now() + 350;
   }
 
   revealPlayerControls(): void {
     this.showPlayerControls = true;
     this.scheduleControlsHide();
+    this.cdr.detectChanges();
   }
 
   hidePlayerControls(): void {
@@ -2190,8 +2789,9 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.showProviderMenu = false;
     this.showServerMenu = false;
     this.showPlayerControls = false;
-    // Ignore trailing mousemove from the same click so chrome stays hidden
-    this.controlsRevealSuppressedUntil = Date.now() + 400;
+    // Ignore trailing mousemove / ghost click from the same gesture
+    this.controlsToggleSuppressedUntil = Date.now() + 400;
+    this.cdr.detectChanges();
   }
 
   private onPlaybackStateChanged(): void {
