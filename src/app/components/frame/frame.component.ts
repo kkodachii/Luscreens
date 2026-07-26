@@ -284,6 +284,15 @@ export class FrameComponent implements OnInit, OnDestroy {
   /** Ignore outbound play/pause events while our URL control settles. */
   private peachifyIgnorePlayingUntil = 0;
 
+  /**
+   * VidFast / VidUP inbound postMessage is unreliable — same URL remount control as Peachify.
+   */
+  private vidfastWantAutoPlay = true;
+  private vidfastControlTimer: ReturnType<typeof setTimeout> | null = null;
+  private vidfastRemountTimer: ReturnType<typeof setTimeout> | null = null;
+  private vidfastEmbedNonce = 0;
+  private vidfastIgnorePlayingUntil = 0;
+
   private orientationRaf: number | null = null;
   /** True when using fixed inset-0 fullscreen because requestFullscreen failed (common on iOS web). */
   private cssFullscreenFallback = false;
@@ -294,6 +303,7 @@ export class FrameComponent implements OnInit, OnDestroy {
 
   /** Auto-failover: try next server if current one never starts playback. */
   private static readonly SERVER_FAILOVER_MS = 10000;
+  private static readonly PEACHIFY_FAILOVER_MS = 6000;
   private static readonly APIPLAYER_FAILOVER_MS = 8000;
   private static readonly AUTO_SERVER_ID = 'auto';
   private serverFailoverTimer: ReturnType<typeof setTimeout> | null = null;
@@ -302,6 +312,10 @@ export class FrameComponent implements OnInit, OnDestroy {
   private serverPlaybackOk = false;
   /** Last media time that proved the stream is actually advancing (not just metadata). */
   private lastPlaybackProgressSample = -1;
+  /** Embed startAt we requested — static echoes of this must not count as playback. */
+  private embedStartAtSeconds = 0;
+  /** Skip one failover arm after intentional play/pause/seek remounts. */
+  private skipNextFailoverArm = false;
 
   get isVidfastProvider(): boolean {
     return this.selectedProvider === 'vidfast';
@@ -399,7 +413,8 @@ export class FrameComponent implements OnInit, OnDestroy {
       }
       case 'peachify':
         // https://peachify.pro/ — ?server= on peachify.top
-        return ['iron', 'spider', 'multi', 'dark', 'wolf'];
+        // Iron often hangs on "LOADING SOURCES" — try it last.
+        return ['spider', 'wolf', 'multi', 'dark', 'iron'];
       case 'vidup':
         // Docs expose server= but no public pin list — Auto only
         return [];
@@ -571,6 +586,14 @@ export class FrameComponent implements OnInit, OnDestroy {
     if (this.peachifyRemountTimer != null) {
       clearTimeout(this.peachifyRemountTimer);
       this.peachifyRemountTimer = null;
+    }
+    if (this.vidfastControlTimer != null) {
+      clearTimeout(this.vidfastControlTimer);
+      this.vidfastControlTimer = null;
+    }
+    if (this.vidfastRemountTimer != null) {
+      clearTimeout(this.vidfastRemountTimer);
+      this.vidfastRemountTimer = null;
     }
     if (this.orientationRaf != null) {
       cancelAnimationFrame(this.orientationRaf);
@@ -826,6 +849,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     if (this.mediaType === 'tv') {
       this.resetPlayerState();
       this.peachifyWantAutoPlay = true;
+      this.vidfastWantAutoPlay = true;
       this.openPlayer();
       this.syncWatchPartyMedia();
     }
@@ -924,6 +948,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     });
 
     const startAt = Math.max(0, Math.floor(this.resolveStartAt(resumeAt)));
+    this.embedStartAtSeconds = startAt;
     if (startAt > 0) {
       params.set('startTime', String(startAt));
     }
@@ -935,13 +960,15 @@ export class FrameComponent implements OnInit, OnDestroy {
   private buildVidfastEmbedUrl(path: string, resumeAt?: number): SafeResourceUrl {
     this.pendingSeekSeconds = null;
     const params = new URLSearchParams({
-      autoPlay: 'true',
+      autoPlay: this.vidfastWantAutoPlay ? 'true' : 'false',
       theme: 'red',
       title: 'false',
       // Reduce embed chrome so users rely on our custom controls instead
       hideServer: 'true',
       fullscreenButton: 'false',
       chromecast: 'false',
+      // Force a real navigation on every play/pause/seek remount
+      _cb: String(++this.vidfastEmbedNonce),
     });
 
     // Omit server in Auto mode so VidFast can find a working source itself
@@ -956,7 +983,9 @@ export class FrameComponent implements OnInit, OnDestroy {
     const startAt = this.resolveStartAt(resumeAt);
     // Always set startAt — omitting it lets VidFast resume from its own iframe cache
     // (which brought back cleared history timestamps).
-    params.set('startAt', String(Math.max(0, Math.floor(startAt))));
+    const flooredStart = Math.max(0, Math.floor(startAt));
+    this.embedStartAtSeconds = flooredStart;
+    params.set('startAt', String(flooredStart));
 
     if (this.mediaType === 'tv') {
       params.set('nextButton', 'true');
@@ -967,16 +996,17 @@ export class FrameComponent implements OnInit, OnDestroy {
     return this.sanitizer.bypassSecurityTrustResourceUrl(url);
   }
 
-  /** https://vidup.to/ — same shape as VidFast */
+  /** https://vidup.to/ — same shape as VidFast (URL remount control). */
   private buildVidupEmbedUrl(path: string, resumeAt?: number): SafeResourceUrl {
     this.pendingSeekSeconds = null;
     const params = new URLSearchParams({
-      autoPlay: 'true',
+      autoPlay: this.vidfastWantAutoPlay ? 'true' : 'false',
       theme: 'e50914',
       title: 'false',
       hideServer: 'true',
       fullscreenButton: 'false',
       chromecast: 'false',
+      _cb: String(++this.vidfastEmbedNonce),
     });
     if (!this.useAutoServer && this.selectedServer) {
       params.set('server', this.selectedServer);
@@ -984,7 +1014,9 @@ export class FrameComponent implements OnInit, OnDestroy {
     if (this.selectedSubtitle) {
       params.set('sub', this.selectedSubtitle);
     }
-    params.set('startAt', String(Math.max(0, Math.floor(this.resolveStartAt(resumeAt)))));
+    const startAt = Math.max(0, Math.floor(this.resolveStartAt(resumeAt)));
+    this.embedStartAtSeconds = startAt;
+    params.set('startAt', String(startAt));
     if (this.mediaType === 'tv') {
       params.set('nextButton', 'true');
       params.set('autoNext', 'true');
@@ -1012,9 +1044,8 @@ export class FrameComponent implements OnInit, OnDestroy {
         : `embed/movie/${this.id}`;
 
     const params = new URLSearchParams({
-      autoPlay: this.peachifyWantAutoPlay ? 'true' : 'false',
       accent: 'e50914',
-      // Hide Peachify chrome entirely — Luscreens owns controls; pins still use ?server=
+      // Hide Peachify chrome — Luscreens owns controls
       servers: 'hide',
       pip: 'hide',
       cast: 'hide',
@@ -1022,7 +1053,6 @@ export class FrameComponent implements OnInit, OnDestroy {
       volume: 'hide',
       captions: 'hide',
       quality: 'hide',
-      play: 'hide',
       rewind: 'hide',
       forward: 'hide',
       timegroup: 'hide',
@@ -1034,14 +1064,22 @@ export class FrameComponent implements OnInit, OnDestroy {
       _cb: String(++this.peachifyEmbedNonce),
     });
 
+    // Docs: autoPlay defaults to true — only pass false to disable.
+    // Explicit autoPlay=true after a pause remount is less reliable than omitting it.
+    if (!this.peachifyWantAutoPlay) {
+      params.set('autoPlay', 'false');
+    }
+
     const peachifyPins = this.serversForProvider('peachify');
-    if (!this.useAutoServer) {
-      const pin = peachifyPins.includes(this.selectedServer)
+    // Always pin a source. Peachify's omit-server race often sticks on Iron
+    // ("LOADING SOURCES" / others Waiting) and never recovers on its own.
+    const pin = this.useAutoServer
+      ? peachifyPins[0]
+      : peachifyPins.includes(this.selectedServer)
         ? this.selectedServer
         : peachifyPins[0];
-      if (pin) {
-        params.set('server', pin);
-      }
+    if (pin) {
+      params.set('server', pin);
     }
 
     // Docs expect subtitle labels (e.g. English), not ISO codes
@@ -1054,6 +1092,7 @@ export class FrameComponent implements OnInit, OnDestroy {
 
     // Always pin start — Peachify otherwise restores its own peachifyProgress cache
     const startAt = Math.max(0, Math.floor(this.resolveStartAt(resumeAt)));
+    this.embedStartAtSeconds = startAt;
     params.set('startAt', String(startAt));
     params.set('progress', String(startAt));
     params.set('t', String(startAt));
@@ -1087,6 +1126,7 @@ export class FrameComponent implements OnInit, OnDestroy {
       params.set('autoplayNextEpisode', 'true');
     }
     const startAt = Math.max(0, Math.floor(this.resolveStartAt(resumeAt)));
+    this.embedStartAtSeconds = startAt;
     if (startAt > 0) {
       params.set('progress', String(startAt));
     }
@@ -1582,14 +1622,38 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.beginClearedBootstrapIfNeeded();
     this.requestPlayerStatus();
     this.clearPlayerReloading();
-    this.armServerFailoverWatch();
-    // CinemaOS autoPlay starts muted by design — safe to lift after load.
-    // Do NOT unmute VidFast/others here: unmuted autoplay without a user gesture
-    // is blocked by browsers and pauses/kills the embed.
-    if (this.isCinemaosProvider) {
-      setTimeout(() => this.unmuteRemotePlayer(), 400);
-      setTimeout(() => this.unmuteRemotePlayer(), 1200);
+    // Server/provider remounts request autoPlay — keep UI in sync while the embed boots.
+    // Early `playing:false` from the host must not leave a paused center button.
+    if (this.isPeachifyProvider && this.peachifyWantAutoPlay) {
+      this.isPlaying = true;
+      this.peachifyIgnorePlayingUntil = Math.max(
+        this.peachifyIgnorePlayingUntil,
+        Date.now() + 3500
+      );
+    } else if (
+      (this.isVidfastProvider || this.isVidupProvider) &&
+      this.vidfastWantAutoPlay
+    ) {
+      this.isPlaying = true;
+      this.vidfastIgnorePlayingUntil = Math.max(
+        this.vidfastIgnorePlayingUntil,
+        Date.now() + 3500
+      );
     }
+    if (this.skipNextFailoverArm) {
+      this.skipNextFailoverArm = false;
+      // Only suppress failover when we already had working playback (play/pause/seek remount).
+      if (this.serverPlaybackOk) {
+        this.clearServerFailoverWatch();
+      } else {
+        this.armServerFailoverWatch();
+      }
+    } else {
+      this.armServerFailoverWatch();
+    }
+    // CinemaOS autoPlay starts muted by design. Do NOT unmute on load timers —
+    // unmuted autoplay without a gesture pauses the embed and our failover then
+    // hops to another provider mid-watch. Unmute happens on user play/tap instead.
     if (this.selectedSubtitle && !this.usesEmbedSubParam) {
       void this.applySubtitleSelection(this.selectedSubtitle, false);
     }
@@ -1771,6 +1835,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.providerLockedByUser = true;
     this.selectedProvider = provider;
     this.peachifyWantAutoPlay = true;
+    this.vidfastWantAutoPlay = true;
     this.showProviderMenu = false;
     this.showServerMenu = false;
     this.resetServerFailoverState();
@@ -1788,6 +1853,8 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
 
     if (provider === 'peachify') {
+      this.peachifyWantAutoPlay = true;
+      this.isPlaying = true;
       this.playerReloadLabel = `Switching to ${this.activeProviderLabel}…`;
       this.remountPeachifyEmbed(Math.max(0, Math.floor(this.currentTime)));
       return;
@@ -1822,13 +1889,23 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.showServerMenu = false;
     this.resetServerFailoverState();
 
-    // Peachify needs a full iframe remount or ?server= is ignored
+    // Peachify / VidFast need a full iframe remount or ?server= is ignored
     if (this.isPeachifyProvider) {
       this.peachifyWantAutoPlay = true;
+      this.isPlaying = true;
       this.playerReloadLabel = wantsAuto
         ? 'Finding a server…'
         : `Switching to ${server}…`;
       this.remountPeachifyEmbed(Math.max(0, Math.floor(this.currentTime)));
+      return;
+    }
+    if (this.isVidfastProvider || this.isVidupProvider) {
+      this.vidfastWantAutoPlay = true;
+      this.isPlaying = true;
+      this.playerReloadLabel = wantsAuto
+        ? 'Finding a server…'
+        : `Switching to ${server}…`;
+      this.remountVidfastEmbed(Math.max(0, Math.floor(this.currentTime)));
       return;
     }
 
@@ -1844,14 +1921,19 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.providersTriedThisTitle.clear();
     this.serverPlaybackOk = false;
     this.lastPlaybackProgressSample = -1;
+    this.embedStartAtSeconds = 0;
   }
 
   private switchProviderForFailover(next: StreamProvider): boolean {
-    // Still hop providers when every VidFast/VidUP pin failed — user lock only
-    // blocks soft preference, not dead-end recovery.
+    // Keep the user's manual provider pick — only cycle servers under it.
+    if (this.providerLockedByUser) {
+      return false;
+    }
     this.selectedProvider = next;
-    if (next === 'vidfast' || next === 'vidup' || next === 'peachify') {
+    if (next === 'peachify' || next === 'vidfast' || next === 'vidup') {
       this.useAutoServer = true;
+      this.peachifyWantAutoPlay = true;
+      this.vidfastWantAutoPlay = true;
     }
     return true;
   }
@@ -1877,6 +1959,10 @@ export class FrameComponent implements OnInit, OnDestroy {
         if (this.serverPlaybackOk) {
           return;
         }
+        if (this.providerLockedByUser) {
+          this.showNoServerFound();
+          return;
+        }
         const next = this.nextFailoverProvider(this.selectedProvider);
         if (!next || !this.switchProviderForFailover(next)) {
           this.showNoServerFound();
@@ -1887,16 +1973,31 @@ export class FrameComponent implements OnInit, OnDestroy {
       return;
     }
 
-    const triedKey = this.useAutoServer
-      ? FrameComponent.AUTO_SERVER_ID
-      : this.selectedServer;
-    if (triedKey) {
-      this.serversTriedThisTitle.add(triedKey);
+    // Peachify Auto pins the first preferred source — mark that pin tried too so
+    // failover does not immediately retry the same hung source.
+    if (this.isPeachifyProvider && this.useAutoServer) {
+      const softPin = this.serversForProvider('peachify')[0];
+      if (softPin) {
+        this.serversTriedThisTitle.add(softPin);
+      }
+      this.serversTriedThisTitle.add(FrameComponent.AUTO_SERVER_ID);
+    } else {
+      const triedKey = this.useAutoServer
+        ? FrameComponent.AUTO_SERVER_ID
+        : this.selectedServer;
+      if (triedKey) {
+        this.serversTriedThisTitle.add(triedKey);
+      }
     }
 
     this.serverFailoverTimer = setTimeout(() => {
+      if (this.serverPlaybackOk) {
+        return;
+      }
       this.tryNextServerFailover();
-    }, FrameComponent.SERVER_FAILOVER_MS);
+    }, this.isPeachifyProvider
+      ? FrameComponent.PEACHIFY_FAILOVER_MS
+      : FrameComponent.SERVER_FAILOVER_MS);
   }
 
   private markServerPlaybackOk(force = false): void {
@@ -1912,7 +2013,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.clearPlayerReloading();
   }
 
-  /** Confirm the stream is really moving (filters out 500 error pages that still post metadata). */
+  /** Confirm the stream is really moving (filters out 500 error pages / startAt echoes). */
   private notePlaybackProgress(reportedTime: number, eventName?: string): void {
     if (!Number.isFinite(reportedTime)) {
       return;
@@ -1924,13 +2025,32 @@ export class FrameComponent implements OnInit, OnDestroy {
       return;
     }
 
+    // CinemaOS / Videasy: a real play (+ duration) means the stream is up —
+    // don't wait for a second tick or the 8s provider hop steals the session.
+    if (
+      (this.isCinemaosProvider || this.isVideasyProvider) &&
+      name === 'play' &&
+      this.duration > 1
+    ) {
+      this.lastPlaybackProgressSample = reportedTime;
+      this.markServerPlaybackOk(true);
+      return;
+    }
+
     if (this.lastPlaybackProgressSample < 0) {
       this.lastPlaybackProgressSample = reportedTime;
       return;
     }
 
-    // Require the clock to advance — resume startAt / duration dumps don't count.
-    if (reportedTime > this.lastPlaybackProgressSample + 0.75) {
+    // Require the clock to advance — Peachify/VidFast dump resume startAt + duration
+    // while stuck on "LOADING SOURCES" / error shells; that must not cancel failover.
+    const advancedFromSample =
+      reportedTime > this.lastPlaybackProgressSample + 0.75;
+    const advancedPastResume =
+      reportedTime > this.embedStartAtSeconds + 0.9 &&
+      this.lastPlaybackProgressSample <= this.embedStartAtSeconds + 0.5;
+
+    if (advancedFromSample || advancedPastResume) {
       this.lastPlaybackProgressSample = reportedTime;
       this.markServerPlaybackOk(true);
       return;
@@ -1947,12 +2067,22 @@ export class FrameComponent implements OnInit, OnDestroy {
   }
 
   /** Current server pin never started — try next pin, then Auto, then next provider. */
-  private tryNextServerFailover(): void {
-    // Force failover even if we previously thought playback was ok (mid-stream 500).
+  private tryNextServerFailover(force = false): void {
+    if (this.serverPlaybackOk && !force) {
+      return;
+    }
+    // Once a provider has actually played, never auto-hop away — only the user can.
+    if (this.serverPlaybackOk && force) {
+      return;
+    }
     this.serverPlaybackOk = false;
     this.clearServerFailoverWatch();
 
     if (!this.usesServerParam) {
+      if (this.providerLockedByUser) {
+        this.showNoServerFound();
+        return;
+      }
       const next = this.nextFailoverProvider(this.selectedProvider);
       if (next && this.switchProviderForFailover(next)) {
         this.reloadPlayer(this.currentTime, `Trying ${this.activeProviderLabel}…`);
@@ -1966,8 +2096,12 @@ export class FrameComponent implements OnInit, OnDestroy {
       .map((s) => s.id)
       .filter((id) => id !== FrameComponent.AUTO_SERVER_ID);
 
-    // Prefer Auto first when nothing has been tried yet
-    if (!this.serversTriedThisTitle.has(FrameComponent.AUTO_SERVER_ID)) {
+    // Prefer Auto first when nothing has been tried yet (VidFast/VidUP race).
+    // Peachify skips this — its omit-server race hangs on dead sources.
+    if (
+      !this.isPeachifyProvider &&
+      !this.serversTriedThisTitle.has(FrameComponent.AUTO_SERVER_ID)
+    ) {
       this.useAutoServer = true;
       this.serversTriedThisTitle.add(FrameComponent.AUTO_SERVER_ID);
       this.reloadPlayer(this.currentTime, 'Finding a working server…');
@@ -1980,6 +2114,11 @@ export class FrameComponent implements OnInit, OnDestroy {
       this.selectedServer = nextPinned;
       this.serversTriedThisTitle.add(nextPinned);
       this.reloadPlayer(this.currentTime, `Trying ${nextPinned}…`);
+      return;
+    }
+
+    if (this.providerLockedByUser) {
+      this.showNoServerFound();
       return;
     }
 
@@ -2413,13 +2552,18 @@ export class FrameComponent implements OnInit, OnDestroy {
       errorType === 'playback_error' ||
       errorType === 'player_error'
     ) {
+      // CinemaOS (and other iframes) emit soft/transient error messages while
+      // buffering or unmuting — never steal a working stream mid-playback.
+      if (this.serverPlaybackOk || this.providerLockedByUser) {
+        return;
+      }
       if (this.usesServerParam) {
-        this.tryNextServerFailover();
+        this.tryNextServerFailover(true);
       } else {
-        const next = this.nextFailoverProvider(this.selectedProvider);
-        if (next) {
-          this.providersTriedThisTitle.add(this.selectedProvider);
-          this.selectedProvider = next;
+        const failed = this.selectedProvider;
+        this.providersTriedThisTitle.add(failed);
+        const next = this.nextFailoverProvider(failed);
+        if (next && this.switchProviderForFailover(next)) {
           this.reloadPlayer(this.currentTime, `Trying ${this.activeProviderLabel}…`);
         }
       }
@@ -2461,7 +2605,10 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
     const wasPlaying = this.isPlaying;
     const peachifyLockPlaying = this.isPeachifyProvider && Date.now() < this.peachifyIgnorePlayingUntil;
-    if (typeof data.playing === 'boolean' && !peachifyLockPlaying) {
+    const vidfastLockPlaying =
+      (this.isVidfastProvider || this.isVidupProvider) &&
+      Date.now() < this.vidfastIgnorePlayingUntil;
+    if (typeof data.playing === 'boolean' && !peachifyLockPlaying && !vidfastLockPlaying) {
       this.isPlaying = data.playing;
     }
 
@@ -2477,9 +2624,13 @@ export class FrameComponent implements OnInit, OnDestroy {
 
     const eventName = String(data.event || '').toLowerCase();
     if (eventName === 'error' || eventName === 'playbackerror') {
+      // Don't yank a healthy CinemaOS/VidFast session for a one-off buffer error.
+      if (this.serverPlaybackOk || this.providerLockedByUser) {
+        return;
+      }
       this.serverPlaybackOk = false;
       this.lastPlaybackProgressSample = -1;
-      this.tryNextServerFailover();
+      this.tryNextServerFailover(true);
       return;
     }
 
@@ -2489,19 +2640,20 @@ export class FrameComponent implements OnInit, OnDestroy {
 
     switch (data.event) {
       case 'play':
-        if (!peachifyLockPlaying) {
+        if (!peachifyLockPlaying && !vidfastLockPlaying) {
           this.isPlaying = true;
         }
-        // CinemaOS forces muted=true on autoPlay — lift only there.
-        // VidFast must stay muted on autoplay or the browser pauses the iframe.
-        if (this.isCinemaosProvider) {
-          this.unmuteRemotePlayer();
+        // CinemaOS / Videasy play events are trustworthy — lock failover immediately.
+        if (this.isCinemaosProvider || this.isVideasyProvider) {
+          this.markServerPlaybackOk(true);
         }
+        // CinemaOS forces muted=true on autoPlay — lift only on a real user gesture.
+        // Unmuting from here (or iframe load timers) can pause the embed and trip failover.
         this.broadcastWatchPartyEvent('play', data.currentTime);
         this.persistLocalProgress(true);
         break;
       case 'pause':
-        if (!peachifyLockPlaying) {
+        if (!peachifyLockPlaying && !vidfastLockPlaying) {
           this.isPlaying = false;
         }
         this.broadcastWatchPartyEvent('pause', data.currentTime);
@@ -2669,8 +2821,8 @@ export class FrameComponent implements OnInit, OnDestroy {
   /**
    * Same Luscreens controller for every provider:
    * - ApiPlayer / VidPhantom → direct <video> / HLS commands
-   * - Peachify → URL reload (inbound postMessage disabled by host)
-   * - CinemaOS / VidFast / VidUP / Videasy → iframe postMessage { command }
+   * - Peachify / VidFast / VidUP → URL reload (`autoPlay` + `startAt`)
+   * - CinemaOS / Videasy → iframe postMessage { command }
    */
   private postPlayerCommand(command: PlayerCommand, time?: number): void {
     if (this.usesLocalHls) {
@@ -2683,20 +2835,111 @@ export class FrameComponent implements OnInit, OnDestroy {
       return;
     }
 
+    // VidFast / VidUP: inbound postMessage is ignored by the live player — remount instead
+    if (this.isVidfastProvider || this.isVidupProvider) {
+      this.controlVidfastViaUrl(command, time);
+      return;
+    }
 
-    const contentWindow = this.playerIframe?.nativeElement?.contentWindow;
+    const contentWindow = this.getPlayerContentWindow();
     if (!contentWindow) {
       return;
     }
 
-    // Unmute on explicit play (user gesture / watch-party host control).
-    // Safe for VidFast — unlike load-time unmute, this has a user activation path.
     if (command === 'play') {
       this.unmuteRemotePlayer();
     }
 
-    const payload = this.toRemoteIframeCommand(command, time);
-    contentWindow.postMessage(payload, '*');
+    this.dispatchRemotePlayerCommand(contentWindow, command, time);
+
+    if (
+      this.isCinemaosProvider &&
+      (command === 'play' || command === 'pause' || command === 'seek')
+    ) {
+      setTimeout(() => {
+        const win = this.getPlayerContentWindow();
+        if (win) {
+          this.dispatchRemotePlayerCommand(win, command, time);
+        }
+      }, 250);
+    }
+  }
+
+  /** Prefer ViewChild; fall back to a live DOM query after *ngIf remounts. */
+  private getPlayerContentWindow(): Window | null {
+    const fromRef = this.playerIframe?.nativeElement?.contentWindow ?? null;
+    if (fromRef) {
+      return fromRef;
+    }
+    const iframe = this.playerContainer?.nativeElement?.querySelector(
+      'iframe.player-embed'
+    ) as HTMLIFrameElement | null;
+    return iframe?.contentWindow ?? null;
+  }
+
+  /**
+   * VidFast docs accept object + JSON-stringified envelopes.
+   * Seek uses both `time` and `value` because hosts disagree on the field name.
+   */
+  private dispatchRemotePlayerCommand(
+    win: Window,
+    command: PlayerCommand,
+    time?: number
+  ): void {
+    const at = time ?? this.currentTime;
+    const payloads: unknown[] = [
+      this.toRemoteIframeCommand(command, time),
+      { command },
+      { type: 'PLAYER_COMMAND', command },
+      { type: 'command', command },
+      JSON.stringify({ command }),
+    ];
+
+    if (command === 'seek') {
+      payloads.push(
+        { command: 'seek', time: at },
+        { command: 'seek', value: at },
+        { command: 'seek', seconds: at },
+        { type: 'PLAYER_COMMAND', command: 'seek', time: at },
+        { type: 'PLAYER_COMMAND', command: 'seek', value: at },
+        JSON.stringify({ command: 'seek', time: at }),
+        JSON.stringify({ command: 'seek', value: at })
+      );
+    } else if (time != null) {
+      payloads.push(
+        { command, time: at },
+        JSON.stringify({ command, time: at })
+      );
+    } else {
+      payloads.push(JSON.stringify({ command }));
+    }
+
+    const origins = ['*', ...this.remoteCommandOrigins()];
+    for (const payload of payloads) {
+      for (const origin of origins) {
+        try {
+          win.postMessage(payload, origin);
+        } catch {
+          // ignore closed / mismatched target
+        }
+      }
+    }
+  }
+
+  private remoteCommandOrigins(): string[] {
+    if (this.isVidfastProvider) {
+      return this.vidfastOrigins;
+    }
+    if (this.isVidupProvider) {
+      return this.vidupOrigins;
+    }
+    if (this.isCinemaosProvider) {
+      return this.cinemaosOrigins;
+    }
+    if (this.isVideasyProvider) {
+      return this.videasyOrigins;
+    }
+    return [];
   }
 
   /** If Peachify's PLAYER_EVENT S/E ≠ our picker, force the embed path back. */
@@ -2769,6 +3012,115 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
   }
 
+  /**
+   * VidFast / VidUP — rebuild embed with autoPlay + startAt (postMessage is ignored).
+   * Tear down the iframe so browsers always navigate.
+   */
+  private controlVidfastViaUrl(command: PlayerCommand, time?: number): void {
+    if (command === 'getStatus') {
+      return;
+    }
+
+    const at = Math.max(0, Math.floor(time ?? this.currentTime));
+
+    if (command === 'play') {
+      this.vidfastWantAutoPlay = true;
+    } else if (command === 'pause') {
+      this.vidfastWantAutoPlay = false;
+    }
+    // seek keeps current autoPlay intent (playing stays playing)
+
+    this.currentTime = at;
+    this.lastSeekTarget = at;
+    this.seekGuardUntil = Date.now() + FrameComponent.SEEK_GUARD_MS;
+    this.vidfastIgnorePlayingUntil = Date.now() + 2800;
+
+    // Best-effort postMessage in case a host build starts honoring it
+    const win = this.getPlayerContentWindow();
+    if (win) {
+      this.dispatchRemotePlayerCommand(win, command, at);
+    }
+
+    if (this.vidfastControlTimer != null) {
+      clearTimeout(this.vidfastControlTimer);
+      this.vidfastControlTimer = null;
+    }
+
+    const delayMs = command === 'seek' ? 180 : 0;
+    const apply = (): void => {
+      this.vidfastControlTimer = null;
+      this.remountVidfastEmbed(at);
+    };
+
+    if (delayMs > 0) {
+      this.vidfastControlTimer = setTimeout(apply, delayMs);
+    } else {
+      apply();
+    }
+  }
+
+  private remountVidfastEmbed(startAt: number): void {
+    if (!this.isVidfastProvider && !this.isVidupProvider) {
+      return;
+    }
+    if (this.vidfastRemountTimer != null) {
+      clearTimeout(this.vidfastRemountTimer);
+      this.vidfastRemountTimer = null;
+    }
+
+    const stayFullscreen = this.isFullscreen || !!document.fullscreenElement;
+    const path = this.getEmbedPath();
+    if (!path) {
+      return;
+    }
+
+    const hadPlayback = this.serverPlaybackOk;
+    const wantPlay = this.vidfastWantAutoPlay;
+    this.skipNextFailoverArm = hadPlayback;
+    this.clearServerFailoverWatch();
+    this.playerReloadLabel = 'Loading…';
+    this.isPlayerReloading = true;
+    this.showPlayerControls = true;
+    this.armReloadOverlayTimeout();
+    this.destroyApiplayerVideo();
+
+    if (wantPlay) {
+      this.vidfastIgnorePlayingUntil = Date.now() + 5000;
+      this.isPlaying = true;
+      // Destroy + recreate in the same click turn (no setTimeout) so autoPlay
+      // keeps the user gesture. In-place src updates leave the embed paused.
+      this.playerSurfaceLocked = true;
+      this.embedUrl = null;
+      this.cdr.detectChanges();
+      this.embedUrl = this.isVidupProvider
+        ? this.buildVidupEmbedUrl(path, startAt)
+        : this.buildVidfastEmbedUrl(path, startAt);
+      this.playerSurfaceLocked = false;
+      this.cdr.detectChanges();
+      this.ensureFullscreenPreserved(stayFullscreen);
+      return;
+    }
+
+    this.playerSurfaceLocked = true;
+    this.embedUrl = null;
+    this.cdr.detectChanges();
+
+    this.vidfastRemountTimer = setTimeout(() => {
+      this.vidfastRemountTimer = null;
+      if (!this.isVidfastProvider && !this.isVidupProvider) {
+        this.playerSurfaceLocked = false;
+        return;
+      }
+      this.embedUrl = this.isVidupProvider
+        ? this.buildVidupEmbedUrl(path, startAt)
+        : this.buildVidfastEmbedUrl(path, startAt);
+      this.isPlaying = this.vidfastWantAutoPlay;
+      this.playerSurfaceLocked = false;
+      this.cdr.detectChanges();
+      this.ensureFullscreenPreserved(stayFullscreen);
+    }, 30);
+  }
+
   /** Tear down + rebuild so `autoPlay` / `startAt` changes always take effect. */
   private remountPeachifyEmbed(startAt: number): void {
     if (!this.isPeachifyProvider) {
@@ -2780,14 +3132,34 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
 
     const stayFullscreen = this.isFullscreen || !!document.fullscreenElement;
+    const hadPlayback = this.serverPlaybackOk;
+    const wantPlay = this.peachifyWantAutoPlay;
 
+    this.skipNextFailoverArm = hadPlayback;
+    this.clearServerFailoverWatch();
     this.playerReloadLabel = 'Loading…';
     this.isPlayerReloading = true;
     this.showPlayerControls = true;
     this.armReloadOverlayTimeout();
     this.destroyApiplayerVideo();
 
-    // Lock surface BEFORE clearing embedUrl so fullscreen container is not destroyed
+    if (wantPlay) {
+      this.peachifyIgnorePlayingUntil = Date.now() + 5000;
+      this.isPlaying = true;
+      // Must destroy the iframe (not just change src) or Peachify keeps the old
+      // paused session. Do it in the same click turn — setTimeout drops the
+      // user gesture and browsers block autoPlay after a server pick.
+      this.playerSurfaceLocked = true;
+      this.embedUrl = null;
+      this.cdr.detectChanges();
+      this.embedUrl = this.buildPeachifyEmbedUrl(startAt);
+      this.playerSurfaceLocked = false;
+      this.cdr.detectChanges();
+      this.ensureFullscreenPreserved(stayFullscreen);
+      return;
+    }
+
+    // Pause path: full teardown so autoPlay=false always sticks
     this.playerSurfaceLocked = true;
     this.embedUrl = null;
     this.cdr.detectChanges();
@@ -2873,15 +3245,22 @@ export class FrameComponent implements OnInit, OnDestroy {
       }
       return;
     }
-    const contentWindow = this.playerIframe?.nativeElement?.contentWindow;
+    const contentWindow = this.getPlayerContentWindow();
     if (!contentWindow) {
       return;
     }
-    try {
-      contentWindow.postMessage({ command: 'mute', muted: false }, '*');
-      contentWindow.postMessage({ command: 'volume', level: 1 }, '*');
-    } catch {
-      // ignore cross-origin / closed frame
+    const payloads: unknown[] = [
+      { command: 'mute', muted: false },
+      { command: 'volume', level: 1 },
+      JSON.stringify({ command: 'mute', muted: false }),
+      JSON.stringify({ command: 'volume', level: 1 }),
+    ];
+    for (const payload of payloads) {
+      try {
+        contentWindow.postMessage(payload, '*');
+      } catch {
+        // ignore cross-origin / closed frame
+      }
     }
   }
 
@@ -2938,10 +3317,8 @@ export class FrameComponent implements OnInit, OnDestroy {
       this.revealPlayerControls();
       return;
     }
-    // Always lift mute on explicit control taps (has user activation).
-    this.unmuteRemotePlayer();
     const nextPlaying = !this.isPlaying;
-    // Peachify: set autoPlay intent before remount
+    // Peachify / VidFast / VidUP: set autoPlay intent before remount
     if (this.isPeachifyProvider) {
       this.peachifyWantAutoPlay = nextPlaying;
       this.isPlaying = nextPlaying;
@@ -2949,6 +3326,14 @@ export class FrameComponent implements OnInit, OnDestroy {
       this.onPlaybackStateChanged();
       return;
     }
+    if (this.isVidfastProvider || this.isVidupProvider) {
+      this.vidfastWantAutoPlay = nextPlaying;
+      this.isPlaying = nextPlaying;
+      this.postPlayerCommand(nextPlaying ? 'play' : 'pause');
+      this.onPlaybackStateChanged();
+      return;
+    }
+    this.unmuteRemotePlayer();
     this.postPlayerCommand(nextPlaying ? 'play' : 'pause');
     // Optimistic UI so controls don't hide before the player event arrives
     this.isPlaying = nextPlaying;

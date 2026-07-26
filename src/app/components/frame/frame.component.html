@@ -90,10 +90,12 @@
               <span class="player-subtitle-cue">{{ activeSubtitleText }}</span>
             </div>
 
-            <!-- Shield so Luscreens owns taps; iframe stays non-interactive. -->
+            <!-- Shield so Luscreens owns taps; iframe stays non-interactive.
+                 When chrome is visible, leave the bottom control bar uncovered. -->
             <div
               class="player-click-shield absolute inset-0 z-20 flex items-center justify-center select-none"
               [class.menus-open]="showServerMenu || showProviderMenu || showCcMenu"
+              [class.controls-visible]="showPlayerControls || forceControlsVisible"
               [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-lg'"
               (pointerup)="onPlayerSurfacePointerUp($event)"
               (mousemove)="onPlayerSurfaceMove($event)"
@@ -123,8 +125,7 @@
 
             <!-- Shared Luscreens play/seek controls for every provider. -->
             <div
-              class="player-controls absolute inset-0 flex flex-col justify-between pointer-events-none transition-opacity duration-300"
-              [class.z-30]="!forceControlsVisible && !showServerMenu && !showProviderMenu && !showCcMenu"
+              class="player-controls absolute inset-0 z-30 flex flex-col justify-between pointer-events-none transition-opacity duration-300"
               [class.z-[60]]="forceControlsVisible || showServerMenu || showProviderMenu || showCcMenu"
               [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-lg'"
               [class.opacity-0]="!showPlayerControls && !forceControlsVisible"
@@ -232,8 +233,8 @@
                         <button
                           *ngFor="let server of serverOptions"
                           type="button"
-                          (pointerup)="onServerMenuPick($event, server.id)"
-                          (click)="$event.preventDefault(); $event.stopPropagation()"
+                          (click)="onServerMenuPick($event, server.id)"
+                          (pointerup)="$event.stopPropagation()"
                           class="w-full text-left px-3 py-2 text-xs hover:bg-white/10 transition cursor-pointer"
                           [class.text-red-400]="(server.id === 'auto' && useAutoServer) || (server.id !== 'auto' && !useAutoServer && selectedServer === server.id)"
                           [class.font-semibold]="(server.id === 'auto' && useAutoServer) || (server.id !== 'auto' && !useAutoServer && selectedServer === server.id)"

@@ -100,6 +100,17 @@ video.player-embed {
   cursor: default;
 }
 
+/* Leave bottom chrome clickable (seek / play / skip) when controls are up */
+.player-click-shield.controls-visible {
+  bottom: 5.5rem;
+}
+
+@media (min-width: 640px) {
+  .player-click-shield.controls-visible {
+    bottom: 6.5rem;
+  }
+}
+
 /* Menus sit above the shield; disable shield so dropdown clicks don't fall through. */
 .player-click-shield.menus-open,
 .player-click-shield.pass-through {
