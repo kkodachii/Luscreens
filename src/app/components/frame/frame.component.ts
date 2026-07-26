@@ -213,12 +213,14 @@ export class FrameComponent implements OnInit, OnDestroy {
   private providerLockedByUser = false;
   private providerPriorityPromise: Promise<void> | null = null;
   selectedSubtitle: string | null = null;
-  /** Active cue text for CinemaOS (and ApiPlayer fallback) overlay. */
+  /** Active cue text for the Luscreens CC overlay (all providers). */
   activeSubtitleText = '';
   isSubtitleLoading = false;
+  subtitleError: string | null = null;
   private subtitleCues: SubtitleCue[] = [];
   private subtitleVttUrl: string | null = null;
   private subtitleLoadToken = 0;
+  private subtitleSyncTimer: ReturnType<typeof setInterval> | null = null;
   private cachedImdbId: string | null = null;
   selectedServer: string = environment.streamServer || 'vEdge';
   /** When true, omit `server=` so the embed can pick a working source itself. */
@@ -360,9 +362,12 @@ export class FrameComponent implements OnInit, OnDestroy {
   }
 
 
-  /** Embed hosts with a real subtitle query param (reload to apply). */
+  /**
+   * Legacy flag — embed `sub=` is unreliable (Peachify hides captions; VidFast
+   * remounts drop CC). Luscreens always draws its own overlay instead.
+   */
   get usesEmbedSubParam(): boolean {
-    return this.isVidfastProvider || this.isVidupProvider || this.isPeachifyProvider;
+    return false;
   }
 
   /** Providers that accept `server=` (or equivalent) via URL reload. */
@@ -579,6 +584,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.clearPlayerReloading();
     this.clearSeekGuard();
     this.clearSubtitles();
+    this.clearSubtitleSyncTimer();
     if (this.peachifyControlTimer != null) {
       clearTimeout(this.peachifyControlTimer);
       this.peachifyControlTimer = null;
@@ -976,10 +982,6 @@ export class FrameComponent implements OnInit, OnDestroy {
       params.set('server', this.selectedServer);
     }
 
-    if (this.selectedSubtitle) {
-      params.set('sub', this.selectedSubtitle);
-    }
-
     const startAt = this.resolveStartAt(resumeAt);
     // Always set startAt — omitting it lets VidFast resume from its own iframe cache
     // (which brought back cleared history timestamps).
@@ -1010,9 +1012,6 @@ export class FrameComponent implements OnInit, OnDestroy {
     });
     if (!this.useAutoServer && this.selectedServer) {
       params.set('server', this.selectedServer);
-    }
-    if (this.selectedSubtitle) {
-      params.set('sub', this.selectedSubtitle);
     }
     const startAt = Math.max(0, Math.floor(this.resolveStartAt(resumeAt)));
     this.embedStartAtSeconds = startAt;
@@ -1082,13 +1081,7 @@ export class FrameComponent implements OnInit, OnDestroy {
       params.set('server', pin);
     }
 
-    // Docs expect subtitle labels (e.g. English), not ISO codes
-    if (this.selectedSubtitle) {
-      const subLabel =
-        this.subtitleOptions.find((o) => o.code === this.selectedSubtitle)?.label ??
-        this.selectedSubtitle;
-      params.set('sub', subLabel);
-    }
+    // CC is drawn by Luscreens overlay — don't pass sub= (Peachify captions are hidden)
 
     // Always pin start — Peachify otherwise restores its own peachifyProgress cache
     const startAt = Math.max(0, Math.floor(this.resolveStartAt(resumeAt)));
@@ -1654,8 +1647,12 @@ export class FrameComponent implements OnInit, OnDestroy {
     // CinemaOS autoPlay starts muted by design. Do NOT unmute on load timers —
     // unmuted autoplay without a gesture pauses the embed and our failover then
     // hops to another provider mid-watch. Unmute happens on user play/tap instead.
-    if (this.selectedSubtitle && !this.usesEmbedSubParam) {
-      void this.applySubtitleSelection(this.selectedSubtitle, false);
+    if (this.selectedSubtitle) {
+      if (this.subtitleCues.length === 0) {
+        void this.applySubtitleSelection(this.selectedSubtitle, false);
+      } else {
+        this.syncSubtitleOverlay();
+      }
     }
   }
 
@@ -1803,18 +1800,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
     this.selectedSubtitle = code;
     this.showCcMenu = false;
-
-    // VidFast (`sub=`) — soft-reload; clear our overlay so it doesn't stack on embed CC.
-    if (this.usesEmbedSubParam) {
-      this.clearSubtitles(false);
-      this.reloadPlayer(
-        this.currentTime,
-        code ? 'Applying subtitles…' : 'Turning off subtitles…'
-      );
-      return;
-    }
-
-    // ApiPlayer / VidPhantom / CinemaOS: load cues ourselves (overlay only).
+    // Same OpenSubtitles overlay for every provider — no embed remount / sub= dance.
     void this.applySubtitleSelection(code);
   }
 
@@ -1847,10 +1833,7 @@ export class FrameComponent implements OnInit, OnDestroy {
         this.selectedServer = pins[0];
       }
     }
-    // Embed `sub=` hosts — drop our cue overlay so it doesn't double up
-    if (this.usesEmbedSubParam) {
-      this.clearSubtitles(false);
-    }
+    // Keep CC selection + cues across provider hops (overlay is provider-agnostic)
 
     if (provider === 'peachify') {
       this.peachifyWantAutoPlay = true;
@@ -2147,6 +2130,8 @@ export class FrameComponent implements OnInit, OnDestroy {
   ): Promise<void> {
     const loadToken = ++this.subtitleLoadToken;
     this.clearSubtitles(false);
+    this.subtitleError = null;
+    this.clearSubtitleSyncTimer();
 
     if (!code) {
       this.isSubtitleLoading = false;
@@ -2193,13 +2178,15 @@ export class FrameComponent implements OnInit, OnDestroy {
 
       this.subtitleCues = loaded.cues;
       this.subtitleVttUrl = loaded.vttUrl;
+      this.subtitleError = null;
       // Overlay only — never enable native <track> (that stacked a second cue on screen)
       this.removeNativeSubtitleTracks();
       this.syncSubtitleOverlay();
+      this.armSubtitleSyncTimer();
     } catch (error) {
       console.error('Subtitle load failed:', error);
       if (loadToken === this.subtitleLoadToken) {
-        this.selectedSubtitle = null;
+        this.subtitleError = 'Subtitles unavailable';
         this.clearSubtitles(false);
       }
     } finally {
@@ -2230,17 +2217,50 @@ export class FrameComponent implements OnInit, OnDestroy {
   }
 
   private syncSubtitleOverlay(): void {
-    // VidFast uses embed `sub=` — never draw our overlay on top of theirs
-    if (this.usesEmbedSubParam || !this.selectedSubtitle || this.subtitleCues.length === 0) {
+    if (!this.selectedSubtitle || this.subtitleCues.length === 0) {
       if (this.activeSubtitleText) {
         this.activeSubtitleText = '';
       }
       return;
     }
-    this.activeSubtitleText = this.subtitleService.findActiveCueText(
+
+    if (this.usesLocalHls) {
+      const videoTime = this.playerVideo?.nativeElement?.currentTime;
+      if (Number.isFinite(videoTime)) {
+        this.currentTime = videoTime as number;
+      }
+    }
+
+    const next = this.subtitleService.findActiveCueText(
       this.subtitleCues,
       this.currentTime
     );
+    if (next !== this.activeSubtitleText) {
+      this.activeSubtitleText = next;
+    }
+  }
+
+  private armSubtitleSyncTimer(): void {
+    this.clearSubtitleSyncTimer();
+    if (!this.selectedSubtitle || this.subtitleCues.length === 0) {
+      return;
+    }
+    // Keep cues painting even when embeds send sparse timeupdates
+    this.subtitleSyncTimer = setInterval(() => {
+      if (!this.selectedSubtitle || this.subtitleCues.length === 0) {
+        this.clearSubtitleSyncTimer();
+        return;
+      }
+      this.syncSubtitleOverlay();
+      this.cdr.detectChanges();
+    }, 250);
+  }
+
+  private clearSubtitleSyncTimer(): void {
+    if (this.subtitleSyncTimer != null) {
+      clearInterval(this.subtitleSyncTimer);
+      this.subtitleSyncTimer = null;
+    }
   }
 
   private clearSubtitles(_keepSelection = true): void {
@@ -2249,6 +2269,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.subtitleService.revokeUrl(this.subtitleVttUrl);
     this.subtitleVttUrl = null;
     this.removeNativeSubtitleTracks();
+    this.clearSubtitleSyncTimer();
   }
 
   private beginClearedBootstrapIfNeeded(): void {
@@ -2647,6 +2668,7 @@ export class FrameComponent implements OnInit, OnDestroy {
         if (this.isCinemaosProvider || this.isVideasyProvider) {
           this.markServerPlaybackOk(true);
         }
+        this.syncSubtitleOverlay();
         // CinemaOS forces muted=true on autoPlay — lift only on a real user gesture.
         // Unmuting from here (or iframe load timers) can pause the embed and trip failover.
         this.broadcastWatchPartyEvent('play', data.currentTime);
@@ -2675,6 +2697,7 @@ export class FrameComponent implements OnInit, OnDestroy {
         ) {
           this.clearSeekGuard();
         }
+        this.syncSubtitleOverlay();
         this.broadcastWatchPartyEvent('seeked', this.currentTime);
         this.persistLocalProgress(true);
         break;

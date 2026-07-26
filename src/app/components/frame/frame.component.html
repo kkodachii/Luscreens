@@ -84,7 +84,7 @@
             <!-- CC overlay for local HLS + CinemaOS -->
             <div
               *ngIf="activeSubtitleText"
-              class="player-subtitle-overlay absolute inset-x-0 bottom-[18%] z-[25] px-4 sm:px-8 pointer-events-none text-center"
+              class="player-subtitle-overlay absolute inset-x-0 bottom-[18%] z-[35] px-4 sm:px-8 pointer-events-none text-center"
               aria-live="polite"
             >
               <span class="player-subtitle-cue">{{ activeSubtitleText }}</span>
@@ -384,7 +384,13 @@
                         class="p-1.5 sm:p-2 rounded-full text-white hover:bg-white/10 transition"
                         [class.text-red-400]="!!selectedSubtitle || showCcMenu || isSubtitleLoading"
                         aria-label="Subtitles"
-                        [title]="isSubtitleLoading ? 'Loading subtitles…' : 'Subtitles (CC)'"
+                        [title]="
+                          isSubtitleLoading
+                            ? 'Loading subtitles…'
+                            : subtitleError
+                              ? subtitleError
+                              : 'Subtitles (CC)'
+                        "
                       >
                         <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                           <rect x="2.5" y="5.5" width="19" height="13" rx="2" />
@@ -395,6 +401,12 @@
                         *ngIf="showCcMenu"
                         class="absolute bottom-full right-0 mb-1 w-40 sm:w-44 max-h-48 overflow-y-auto rounded-xl border border-white/15 bg-black/95 shadow-xl py-1 z-40"
                       >
+                        <p
+                          *ngIf="subtitleError"
+                          class="px-3 py-1.5 text-[10px] text-red-400/90"
+                        >
+                          {{ subtitleError }}
+                        </p>
                         <button
                           *ngFor="let opt of subtitleOptions"
                           type="button"
