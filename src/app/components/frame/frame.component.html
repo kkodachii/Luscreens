@@ -59,14 +59,12 @@
 
             <!--
               Remote iframe embeds. referrerpolicy must stay a static attribute (Angular NG0910).
-              Use strict-origin-when-cross-origin — no-referrer breaks Vidlove/stream CDNs on mobile web.
+              Use strict-origin-when-cross-origin — no-referrer breaks some stream CDNs on mobile web.
             -->
             <div
               *ngIf="usesRemoteIframe && embedUrl"
-              #keanFillHost
               class="absolute inset-0"
-              [class.kean-fill-host]="isMovies111Provider"
-              [class.overflow-hidden]="isMovies111Provider || isFullscreen"
+              [class.overflow-hidden]="isFullscreen"
               [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-lg'"
             >
               <iframe
@@ -78,42 +76,10 @@
                 allowfullscreen
                 referrerpolicy="strict-origin-when-cross-origin"
                 loading="eager"
-                class="player-embed shadow-xl absolute"
-                [class.kean-interactive]="keanIframeInteractive"
-                [class.inset-0]="!isMovies111Provider"
-                [class.w-full]="!isMovies111Provider"
-                [class.h-full]="!isMovies111Provider"
-                [ngStyle]="isMovies111Provider ? keanIframeFillStyle : null"
+                class="player-embed shadow-xl absolute inset-0 w-full h-full"
                 [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-lg'"
               ></iframe>
             </div>
-
-            <!-- Cover Vidlove's native chrome so only Luscreens controls show -->
-            <div
-              *ngIf="isMovies111Provider"
-              class="kean-chrome-cover kean-chrome-cover-top"
-              [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-t-lg'"
-              aria-hidden="true"
-            ></div>
-            <div
-              *ngIf="isMovies111Provider"
-              class="kean-chrome-cover kean-chrome-cover-bottom"
-              [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-b-lg'"
-              aria-hidden="true"
-            ></div>
-
-            <!-- Kean paused: TMDB backdrop/poster instead of Vidlove's frame -->
-            <div
-              *ngIf="showKeanPausePoster"
-              class="kean-pause-poster absolute inset-0 z-[18] pointer-events-none bg-black"
-              [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-lg'"
-              [ngStyle]="{
-                'background-image': 'linear-gradient(rgba(40,40,40,.45), rgba(20,20,20,.7)), url(' + keanPausePosterUrl + ')',
-                'background-size': 'cover',
-                'background-position': 'center'
-              }"
-              aria-hidden="true"
-            ></div>
 
             <!-- CC overlay for local HLS + CinemaOS -->
             <div
@@ -124,47 +90,10 @@
               <span class="player-subtitle-cue">{{ activeSubtitleText }}</span>
             </div>
 
-            <!--
-              Kean unmuted path: after Play, chrome hides and the iframe becomes interactive.
-              Edge strips keep a way to re-show Luscreens controls without covering the center tap.
-            -->
-            <ng-container *ngIf="keanIframeInteractive">
-              <div
-                class="kean-pass-edge kean-pass-edge-top"
-                (pointerup)="onPlayerSurfacePointerUp($event)"
-                aria-hidden="true"
-              ></div>
-              <div
-                class="kean-pass-edge kean-pass-edge-left"
-                (pointerup)="onPlayerSurfacePointerUp($event)"
-                aria-hidden="true"
-              ></div>
-              <div
-                class="kean-pass-edge kean-pass-edge-right"
-                (pointerup)="onPlayerSurfacePointerUp($event)"
-                aria-hidden="true"
-              ></div>
-              <div
-                class="kean-pass-edge kean-pass-edge-bottom"
-                (pointerup)="onPlayerSurfacePointerUp($event)"
-                aria-hidden="true"
-              ></div>
-              <!-- Visual-only play; pointer-events none so the tap reaches Vidlove (unmuted). -->
-              <span
-                class="kean-tap-play flex items-center justify-center w-14 h-14 sm:w-20 sm:h-20 rounded-full bg-red-600/90 text-white shadow-xl pointer-events-none"
-                aria-hidden="true"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="currentColor" class="ml-1">
-                  <path d="M8 5v14l11-7z" />
-                </svg>
-              </span>
-            </ng-container>
-
-            <!-- Shield (disabled while Kean iframe is the tap target). -->
+            <!-- Shield so Luscreens owns taps; iframe stays non-interactive. -->
             <div
               class="player-click-shield absolute inset-0 z-20 flex items-center justify-center select-none"
               [class.menus-open]="showServerMenu || showProviderMenu || showCcMenu"
-              [class.pass-through]="keanIframeInteractive"
               [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-lg'"
               (pointerup)="onPlayerSurfacePointerUp($event)"
               (mousemove)="onPlayerSurfaceMove($event)"
@@ -174,7 +103,6 @@
               (auxclick)="$event.preventDefault()"
             >
               <button
-                *ngIf="!keanIframeInteractive"
                 type="button"
                 class="player-center-hit flex items-center justify-center w-20 h-20 sm:w-28 sm:h-28 rounded-full cursor-pointer"
                 (pointerup)="onCenterPlayPauseTap($event)"
@@ -193,11 +121,11 @@
               </button>
             </div>
 
-            <!-- Shared overlay — Kean uses the same Luscreens play/seek controls. -->
+            <!-- Shared Luscreens play/seek controls for every provider. -->
             <div
               class="player-controls absolute inset-0 flex flex-col justify-between pointer-events-none transition-opacity duration-300"
-              [class.z-30]="!isMovies111Provider && !forceControlsVisible && !showServerMenu && !showProviderMenu && !showCcMenu"
-              [class.z-[60]]="isMovies111Provider || forceControlsVisible || showServerMenu || showProviderMenu || showCcMenu"
+              [class.z-30]="!forceControlsVisible && !showServerMenu && !showProviderMenu && !showCcMenu"
+              [class.z-[60]]="forceControlsVisible || showServerMenu || showProviderMenu || showCcMenu"
               [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-lg'"
               [class.opacity-0]="!showPlayerControls && !forceControlsVisible"
               [class.opacity-100]="showPlayerControls || forceControlsVisible"
@@ -205,8 +133,7 @@
             >
               <!-- Top: cloud server (left) + title -->
               <div
-                class="relative px-2.5 sm:px-4 pt-2.5 sm:pt-4 pb-8 sm:pb-12 pointer-events-none"
-                [ngClass]="isMovies111Provider ? '' : 'bg-gradient-to-b from-black/80 via-black/40 to-transparent'"
+                class="relative px-2.5 sm:px-4 pt-2.5 sm:pt-4 pb-8 sm:pb-12 pointer-events-none bg-gradient-to-b from-black/80 via-black/40 to-transparent"
               >
                 <div class="relative flex items-start">
                   <div
@@ -331,12 +258,10 @@
                 </div>
               </div>
 
-              <!-- Bottom: seek + buttons (Kean: solid bar covers Vidlove chrome) -->
+              <!-- Bottom: seek + buttons -->
               <div
-                class="px-2 sm:px-4 pt-8 sm:pt-14 pb-2 sm:pb-4 space-y-1.5 sm:space-y-2.5"
-                [class.kean-controls-bar]="isMovies111Provider"
+                class="px-2 sm:px-4 pt-8 sm:pt-14 pb-2 sm:pb-4 space-y-1.5 sm:space-y-2.5 bg-gradient-to-t from-black/90 via-black/55 to-transparent"
                 [class.pointer-events-auto]="showPlayerControls || forceControlsVisible"
-                [ngClass]="isMovies111Provider ? '' : 'bg-gradient-to-t from-black/90 via-black/55 to-transparent'"
                 (pointerdown)="$event.stopPropagation()"
                 (pointerup)="$event.stopPropagation()"
                 (click)="$event.stopPropagation()"
@@ -633,9 +558,9 @@
               </form>
             </div>
 
-            <!-- Reload / Kean boot splash — hides Vidlove's native loader until ready -->
+            <!-- Reload splash -->
             <div
-              *ngIf="isPlayerReloading || keanBootCover"
+              *ngIf="isPlayerReloading"
               class="absolute inset-0 z-40 flex flex-col items-center justify-center gap-3 bg-cover bg-center pointer-events-none"
               [ngClass]="isFullscreen ? 'rounded-none' : 'rounded-lg'"
               [ngStyle]="{

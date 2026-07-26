@@ -157,7 +157,6 @@ export class PingCheckComponent implements OnInit {
 
   private buildDefaultTargets(): PingTarget[] {
     const providers: { id: StreamProvider; label: string; url: string }[] = [
-      { id: 'movies111', label: 'Kean (recommended)', url: 'https://player.vidlove.cc/favicon.ico' },
       { id: 'apiplayer', label: 'ApiPlayer', url: 'https://apiplayer.ru/favicon.ico' },
       { id: 'cinemaos', label: 'CinemaOS', url: 'https://cinemaos.tech/favicon.ico' },
       { id: 'vidphantom', label: 'VidPhantom', url: 'https://vidphantom.com/favicon.ico' },
@@ -175,7 +174,6 @@ export class PingCheckComponent implements OnInit {
       { id: 'peachify-root', label: 'peachify.top', url: 'https://peachify.top/' },
       { id: 'vidup-root', label: 'vidup.to', url: 'https://vidup.to/' },
       { id: 'videasy-root', label: 'player.videasy.net', url: 'https://player.videasy.net/' },
-      { id: 'movies111-root', label: '111movies.net', url: 'https://111movies.net/' },
       { id: 'tmdb', label: 'TMDB API', url: 'https://api.themoviedb.org/3/' },
     ];
 

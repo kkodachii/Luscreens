@@ -1,18 +1,16 @@
 export const environment = {
   production: true,
   tmdbApiKey: 'c646ab9e5209d5c5c8d42ab3f653b61a',
-  /** Default / #1 — Kean, then ApiPlayer → VidFast → lowest-ping others. */
-  streamProvider: 'movies111' as
+  /** Default / #1 — ApiPlayer, then VidFast → lowest-ping others. */
+  streamProvider: 'apiplayer' as
     | 'apiplayer'
     | 'vidfast'
     | 'cinemaos'
     | 'vidphantom'
     | 'peachify'
     | 'vidup'
-    | 'videasy'
-    | 'movies111',
+    | 'videasy',
   streamProviders: [
-    'movies111',
     'apiplayer',
     'vidfast',
     'cinemaos',
@@ -28,7 +26,6 @@ export const environment = {
     | 'peachify'
     | 'vidup'
     | 'videasy'
-    | 'movies111'
   >,
   streamServer: 'vEdge',
   streamServers: ['vEdge', 'Beta', 'Bravo', 'vFast', 'Cobra', 'Charlie'],

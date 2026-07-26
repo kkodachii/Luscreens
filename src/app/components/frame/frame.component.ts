@@ -133,17 +133,6 @@ export class FrameComponent implements OnInit, OnDestroy {
     'https://www.videasy.to',
   ];
 
-  /** 111Movies iframe embed — listen for PLAYER_EVENT / progress postMessage. */
-  private readonly movies111Origins = [
-    'https://111movies.net',
-    'https://www.111movies.net',
-    'https://111movies.com',
-    'https://www.111movies.com',
-    'https://player.vidlove.cc',
-    'https://vidlove.cc',
-    'https://www.vidlove.cc',
-  ];
-
   private readonly onPlayerMessage = (event: MessageEvent): void => {
     // postMessage can arrive outside Angular; keep scrubber / play state in sync
     this.ngZone.run(() => this.handlePlayerMessage(event));
@@ -208,8 +197,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     { code: 'zh', label: 'Chinese' },
   ];
   readonly providerOptions: { id: StreamProvider; label: string; recommended?: boolean }[] = [
-    { id: 'movies111', label: 'Kean', recommended: true },
-    { id: 'apiplayer', label: 'ApiPlayer' },
+    { id: 'apiplayer', label: 'ApiPlayer', recommended: true },
     { id: 'vidfast', label: 'VidFast' },
     { id: 'cinemaos', label: 'CinemaOS' },
     { id: 'vidphantom', label: 'VidPhantom' },
@@ -218,7 +206,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     { id: 'videasy', label: 'Videasy' },
   ];
   selectedProvider: StreamProvider =
-    (environment as { streamProvider?: StreamProvider }).streamProvider || 'movies111';
+    (environment as { streamProvider?: StreamProvider }).streamProvider || 'apiplayer';
   /** True after primary provider has been applied for this page. */
   private providerPriorityApplied = false;
   /** User picked a provider in the menu — do not auto-hop to another. */
@@ -234,7 +222,7 @@ export class FrameComponent implements OnInit, OnDestroy {
   private cachedImdbId: string | null = null;
   selectedServer: string = environment.streamServer || 'vEdge';
   /** When true, omit `server=` so the embed can pick a working source itself. */
-  useAutoServer = false;
+  useAutoServer = true;
   showCcMenu = false;
   showProviderMenu = false;
   showServerMenu = false;
@@ -258,7 +246,6 @@ export class FrameComponent implements OnInit, OnDestroy {
     peachify: null,
     vidup: null,
     videasy: null,
-    movies111: null,
   };
   providerPingPending: Record<StreamProvider, boolean> = {
     apiplayer: false,
@@ -268,7 +255,6 @@ export class FrameComponent implements OnInit, OnDestroy {
     peachify: false,
     vidup: false,
     videasy: false,
-    movies111: false,
   };
   private readonly providerPingUrls: Record<StreamProvider, string> = {
     apiplayer: 'https://apiplayer.ru/favicon.ico',
@@ -278,7 +264,6 @@ export class FrameComponent implements OnInit, OnDestroy {
     peachify: 'https://peachify.top/favicon.ico',
     vidup: 'https://vidup.to/favicon.ico',
     videasy: 'https://player.videasy.net/favicon.ico',
-    movies111: 'https://player.vidlove.cc/favicon.ico',
   };
   private lastProviderPingAt = 0;
 
@@ -299,76 +284,24 @@ export class FrameComponent implements OnInit, OnDestroy {
   /** Ignore outbound play/pause events while our URL control settles. */
   private peachifyIgnorePlayingUntil = 0;
 
-  /**
-   * Kean / Vidlove — never use autoplay=true (player forces mute).
-   * Play = tap-through to Vidlove's unmuted play(); pause = remount; seek = SET_TIME.
-   */
-  private movies111WantAutoPlay = false;
-  private movies111EmbedNonce = 0;
-  private movies111IgnorePlayingUntil = 0;
-  private movies111PendingSetTime: number | null = null;
-  private movies111ControlTimer: ReturnType<typeof setTimeout> | null = null;
-  private movies111RemountTimer: ReturnType<typeof setTimeout> | null = null;
-  private movies111SetTimeTimers: ReturnType<typeof setTimeout>[] = [];
-  /** Let clicks reach the iframe so Vidlove can start unmuted playback. */
-  keanAwaitingGesturePlay = false;
-  /** Full Luscreens splash over Kean until Vidlove finishes its own boot UI. */
-  keanBootCover = false;
-  private keanBootClearTimer: ReturnType<typeof setTimeout> | null = null;
-  private static readonly KEAN_BOOT_COVER_MS = 3000;
-
-  /**
-   * Kean: let the Vidlove iframe receive taps for unmuted play.
-   * Only while controls are hidden — on mobile Safari an interactive iframe steals
-   * touches from the Luscreens bar even when it sits above the iframe.
-   */
-  get keanIframeInteractive(): boolean {
-    return (
-      this.isMovies111Provider &&
-      (!this.isPlaying || this.keanAwaitingGesturePlay) &&
-      !this.showPlayerControls &&
-      !this.forceControlsVisible
-    );
-  }
-
-  /** Shield opens / edge strips while the iframe is the tap target. */
-  get keanPassThrough(): boolean {
-    return this.keanIframeInteractive;
-  }
-  /**
-   * Pixel size for the Kean iframe so a 16:9 Vidlove surface covers the host
-   * (container-query CSS is flaky on mobile web).
-   */
-  keanIframeFillStyle: Record<string, string> = {
-    inset: '0',
-    width: '100%',
-    height: '100%',
-  };
-  private keanFillObserver: ResizeObserver | null = null;
-  private keanFillHostEl: HTMLElement | null = null;
-  private keanFillRaf: number | null = null;
-  private lastKeanFillKey = '';
-  private lastKeanUiSyncAt = 0;
   private orientationRaf: number | null = null;
   /** True when using fixed inset-0 fullscreen because requestFullscreen failed (common on iOS web). */
   private cssFullscreenFallback = false;
   /** Portrait phone/tablet viewport — used to force landscape layout in web fullscreen. */
   isPortraitViewport = false;
-  /** Tiny overscan only — higher values crop the picture too hard on mobile. */
-  private static readonly KEAN_FILL_OVERSCAN = 1.02;
-  /** Cap Kean seek-bar CD — Vidlove posts timeupdate very often on mobile. */
-  private static readonly KEAN_UI_SYNC_MS = 250;
   /** Avoid reload loops when Peachify reports a mismatched season/episode. */
   private peachifyEpisodeReassertUntil = 0;
 
   /** Auto-failover: try next server if current one never starts playback. */
-  private static readonly SERVER_FAILOVER_MS = 12000;
+  private static readonly SERVER_FAILOVER_MS = 10000;
   private static readonly APIPLAYER_FAILOVER_MS = 8000;
   private static readonly AUTO_SERVER_ID = 'auto';
   private serverFailoverTimer: ReturnType<typeof setTimeout> | null = null;
   private serversTriedThisTitle = new Set<string>();
   private providersTriedThisTitle = new Set<StreamProvider>();
   private serverPlaybackOk = false;
+  /** Last media time that proved the stream is actually advancing (not just metadata). */
+  private lastPlaybackProgressSample = -1;
 
   get isVidfastProvider(): boolean {
     return this.selectedProvider === 'vidfast';
@@ -398,9 +331,6 @@ export class FrameComponent implements OnInit, OnDestroy {
     return this.selectedProvider === 'videasy';
   }
 
-  get isMovies111Provider(): boolean {
-    return this.selectedProvider === 'movies111';
-  }
 
   /**
    * Mobile web often can't lock orientation — rotate the fullscreen surface
@@ -410,46 +340,11 @@ export class FrameComponent implements OnInit, OnDestroy {
     return this.isFullscreen && this.isPortraitViewport;
   }
 
-  /**
-   * Keep chrome forced-on only for real reload/boot splash.
-   * Kean must not stay stuck visible via isPlayerReloading after playback starts.
-   */
+  /** Keep chrome forced-on only for real reload splash. */
   get forceControlsVisible(): boolean {
-    if (this.isMovies111Provider) {
-      return this.keanBootCover;
-    }
     return this.isPlayerReloading;
   }
 
-  /** TMDB image shown over Kean while paused (backdrop preferred, poster fallback). */
-  get keanPausePosterUrl(): string | null {
-    if (this.backdropPath) {
-      const path = this.backdropPath.startsWith('/')
-        ? this.backdropPath
-        : `/${this.backdropPath}`;
-      return `https://image.tmdb.org/t/p/w1280${path}`;
-    }
-    if (this.posterPath) {
-      const path = this.posterPath.startsWith('http')
-        ? this.posterPath
-        : `https://image.tmdb.org/t/p/w780${
-            this.posterPath.startsWith('/') ? this.posterPath : `/${this.posterPath}`
-          }`;
-      return path;
-    }
-    return null;
-  }
-
-  get showKeanPausePoster(): boolean {
-    return (
-      this.isMovies111Provider &&
-      !this.isPlaying &&
-      !this.keanAwaitingGesturePlay &&
-      !this.keanBootCover &&
-      !this.isPlayerReloading &&
-      !!this.keanPausePosterUrl
-    );
-  }
 
   /** Embed hosts with a real subtitle query param (reload to apply). */
   get usesEmbedSubParam(): boolean {
@@ -475,8 +370,7 @@ export class FrameComponent implements OnInit, OnDestroy {
       this.isCinemaosProvider ||
       this.isPeachifyProvider ||
       this.isVidupProvider ||
-      this.isVideasyProvider ||
-      this.isMovies111Provider
+      this.isVideasyProvider
     );
   }
 
@@ -574,7 +468,6 @@ export class FrameComponent implements OnInit, OnDestroy {
     if (this.cssFullscreenFallback && !document.fullscreenElement) {
       this.isFullscreen = true;
       this.updatePortraitViewport();
-      this.syncKeanIframeFill();
       this.revealPlayerControls();
       return;
     }
@@ -582,8 +475,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.isFullscreen = !!document.fullscreenElement;
     void this.syncFullscreenOrientation(this.isFullscreen);
     this.updatePortraitViewport();
-    this.syncKeanIframeFill();
-    this.revealPlayerControls();
+        this.revealPlayerControls();
   };
 
   private readonly onOrientationOrResize = (): void => {
@@ -599,7 +491,6 @@ export class FrameComponent implements OnInit, OnDestroy {
         return;
       }
       this.ngZone.run(() => {
-        this.scheduleKeanIframeFill();
         if (wasPortrait !== this.isPortraitViewport || this.isFullscreen) {
           this.cdr.detectChanges();
         }
@@ -612,11 +503,6 @@ export class FrameComponent implements OnInit, OnDestroy {
   @ViewChild('playerIframe') playerIframe!: ElementRef<HTMLIFrameElement>;
   @ViewChild('playerVideo') playerVideo?: ElementRef<HTMLVideoElement>;
   @ViewChild('playerContainer') playerContainer!: ElementRef<HTMLDivElement>;
-  @ViewChild('keanFillHost')
-  set keanFillHost(ref: ElementRef<HTMLDivElement> | undefined) {
-    this.keanFillHostEl = ref?.nativeElement ?? null;
-    this.bindKeanFillObserver();
-  }
   @ViewChild('partyChatScroll') partyChatScroll?: ElementRef<HTMLDivElement>;
 
   constructor(
@@ -686,26 +572,10 @@ export class FrameComponent implements OnInit, OnDestroy {
       clearTimeout(this.peachifyRemountTimer);
       this.peachifyRemountTimer = null;
     }
-    if (this.movies111ControlTimer != null) {
-      clearTimeout(this.movies111ControlTimer);
-      this.movies111ControlTimer = null;
-    }
-    if (this.movies111RemountTimer != null) {
-      clearTimeout(this.movies111RemountTimer);
-      this.movies111RemountTimer = null;
-    }
-    this.clearKeanSetTimeTimers();
-    this.clearKeanBootTimer();
-    this.teardownKeanFillObserver();
-    if (this.keanFillRaf != null) {
-      cancelAnimationFrame(this.keanFillRaf);
-      this.keanFillRaf = null;
-    }
     if (this.orientationRaf != null) {
       cancelAnimationFrame(this.orientationRaf);
       this.orientationRaf = null;
     }
-    this.keanBootCover = false;
     this.cssFullscreenFallback = false;
     this.playerSurfaceLocked = false;
     this.apiplayerLoadToken++;
@@ -956,7 +826,6 @@ export class FrameComponent implements OnInit, OnDestroy {
     if (this.mediaType === 'tv') {
       this.resetPlayerState();
       this.peachifyWantAutoPlay = true;
-      this.movies111WantAutoPlay = false;
       this.openPlayer();
       this.syncWatchPartyMedia();
     }
@@ -977,9 +846,6 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
 
     this.destroyApiplayerVideo();
-    if (this.isMovies111Provider) {
-      this.beginKeanBootCover();
-    }
     this.embedUrl = this.buildActiveEmbedUrl(resumeAt);
   }
 
@@ -1003,8 +869,6 @@ export class FrameComponent implements OnInit, OnDestroy {
         return this.buildPeachifyEmbedUrl(resumeAt);
       case 'videasy':
         return this.buildVideasyEmbedUrl(resumeAt);
-      case 'movies111':
-        return this.buildMovies111EmbedUrl(resumeAt);
       case 'vidup': {
         const path = this.getEmbedPath();
         return path
@@ -1030,9 +894,6 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
     if (this.isVideasyProvider) {
       return this.buildVideasyEmbedUrl(resumeAt);
-    }
-    if (this.isMovies111Provider) {
-      return this.buildMovies111EmbedUrl(resumeAt);
     }
     if (this.isVidupProvider) {
       return this.buildVidupEmbedUrl(path, resumeAt);
@@ -1233,68 +1094,6 @@ export class FrameComponent implements OnInit, OnDestroy {
     return this.sanitizer.bypassSecurityTrustResourceUrl(url);
   }
 
-  /**
-   * Kean — Vidlove embed (https://vidlove.cc/#embed).
-   * Outbound: PLAYER_EVENT / MEDIA_DATA (docs still say WATCH_PROGRESS).
-   * Inbound: SET_TIME for seek; play/pause via autoplay remount (no SET_PLAY).
-   */
-  private buildMovies111EmbedUrl(resumeAt?: number): SafeResourceUrl {
-    this.pendingSeekSeconds = null;
-    if (!this.id || !this.mediaType) {
-      return this.sanitizer.bypassSecurityTrustResourceUrl('about:blank');
-    }
-    const path =
-      this.mediaType === 'tv'
-        ? `embed/tv/${this.id}/${this.selectedSeason}/${this.selectedEpisode}`
-        : `embed/movie/${this.id}`;
-
-    // autoplay=true forces muted+volume=0 in Vidlove — always false; tap-to-play for sound.
-    // hide* strips their chrome so Luscreens owns the controller UI.
-    const params = new URLSearchParams({
-      autoplay: 'false',
-      poster: 'false',
-      primarycolor: 'e50914',
-      secondarycolor: '141414',
-      iconcolor: 'ffffff',
-      hideprogresscontrol: 'true',
-      hidenextbutton: 'true',
-      hidechromecast: 'true',
-      hideepisodelist: 'true',
-      hidepip: 'true',
-      hideposter: 'true',
-      hideserver: 'true',
-      hidesetting: 'true',
-      hideautoplay: 'true',
-      hideautonext: 'true',
-      hidetitle: 'true',
-      hidequality: 'true',
-      hideplaybackspeed: 'true',
-      hideaudiotrack: 'true',
-      // Keep zoom/aspect UI hidden; default inside player is 16:9 contain
-      // (no documented URL to force "fit" — Luscreens CSS cover-scales the iframe).
-      hidezoom: 'true',
-      hideaspectratio: 'true',
-      hideiconset: 'true',
-      hideprimarycolor: 'true',
-      hidesecondarycolor: 'true',
-      hideiconcolor: 'true',
-    });
-    if (this.mediaType === 'tv') {
-      params.set('autonext', 'false');
-      params.set('nextbutton', 'false');
-      params.set('episodes', 'false');
-    }
-    params.set('_k', String(++this.movies111EmbedNonce));
-
-    const at = Math.max(0, Math.floor(this.resolveStartAt(resumeAt)));
-    this.movies111PendingSetTime = at > 0 ? at : null;
-    if (at > 0) {
-      this.currentTime = at;
-    }
-
-    const url = `https://player.vidlove.cc/${path}?${params.toString()}`;
-    return this.sanitizer.bypassSecurityTrustResourceUrl(url);
-  }
 
   private buildApiplayerEmbedUrl(path: string, _resumeAt?: number): SafeResourceUrl {
     // Kept for reference / provider switch fallback; ApiPlayer plays via direct HLS.
@@ -1378,10 +1177,6 @@ export class FrameComponent implements OnInit, OnDestroy {
         return;
       }
       this.providersTriedThisTitle.add(provider);
-      if (this.providerLockedByUser) {
-        this.showNoServerFound();
-        return;
-      }
       const next = this.nextFailoverProvider(provider);
       if (next) {
         this.selectedProvider = next;
@@ -1394,6 +1189,7 @@ export class FrameComponent implements OnInit, OnDestroy {
         );
         return;
       }
+      this.showNoServerFound();
       this.showNoServerFound();
     }
   }
@@ -1423,10 +1219,10 @@ export class FrameComponent implements OnInit, OnDestroy {
           : this.providerPingMs[b]!;
       return am - bm;
     });
-    return ['movies111', ...ranked];
+    return ranked;
   }
 
-  /** Apply fixed primary (Kean) once; pings only order the fallbacks. */
+  /** Apply default provider once; pings order failover. */
   private ensureProviderPriority(): Promise<void> {
     if (!this.providerPriorityPromise) {
       this.providerPriorityPromise = this.resolveProviderPriority();
@@ -1442,8 +1238,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
     this.providerPriorityApplied = true;
     this.selectedProvider =
-      (environment as { streamProvider?: StreamProvider }).streamProvider || 'movies111';
-    this.movies111WantAutoPlay = false;
+      (environment as { streamProvider?: StreamProvider }).streamProvider || 'apiplayer';
     this.cdr.detectChanges();
   }
 
@@ -1478,6 +1273,8 @@ export class FrameComponent implements OnInit, OnDestroy {
 
         const startAt = Math.max(0, Math.floor(this.resolveStartAt(resumeAt)));
         const onReady = (): void => {
+          video.muted = false;
+          video.volume = 1;
           if (startAt > 5) {
             video.currentTime = startAt;
           }
@@ -1717,7 +1514,7 @@ export class FrameComponent implements OnInit, OnDestroy {
       return;
     }
     this.duration = Number.isFinite(video.duration) ? video.duration : this.duration;
-    this.markServerPlaybackOk();
+    this.markServerPlaybackOk(true);
   }
 
   private getEmbedPath(): string | null {
@@ -1784,23 +1581,11 @@ export class FrameComponent implements OnInit, OnDestroy {
   onPlayerIframeLoad(): void {
     this.beginClearedBootstrapIfNeeded();
     this.requestPlayerStatus();
-    // Kean: keep splash up — iframe "load" fires before Vidlove's own controller/boot UI finishes
-    if (this.isMovies111Provider) {
-      this.serverPlaybackOk = true;
-      this.clearServerFailoverWatch();
-      this.isPlaying = false;
-      this.keanAwaitingGesturePlay = true;
-      this.revealPlayerControls();
-      this.flushKeanPendingSetTime();
-      // Shorter than desktop boot — a long splash looks like a stuck Vidlove load on mobile.
-      this.scheduleKeanBootClear(1200);
-      // Layout may settle after paint (esp. mobile CSS fullscreen)
-      requestAnimationFrame(() => this.scheduleKeanIframeFill());
-    } else {
-      this.clearPlayerReloading();
-      this.armServerFailoverWatch();
-    }
-    // CinemaOS autoPlay starts muted (browser policy) — unmute once the embed is ready
+    this.clearPlayerReloading();
+    this.armServerFailoverWatch();
+    // CinemaOS autoPlay starts muted by design — safe to lift after load.
+    // Do NOT unmute VidFast/others here: unmuted autoplay without a user gesture
+    // is blocked by browsers and pauses/kills the embed.
     if (this.isCinemaosProvider) {
       setTimeout(() => this.unmuteRemotePlayer(), 400);
       setTimeout(() => this.unmuteRemotePlayer(), 1200);
@@ -1986,8 +1771,6 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.providerLockedByUser = true;
     this.selectedProvider = provider;
     this.peachifyWantAutoPlay = true;
-    this.movies111WantAutoPlay = false;
-    this.keanAwaitingGesturePlay = provider === 'movies111';
     this.showProviderMenu = false;
     this.showServerMenu = false;
     this.resetServerFailoverState();
@@ -2060,12 +1843,12 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.serversTriedThisTitle.clear();
     this.providersTriedThisTitle.clear();
     this.serverPlaybackOk = false;
+    this.lastPlaybackProgressSample = -1;
   }
 
   private switchProviderForFailover(next: StreamProvider): boolean {
-    if (this.providerLockedByUser) {
-      return false;
-    }
+    // Still hop providers when every VidFast/VidUP pin failed — user lock only
+    // blocks soft preference, not dead-end recovery.
     this.selectedProvider = next;
     if (next === 'vidfast' || next === 'vidup' || next === 'peachify') {
       this.useAutoServer = true;
@@ -2094,16 +1877,8 @@ export class FrameComponent implements OnInit, OnDestroy {
         if (this.serverPlaybackOk) {
           return;
         }
-        if (this.providerLockedByUser) {
-          this.showNoServerFound();
-          return;
-        }
         const next = this.nextFailoverProvider(this.selectedProvider);
-        if (!next) {
-          this.showNoServerFound();
-          return;
-        }
-        if (!this.switchProviderForFailover(next)) {
+        if (!next || !this.switchProviderForFailover(next)) {
           this.showNoServerFound();
           return;
         }
@@ -2124,15 +1899,44 @@ export class FrameComponent implements OnInit, OnDestroy {
     }, FrameComponent.SERVER_FAILOVER_MS);
   }
 
-  private markServerPlaybackOk(): void {
+  private markServerPlaybackOk(force = false): void {
     if (this.serverPlaybackOk) {
       return;
     }
-    if (this.duration > 1 || this.currentTime > 0.5 || this.isPlaying) {
-      this.serverPlaybackOk = true;
-      this.clearServerFailoverWatch();
-      this.clearPlayerReloading();
+    // Duration / startAt alone are not enough — VidFast error shells still report them.
+    if (!force) {
+      return;
     }
+    this.serverPlaybackOk = true;
+    this.clearServerFailoverWatch();
+    this.clearPlayerReloading();
+  }
+
+  /** Confirm the stream is really moving (filters out 500 error pages that still post metadata). */
+  private notePlaybackProgress(reportedTime: number, eventName?: string): void {
+    if (!Number.isFinite(reportedTime)) {
+      return;
+    }
+    const name = String(eventName || '').toLowerCase();
+    const isProgressEvent =
+      name === 'timeupdate' || name === 'play' || name === 'seeked' || name === 'playerstatus';
+    if (!isProgressEvent && name !== '') {
+      return;
+    }
+
+    if (this.lastPlaybackProgressSample < 0) {
+      this.lastPlaybackProgressSample = reportedTime;
+      return;
+    }
+
+    // Require the clock to advance — resume startAt / duration dumps don't count.
+    if (reportedTime > this.lastPlaybackProgressSample + 0.75) {
+      this.lastPlaybackProgressSample = reportedTime;
+      this.markServerPlaybackOk(true);
+      return;
+    }
+
+    this.lastPlaybackProgressSample = Math.max(this.lastPlaybackProgressSample, reportedTime);
   }
 
   private showNoServerFound(): void {
@@ -2144,11 +1948,17 @@ export class FrameComponent implements OnInit, OnDestroy {
 
   /** Current server pin never started — try next pin, then Auto, then next provider. */
   private tryNextServerFailover(): void {
-    if (this.serverPlaybackOk) {
-      return;
-    }
+    // Force failover even if we previously thought playback was ok (mid-stream 500).
+    this.serverPlaybackOk = false;
+    this.clearServerFailoverWatch();
 
     if (!this.usesServerParam) {
+      const next = this.nextFailoverProvider(this.selectedProvider);
+      if (next && this.switchProviderForFailover(next)) {
+        this.reloadPlayer(this.currentTime, `Trying ${this.activeProviderLabel}…`);
+        return;
+      }
+      this.showNoServerFound();
       return;
     }
 
@@ -2156,17 +1966,20 @@ export class FrameComponent implements OnInit, OnDestroy {
       .map((s) => s.id)
       .filter((id) => id !== FrameComponent.AUTO_SERVER_ID);
 
+    // Prefer Auto first when nothing has been tried yet
+    if (!this.serversTriedThisTitle.has(FrameComponent.AUTO_SERVER_ID)) {
+      this.useAutoServer = true;
+      this.serversTriedThisTitle.add(FrameComponent.AUTO_SERVER_ID);
+      this.reloadPlayer(this.currentTime, 'Finding a working server…');
+      return;
+    }
+
     const nextPinned = pinnedServers.find((id) => !this.serversTriedThisTitle.has(id));
     if (nextPinned) {
       this.useAutoServer = false;
       this.selectedServer = nextPinned;
+      this.serversTriedThisTitle.add(nextPinned);
       this.reloadPlayer(this.currentTime, `Trying ${nextPinned}…`);
-      return;
-    }
-
-    if (!this.serversTriedThisTitle.has(FrameComponent.AUTO_SERVER_ID)) {
-      this.useAutoServer = true;
-      this.reloadPlayer(this.currentTime, 'Finding a working server…');
       return;
     }
 
@@ -2315,14 +2128,6 @@ export class FrameComponent implements OnInit, OnDestroy {
       return;
     }
 
-    // Kean / Vidlove — parent-only progress API (no HTTP webhook from player.vidlove.cc).
-    // Docs show WATCH_PROGRESS; live embed posts PLAYER_EVENT + MEDIA_DATA via postMessage.
-    if (event.origin === 'https://player.vidlove.cc' && this.isMovies111Provider) {
-      if (this.handleKeanVidloveProgress(event.data)) {
-        return;
-      }
-    }
-
     const type = String(event.data?.type || '');
 
     // Live ApiPlayer build emits player:* / ended (docs' mplayer inbound API is not shipped)
@@ -2339,275 +2144,6 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
 
     this.handleRemoteIframeMessage(event);
-  }
-
-  /**
-   * Kean / Vidlove progress bridge (parent window only).
-   *
-   * Docs (vidlove.cc marketing copy — not present in the live player bundle):
-   *   { type: 'WATCH_PROGRESS', data: { mediaId, eventType, currentTime, duration } }
-   *
-   * Live player.vidlove.cc (`emitEvent` → `parent.postMessage(e, '*')`):
-   *   { type: 'PLAYER_EVENT', data: { event, currentTime, duration, tmdbId, mediaType, season?, episode? } }
-   *   { type: 'MEDIA_DATA', data: { id, type, progress, show_progress?, ... } }  // vidLinkProgress shape
-   *
-   * Playback events update the Luscreens controller; progress is written through
-   * WatchProgressService → UserLibraryService → auth-api PUT /me/library when logged in.
-   */
-  private handleKeanVidloveProgress(raw: unknown): boolean {
-    if (!raw || typeof raw !== 'object') {
-      return false;
-    }
-
-    const msg = raw as {
-      type?: string;
-      data?: Record<string, unknown>;
-    };
-    const type = String(msg.type || '');
-    const body = msg.data;
-
-    if (type === 'MEDIA_DATA') {
-      return this.applyKeanMediaData(body);
-    }
-
-    if (!body || typeof body !== 'object') {
-      return false;
-    }
-
-    let eventType = '';
-    if (type === 'WATCH_PROGRESS') {
-      // Exact docs shape (if/when the player ships it)
-      eventType = String(body['eventType'] ?? 'timeupdate').toLowerCase();
-    } else if (type === 'PLAYER_EVENT') {
-      // What the live embed posts today
-      eventType = String(body['event'] ?? body['eventType'] ?? 'timeupdate').toLowerCase();
-    } else {
-      return false;
-    }
-
-    const currentTime = Number(body['currentTime']);
-    const duration = Number(body['duration']);
-    const mediaId = body['mediaId'] ?? body['tmdbId'] ?? this.id;
-
-    const mapped: PlayerEventName =
-      eventType === 'play' ||
-      eventType === 'pause' ||
-      eventType === 'seeked' ||
-      eventType === 'ended' ||
-      eventType === 'timeupdate'
-        ? eventType
-        : eventType === 'time'
-          ? 'timeupdate'
-          : eventType === 'complete'
-            ? 'ended'
-            : 'timeupdate';
-
-    const playing =
-      mapped === 'play' ? true : mapped === 'pause' || mapped === 'ended' ? false : this.isPlaying;
-
-    // Docs-style mirror + Luscreens continue-watching (server sync via UserLibraryService)
-    this.mirrorKeanDocsProgress(mediaId, {
-      currentTime: Number.isFinite(currentTime) ? currentTime : this.currentTime,
-      duration: Number.isFinite(duration) ? duration : this.duration,
-      eventType: mapped,
-      season: Number(body['season']) || this.selectedSeason,
-      episode: Number(body['episode']) || this.selectedEpisode,
-    });
-
-    if (mapped === 'play') {
-      this.keanAwaitingGesturePlay = false;
-    } else if (mapped === 'pause' || mapped === 'ended') {
-      this.keanAwaitingGesturePlay = true;
-    }
-
-    this.onPlayerEvent({
-      event: mapped,
-      currentTime: Number.isFinite(currentTime) ? currentTime : this.currentTime,
-      duration: Number.isFinite(duration) && duration > 0 ? duration : this.duration,
-      tmdbId: +this.id || Number(mediaId) || 0,
-      mediaType: this.mediaType === 'tv' ? 'tv' : 'movie',
-      season: Number(body['season']) || this.selectedSeason,
-      episode: Number(body['episode']) || this.selectedEpisode,
-      playing,
-      muted: false,
-      volume: 1,
-    });
-    // First real player event ⇒ Vidlove boot UI is gone
-    if (mapped === 'play' || mapped === 'timeupdate' || mapped === 'pause') {
-      this.clearKeanBootCover();
-    }
-    // timeupdate floods on mobile — throttle Angular CD so the page doesn't feel stuck loading
-    if (mapped === 'timeupdate') {
-      const now = Date.now();
-      if (now - this.lastKeanUiSyncAt < FrameComponent.KEAN_UI_SYNC_MS) {
-        return true;
-      }
-      this.lastKeanUiSyncAt = now;
-    }
-    this.cdr.detectChanges();
-    return true;
-  }
-
-  /** Cover Vidlove's native loader/chrome with the Luscreens splash. */
-  private beginKeanBootCover(): void {
-    this.keanBootCover = true;
-    this.playerReloadLabel = 'Loading…';
-    this.isPlayerReloading = true;
-    this.armReloadOverlayTimeout();
-    this.scheduleKeanBootClear(FrameComponent.KEAN_BOOT_COVER_MS);
-    this.cdr.detectChanges();
-  }
-
-  private scheduleKeanBootClear(delayMs: number): void {
-    this.clearKeanBootTimer();
-    this.keanBootClearTimer = setTimeout(() => {
-      this.keanBootClearTimer = null;
-      // Mobile Safari can drop CD for timers outside the zone — force a turn.
-      this.ngZone.run(() => this.clearKeanBootCover());
-    }, delayMs);
-  }
-
-  private clearKeanBootTimer(): void {
-    if (this.keanBootClearTimer != null) {
-      clearTimeout(this.keanBootClearTimer);
-      this.keanBootClearTimer = null;
-    }
-  }
-
-  private clearKeanBootCover(): void {
-    this.clearKeanBootTimer();
-    const wasCovering = this.keanBootCover || this.isPlayerReloading;
-    this.keanBootCover = false;
-    if (this.isMovies111Provider) {
-      this.clearPlayerReloading();
-    }
-    if (wasCovering) {
-      // Boot splash was pinning chrome — resume normal auto-hide while playing.
-      if (this.isPlaying) {
-        this.scheduleControlsHide();
-      }
-      this.cdr.detectChanges();
-    }
-  }
-
-  /** Docs example: localStorage `progress_${mediaId}` — also feeds WatchProgressService. */
-  private mirrorKeanDocsProgress(
-    mediaId: unknown,
-    input: {
-      currentTime: number;
-      duration: number;
-      eventType: string;
-      season?: number;
-      episode?: number;
-    }
-  ): void {
-    const id = String(mediaId ?? this.id ?? '');
-    if (!id) {
-      return;
-    }
-
-    const mediaType = this.mediaType === 'tv' ? 'tv' : 'movie';
-    const watched = Math.max(0, input.currentTime);
-    const duration = Math.max(0, input.duration);
-    const lastWatched = Date.now();
-    const watchedPct =
-      duration > 0 ? Math.round((watched / duration) * 1000) / 10 : 0;
-
-    try {
-      localStorage.setItem(
-        `progress_${id}`,
-        JSON.stringify({
-          currentTime: watched,
-          duration,
-          lastWatched,
-          eventType: input.eventType,
-          mediaType,
-          season: input.season,
-          episode: input.episode,
-          watched_percentage: watchedPct,
-        })
-      );
-    } catch {
-      // private mode / quota
-    }
-  }
-
-  /**
-   * Live Vidlove MEDIA_DATA — same shape as vidLinkProgress / WatchProgressEntry.
-   * Only accept the title currently open so foreign dumps never overwrite history.
-   */
-  private applyKeanMediaData(raw: unknown): boolean {
-    if (!raw || typeof raw !== 'object') {
-      return false;
-    }
-
-    const data = raw as Record<string, unknown>;
-    const id = Number(data['id'] ?? this.id);
-    const type = data['type'] === 'tv' ? 'tv' : data['type'] === 'movie' ? 'movie' : null;
-    if (!id || !type || String(id) !== String(this.id)) {
-      return false;
-    }
-    if (type !== (this.mediaType === 'tv' ? 'tv' : 'movie')) {
-      return false;
-    }
-
-    let watched = 0;
-    let duration = 0;
-    let season = this.selectedSeason;
-    let episode = this.selectedEpisode;
-
-    if (type === 'tv') {
-      season = Number(data['last_season_watched']) || season;
-      episode = Number(data['last_episode_watched']) || episode;
-      const showProgress = data['show_progress'] as
-        | Record<string, { progress?: { watched?: number; duration?: number } }>
-        | undefined;
-      const ep = showProgress?.[`s${season}e${episode}`]?.progress;
-      watched = Number(ep?.watched ?? (data['progress'] as { watched?: number } | undefined)?.watched);
-      duration = Number(ep?.duration ?? (data['progress'] as { duration?: number } | undefined)?.duration);
-    } else {
-      const progress = data['progress'] as { watched?: number; duration?: number } | undefined;
-      watched = Number(progress?.watched);
-      duration = Number(progress?.duration);
-    }
-
-    if (!Number.isFinite(watched) || watched < 0) {
-      return false;
-    }
-    if (!Number.isFinite(duration) || duration < 0) {
-      duration = this.duration;
-    }
-
-    if (Number.isFinite(watched)) {
-      this.currentTime = watched;
-    }
-    if (duration > 1) {
-      this.duration = duration;
-    }
-
-    this.mirrorKeanDocsProgress(id, {
-      currentTime: watched,
-      duration,
-      eventType: 'timeupdate',
-      season,
-      episode,
-    });
-
-    this.watchProgress.upsertPlayback({
-      mediaType: type,
-      id,
-      season,
-      episode,
-      watched,
-      duration,
-      title: (typeof data['title'] === 'string' && data['title']) || this.title,
-      posterPath: typeof data['poster_path'] === 'string' ? data['poster_path'] : null,
-      backdropPath:
-        typeof data['backdrop_path'] === 'string' ? data['backdrop_path'] : this.backdropPath,
-    });
-
-    this.cdr.detectChanges();
-    return true;
   }
 
   private isVidfastOrigin(origin: string): boolean {
@@ -2630,14 +2166,6 @@ export class FrameComponent implements OnInit, OnDestroy {
     return this.vidupOrigins.includes(origin) || /vidup\./i.test(origin || '');
   }
 
-  private isMovies111Origin(origin: string): boolean {
-    return (
-      origin === 'https://player.vidlove.cc' ||
-      this.movies111Origins.includes(origin) ||
-      /111movies\./i.test(origin || '') ||
-      /vidlove\./i.test(origin || '')
-    );
-  }
 
   private isVideasyOrigin(origin: string): boolean {
     return this.videasyOrigins.includes(origin) || /videasy\./i.test(origin || '');
@@ -2650,8 +2178,7 @@ export class FrameComponent implements OnInit, OnDestroy {
       this.isVidphantomOrigin(origin) ||
       this.isPeachifyOrigin(origin) ||
       this.isVidupOrigin(origin) ||
-      this.isVideasyOrigin(origin) ||
-      this.isMovies111Origin(origin)
+      this.isVideasyOrigin(origin)
     );
   }
 
@@ -2934,9 +2461,7 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
     const wasPlaying = this.isPlaying;
     const peachifyLockPlaying = this.isPeachifyProvider && Date.now() < this.peachifyIgnorePlayingUntil;
-    const movies111LockPlaying =
-      this.isMovies111Provider && Date.now() < this.movies111IgnorePlayingUntil;
-    if (typeof data.playing === 'boolean' && !peachifyLockPlaying && !movies111LockPlaying) {
+    if (typeof data.playing === 'boolean' && !peachifyLockPlaying) {
       this.isPlaying = data.playing;
     }
 
@@ -2952,16 +2477,23 @@ export class FrameComponent implements OnInit, OnDestroy {
 
     const eventName = String(data.event || '').toLowerCase();
     if (eventName === 'error' || eventName === 'playbackerror') {
+      this.serverPlaybackOk = false;
+      this.lastPlaybackProgressSample = -1;
       this.tryNextServerFailover();
       return;
     }
 
+    if (hasReportedTime) {
+      this.notePlaybackProgress(reportedTime, data.event);
+    }
+
     switch (data.event) {
       case 'play':
-        if (!peachifyLockPlaying && !movies111LockPlaying) {
+        if (!peachifyLockPlaying) {
           this.isPlaying = true;
         }
-        // CinemaOS forces muted=true on autoPlay — lift it as soon as playback starts
+        // CinemaOS forces muted=true on autoPlay — lift only there.
+        // VidFast must stay muted on autoplay or the browser pauses the iframe.
         if (this.isCinemaosProvider) {
           this.unmuteRemotePlayer();
         }
@@ -2969,7 +2501,7 @@ export class FrameComponent implements OnInit, OnDestroy {
         this.persistLocalProgress(true);
         break;
       case 'pause':
-        if (!peachifyLockPlaying && !movies111LockPlaying) {
+        if (!peachifyLockPlaying) {
           this.isPlaying = false;
         }
         this.broadcastWatchPartyEvent('pause', data.currentTime);
@@ -3009,8 +2541,6 @@ export class FrameComponent implements OnInit, OnDestroy {
         }
         break;
     }
-
-    this.markServerPlaybackOk();
 
     if (wasPlaying !== this.isPlaying) {
       this.onPlaybackStateChanged();
@@ -3140,8 +2670,7 @@ export class FrameComponent implements OnInit, OnDestroy {
    * Same Luscreens controller for every provider:
    * - ApiPlayer / VidPhantom → direct <video> / HLS commands
    * - Peachify → URL reload (inbound postMessage disabled by host)
-   * - Kean / Vidlove → SET_TIME seek; tap-to-play (unmuted); remount pause
-   * - CinemaOS / VidFast / VidUP / Videasy → iframe postMessage `{ command }`
+   * - CinemaOS / VidFast / VidUP / Videasy → iframe postMessage { command }
    */
   private postPlayerCommand(command: PlayerCommand, time?: number): void {
     if (this.usesLocalHls) {
@@ -3154,160 +2683,20 @@ export class FrameComponent implements OnInit, OnDestroy {
       return;
     }
 
-    if (this.isMovies111Provider) {
-      this.controlKeanPlayer(command, time);
-      return;
-    }
 
     const contentWindow = this.playerIframe?.nativeElement?.contentWindow;
     if (!contentWindow) {
       return;
     }
 
-    // CinemaOS: unmute before play (autoPlay path always starts muted)
-    if (command === 'play' && this.isCinemaosProvider) {
+    // Unmute on explicit play (user gesture / watch-party host control).
+    // Safe for VidFast — unlike load-time unmute, this has a user activation path.
+    if (command === 'play') {
       this.unmuteRemotePlayer();
     }
 
     const payload = this.toRemoteIframeCommand(command, time);
     contentWindow.postMessage(payload, '*');
-  }
-
-  /**
-   * Live Vidlove inbound control:
-   *   SET_TIME → seek (works unmuted)
-   *   play → pass clicks through (Vidlove unmuted play path; autoplay=true always mutes)
-   *   pause → remount with autoplay=false at current time
-   */
-  private controlKeanPlayer(command: PlayerCommand, time?: number): void {
-    if (command === 'getStatus') {
-      return;
-    }
-
-    const at = Math.max(0, Math.floor(time ?? this.currentTime));
-
-    if (command === 'seek') {
-      this.currentTime = at;
-      this.lastSeekTarget = at;
-      this.seekGuardUntil = Date.now() + FrameComponent.SEEK_GUARD_MS;
-      if (at <= 0) {
-        this.movies111PendingSetTime = null;
-        this.movies111WantAutoPlay = false;
-        this.keanAwaitingGesturePlay = true;
-        this.remountKeanEmbed(0, { showBootCover: false });
-        return;
-      }
-      this.postKeanSetTime(at);
-      return;
-    }
-
-    if (command === 'play') {
-      // Do not remount with autoplay — that forces mute in Vidlove's player bundle.
-      // Hide chrome so the next tap can reach Vidlove (required for sound on mobile).
-      this.movies111WantAutoPlay = false;
-      this.keanAwaitingGesturePlay = true;
-      this.hidePlayerControls();
-      return;
-    }
-
-    if (command === 'pause') {
-      this.movies111WantAutoPlay = false;
-      this.keanAwaitingGesturePlay = true;
-      this.currentTime = at;
-      this.lastSeekTarget = at;
-      this.seekGuardUntil = Date.now() + FrameComponent.SEEK_GUARD_MS;
-      this.movies111IgnorePlayingUntil = Date.now() + 2800;
-      this.movies111PendingSetTime = at > 0 ? at : null;
-      this.remountKeanEmbed(at, { showBootCover: false });
-    }
-  }
-
-  /** Vidlove: `{ type: 'SET_TIME', time }` or `{ type: 'SET_TIME', data: { time } }` (time must be > 0). */
-  private postKeanSetTime(seconds: number): void {
-    const win = this.playerIframe?.nativeElement?.contentWindow;
-    if (!win || !Number.isFinite(seconds) || seconds <= 0) {
-      return;
-    }
-    const time = Math.max(0.1, seconds);
-    win.postMessage({ type: 'SET_TIME', time }, 'https://player.vidlove.cc');
-    win.postMessage(
-      { type: 'SET_TIME', data: { time } },
-      'https://player.vidlove.cc'
-    );
-  }
-
-  private clearKeanSetTimeTimers(): void {
-    for (const timer of this.movies111SetTimeTimers) {
-      clearTimeout(timer);
-    }
-    this.movies111SetTimeTimers = [];
-  }
-
-  /** After iframe load, retry SET_TIME until Vidlove's <video> has duration. */
-  private flushKeanPendingSetTime(): void {
-    this.clearKeanSetTimeTimers();
-    const target = this.movies111PendingSetTime;
-    if (target == null || target <= 0) {
-      return;
-    }
-
-    const delays = [200, 600, 1200, 2200];
-    for (const ms of delays) {
-      this.movies111SetTimeTimers.push(
-        setTimeout(() => {
-          if (!this.isMovies111Provider) {
-            return;
-          }
-          this.postKeanSetTime(target);
-          if (ms === delays[delays.length - 1]) {
-            this.movies111PendingSetTime = null;
-          }
-        }, ms)
-      );
-    }
-  }
-
-  private remountKeanEmbed(
-    startAt: number,
-    options: { showBootCover?: boolean } = {}
-  ): void {
-    if (!this.isMovies111Provider) {
-      return;
-    }
-    if (this.movies111RemountTimer != null) {
-      clearTimeout(this.movies111RemountTimer);
-      this.movies111RemountTimer = null;
-    }
-
-    const stayFullscreen = this.isFullscreen || !!document.fullscreenElement;
-    const showBootCover = options.showBootCover !== false;
-
-    if (showBootCover) {
-      this.beginKeanBootCover();
-    } else {
-      // Quiet remount (pause) — clear any leftover splash
-      this.clearKeanBootCover();
-    }
-    this.showPlayerControls = true;
-    this.destroyApiplayerVideo();
-
-    this.playerSurfaceLocked = true;
-    this.embedUrl = null;
-    this.cdr.detectChanges();
-
-    this.movies111RemountTimer = setTimeout(() => {
-      this.movies111RemountTimer = null;
-      if (!this.isMovies111Provider) {
-        this.playerSurfaceLocked = false;
-        return;
-      }
-      this.embedUrl = this.buildMovies111EmbedUrl(startAt);
-      this.isPlaying = false;
-      this.keanAwaitingGesturePlay = true;
-      this.playerSurfaceLocked = false;
-      this.cdr.detectChanges();
-      this.ensureFullscreenPreserved(stayFullscreen);
-    }, 30);
   }
 
   /** If Peachify's PLAYER_EVENT S/E ≠ our picker, force the embed path back. */
@@ -3425,22 +2814,18 @@ export class FrameComponent implements OnInit, OnDestroy {
     this.isFullscreen = true;
     const container = this.playerContainer?.nativeElement;
     if (!container) {
-      this.syncKeanIframeFill();
       return;
     }
     if (document.fullscreenElement === container) {
-      this.syncKeanIframeFill();
       return;
     }
     if (this.cssFullscreenFallback) {
-      this.syncKeanIframeFill();
       return;
     }
     // Best-effort restore (may no-op without a user gesture on some browsers)
     void container.requestFullscreen?.().catch(() => {
       this.cssFullscreenFallback = true;
       this.isFullscreen = true;
-      this.syncKeanIframeFill();
       this.cdr.detectChanges();
     });
   }
@@ -3476,30 +2861,28 @@ export class FrameComponent implements OnInit, OnDestroy {
   }
 
   /**
-   * CinemaOS postMessage API: `{ command: 'mute'|'volume', muted?, level? }`.
-   * Volume scale is 0.0–1.0 (1 = 100% / max). AutoPlay starts muted — clear that and max volume.
-   * https://cinemaos.tech/embed
+   * Unmute iframe / local HLS after a user gesture (or CinemaOS muted autoPlay).
+   * Keep payloads minimal — flooding alternate command shapes can confuse VidFast.
    */
   private unmuteRemotePlayer(): void {
-    if (!this.isCinemaosProvider) {
+    if (this.usesLocalHls) {
+      const video = this.playerVideo?.nativeElement;
+      if (video) {
+        video.muted = false;
+        video.volume = 1;
+      }
       return;
     }
     const contentWindow = this.playerIframe?.nativeElement?.contentWindow;
     if (!contentWindow) {
       return;
     }
-    const maxVolume = 1; // docs: 0.0–1.0; 1 = 100%
-    contentWindow.postMessage({ command: 'mute', muted: false }, '*');
-    contentWindow.postMessage({ command: 'volume', level: maxVolume }, '*');
-    // Re-assert after autoPlay mute race
-    setTimeout(() => {
-      const win = this.playerIframe?.nativeElement?.contentWindow;
-      if (!win || !this.isCinemaosProvider) {
-        return;
-      }
-      win.postMessage({ command: 'mute', muted: false }, '*');
-      win.postMessage({ command: 'volume', level: maxVolume }, '*');
-    }, 150);
+    try {
+      contentWindow.postMessage({ command: 'mute', muted: false }, '*');
+      contentWindow.postMessage({ command: 'volume', level: 1 }, '*');
+    } catch {
+      // ignore cross-origin / closed frame
+    }
   }
 
   private controlApiplayerVideo(command: PlayerCommand, time?: number): void {
@@ -3510,6 +2893,8 @@ export class FrameComponent implements OnInit, OnDestroy {
 
     switch (command) {
       case 'play':
+        video.muted = false;
+        video.volume = 1;
         void video.play().catch(() => undefined);
         break;
       case 'pause':
@@ -3553,25 +2938,15 @@ export class FrameComponent implements OnInit, OnDestroy {
       this.revealPlayerControls();
       return;
     }
+    // Always lift mute on explicit control taps (has user activation).
+    this.unmuteRemotePlayer();
     const nextPlaying = !this.isPlaying;
-    // Peachify / Kean: set autoPlay intent before remount
+    // Peachify: set autoPlay intent before remount
     if (this.isPeachifyProvider) {
       this.peachifyWantAutoPlay = nextPlaying;
       this.isPlaying = nextPlaying;
       this.postPlayerCommand(nextPlaying ? 'play' : 'pause');
       this.onPlaybackStateChanged();
-      return;
-    }
-    if (this.isMovies111Provider) {
-      if (nextPlaying) {
-        // Unmuted play: arm pass-through, hide Luscreens chrome, then user taps video.
-        this.keanAwaitingGesturePlay = true;
-        this.postPlayerCommand('play');
-      } else {
-        this.isPlaying = false;
-        this.postPlayerCommand('pause');
-        this.onPlaybackStateChanged();
-      }
       return;
     }
     this.postPlayerCommand(nextPlaying ? 'play' : 'pause');
@@ -3631,6 +3006,8 @@ export class FrameComponent implements OnInit, OnDestroy {
     if (this.isPlayerReloading) {
       return;
     }
+    // User gesture — safe to unmute muted autoplay (VidFast / CinemaOS / etc.)
+    this.unmuteRemotePlayer();
     this.revealPlayerControls();
     if (!this.canControlPartyPlayback) {
       return;
@@ -3805,7 +3182,6 @@ export class FrameComponent implements OnInit, OnDestroy {
         await this.syncFullscreenOrientation(true);
       }
       this.updatePortraitViewport();
-      this.syncKeanIframeFill();
       this.revealPlayerControls();
       // Fullscreen often opens while already playing — ensure the hide timer arms.
       if (this.isFullscreen && this.isPlaying) {
@@ -3817,29 +3193,6 @@ export class FrameComponent implements OnInit, OnDestroy {
     }
   }
 
-  /** Cover-scale Kean iframe to the host box (works without container-query units). */
-  private bindKeanFillObserver(): void {
-    this.teardownKeanFillObserver();
-    const host = this.keanFillHostEl;
-    if (!host || !this.isMovies111Provider) {
-      this.applyKeanFillStyle({ inset: '0', width: '100%', height: '100%' });
-      return;
-    }
-    this.syncKeanIframeFill();
-    if (typeof ResizeObserver === 'undefined') {
-      return;
-    }
-    // Stay outside Angular — mobile chrome resize would otherwise thrash CD.
-    this.ngZone.runOutsideAngular(() => {
-      this.keanFillObserver = new ResizeObserver(() => this.scheduleKeanIframeFill());
-      this.keanFillObserver.observe(host);
-    });
-  }
-
-  private teardownKeanFillObserver(): void {
-    this.keanFillObserver?.disconnect();
-    this.keanFillObserver = null;
-  }
 
   private isMobilePlayerViewport(): boolean {
     if (typeof window === 'undefined') {
@@ -3851,86 +3204,6 @@ export class FrameComponent implements OnInit, OnDestroy {
     );
   }
 
-  private scheduleKeanIframeFill(): void {
-    if (this.keanFillRaf != null) {
-      return;
-    }
-    this.keanFillRaf = requestAnimationFrame(() => {
-      this.keanFillRaf = null;
-      const prevKey = this.lastKeanFillKey;
-      this.syncKeanIframeFill();
-      if (this.lastKeanFillKey !== prevKey) {
-        this.ngZone.run(() => this.cdr.detectChanges());
-      }
-    });
-  }
-
-  private applyKeanFillStyle(style: Record<string, string>): void {
-    const key = [
-      style['inset'] ?? '',
-      style['top'] ?? '',
-      style['left'] ?? '',
-      style['width'] ?? '',
-      style['height'] ?? '',
-      style['transform'] ?? '',
-    ].join('|');
-    if (key === this.lastKeanFillKey) {
-      return;
-    }
-    this.lastKeanFillKey = key;
-    this.keanIframeFillStyle = style;
-  }
-
-  private syncKeanIframeFill(): void {
-    const host = this.keanFillHostEl;
-    if (!host || !this.isMovies111Provider) {
-      this.applyKeanFillStyle({ inset: '0', width: '100%', height: '100%' });
-      return;
-    }
-    const w = host.clientWidth;
-    const h = host.clientHeight;
-    if (w < 2 || h < 2) {
-      return;
-    }
-
-    // Cover-scaling upsizes the Vidlove iframe (often > viewport). Fine on desktop;
-    // on phones it makes decode/composite feel like endless loading lag.
-    if (this.isMobilePlayerViewport()) {
-      this.applyKeanFillStyle({ inset: '0', width: '100%', height: '100%' });
-      return;
-    }
-
-    const target = 16 / 9;
-    const hostRatio = w / h;
-    // Already ~16:9 (inline player) — no cover zoom.
-    if (Math.abs(hostRatio - target) < 0.04) {
-      this.applyKeanFillStyle({ inset: '0', width: '100%', height: '100%' });
-      return;
-    }
-
-    let iw: number;
-    let ih: number;
-    if (hostRatio > target) {
-      iw = w;
-      ih = w / target;
-    } else {
-      ih = h;
-      iw = h * target;
-    }
-    const overscan = FrameComponent.KEAN_FILL_OVERSCAN;
-    iw *= overscan;
-    ih *= overscan;
-
-    this.applyKeanFillStyle({
-      top: '50%',
-      left: '50%',
-      width: `${Math.round(iw)}px`,
-      height: `${Math.round(ih)}px`,
-      maxWidth: 'none',
-      transform: 'translate(-50%, -50%) translateZ(0)',
-      WebkitTransform: 'translate(-50%, -50%) translateZ(0)',
-    });
-  }
 
   private updatePortraitViewport(): void {
     if (typeof window === 'undefined') {
